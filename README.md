@@ -11,7 +11,7 @@ Public-alpha ready local CLI. Product planning lives in `openspec/`.
 ## Install
 
 ```bash
-npm install -g deepclean
+npm install -g @fraction12/deepclean
 deepclean --version
 ```
 
