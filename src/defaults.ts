@@ -1,0 +1,133 @@
+import { type DeepcleanConfig, schemaVersion } from "./types.js";
+
+export const stateDirName = ".deepclean";
+
+export const defaultExcludeDirs = [
+  ".git",
+  ".deepclean",
+  ".clawpatch",
+  ".codex",
+  ".claude",
+  ".vercel",
+  ".potato",
+  "node_modules",
+  "__pycache__",
+  ".pytest_cache",
+  ".mypy_cache",
+  ".ruff_cache",
+  ".venv",
+  "venv",
+  "dist",
+  "build",
+  "coverage",
+  "output",
+  ".next",
+  ".turbo",
+  ".cache",
+  "vendor",
+];
+
+export const sourceExtensions = new Set([
+  ".ts",
+  ".tsx",
+  ".js",
+  ".jsx",
+  ".mjs",
+  ".cjs",
+  ".mts",
+  ".cts",
+  ".py",
+]);
+
+export function defaultConfig(): DeepcleanConfig {
+  return {
+    schemaVersion,
+    recordType: "config",
+    enabledAdapters: [
+      "file-metrics",
+      "line-window-duplication",
+      "semgrep",
+      "sarif-ingest",
+      "code-graph",
+      "import-graph",
+      "typescript-structure",
+      "git-history",
+      "test-discovery",
+    ],
+    exclude: defaultExcludeDirs,
+    reviewSynthesis: {
+      enabled: false,
+      provider: "codex",
+      command: "codex",
+      timeoutMs: 120_000,
+      maxCandidates: 8,
+    },
+    candidateCaps: {
+      byKind: {
+        "duplicate-cluster": 16,
+        "external-duplicate": 16,
+        "sarif-finding": 24,
+        "dependency-hotspot": 24,
+        "large-function": 24,
+        "large-file": 24,
+        "test-gap": 24,
+        "churn-hotspot": 12,
+        "shallow-wrapper-cluster": 16,
+      },
+      byKindAndArea: {
+        "duplicate-cluster": 4,
+        "external-duplicate": 4,
+        "sarif-finding": 8,
+        "dependency-hotspot": 8,
+        "large-function": 8,
+        "large-file": 8,
+        "test-gap": 8,
+      },
+    },
+    clusters: {
+      maxCandidates: 12,
+      maxFiles: 18,
+      splitBroad: true,
+    },
+    reviewers: {
+      enabled: [
+        "architecture-deepening",
+        "deep-module-discipline",
+        "duplication-consolidation",
+        "dependency-graph",
+        "testability",
+        "feedback-loop-discipline",
+        "domain-language",
+        "agent-ready-slices",
+        "ai-slop-patterns",
+        "critic-pass",
+      ],
+      customPaths: [],
+    },
+    externalAnalyzers: {
+      jscpd: {
+        enabled: false,
+        command: "jscpd",
+        minTokens: 80,
+        maxFindings: 20,
+      },
+      semgrep: {
+        enabled: false,
+        command: "semgrep",
+        config: "auto",
+        timeoutMs: 120_000,
+        maxFindings: 80,
+      },
+      sarifPaths: [
+        "semgrep.sarif",
+        "semgrep-results.sarif",
+        ".semgrep/semgrep.sarif",
+        ".deepclean/input/semgrep.sarif",
+      ],
+    },
+    privacy: {
+      allowSourceInModel: false,
+      allowWebResearch: false,
+    },
+  };
+}

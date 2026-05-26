@@ -1,0 +1,55 @@
+{
+  "name": "deepclean",
+  "version": "0.1.0-alpha.0",
+  "private": false,
+  "description": "Clawpatch-style cleanup reports for working-but-sloppy codebases.",
+  "type": "module",
+  "license": "MIT",
+  "homepage": "https://github.com/fraction12/deepclean#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fraction12/deepclean.git"
+  },
+  "bugs": {
+    "url": "https://github.com/fraction12/deepclean/issues"
+  },
+  "files": [
+    "dist",
+    "!dist/**/*.test.js",
+    "!dist/**/*.test.js.map",
+    "!dist/**/*.test.d.ts",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md",
+    "docs/privacy-and-trust.md",
+    "docs/public-readiness.md",
+    "docs/reviewer-references.md",
+    "docs/troubleshooting.md"
+  ],
+  "bin": {
+    "deepclean": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "ci": "npm run typecheck && npm test && npm run build && npm run smoke:package",
+    "dev": "tsx src/cli.ts",
+    "release:check": "npm run ci && node scripts/release-check.mjs",
+    "spec:validate": "node scripts/spec-validate.mjs",
+    "sync:matt-skills": "node scripts/sync-matt-pocock-skills.mjs",
+    "test": "vitest run src/cli.test.ts",
+    "smoke:package": "npm run build && node scripts/package-smoke.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "typescript": "^6.0.3",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^25.8.0",
+    "tsx": "^4.22.3",
+    "vitest": "^4.1.6"
+  }
+}
