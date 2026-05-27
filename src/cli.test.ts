@@ -124,7 +124,7 @@ describe("deepclean cli", () => {
     await withTempRepo(async (repo) => {
       await writeFixtureSource(repo);
       await execFileAsync("git", ["init"], { cwd: repo });
-      await runCli(["scan", "--json"], repo);
+      await runCli(["scan", "--evidence-only", "--json"], repo);
       await writeFile(path.join(repo, "dirty.ts"), "export const dirty = true;\n", "utf8");
       const result = await runCli(["status", "--json"], repo);
       expect(result.code).toBe(0);
@@ -383,7 +383,7 @@ describe("deepclean cli", () => {
         createdAt: new Date().toISOString(),
       });
 
-      const result = await runCli(["scan", "--json"], repo);
+      const result = await runCli(["scan", "--evidence-only", "--json"], repo);
       expect(result.code).toBe(4);
       const payload = JSON.parse(result.stdout) as {
         ok: boolean;
@@ -425,7 +425,7 @@ describe("deepclean cli", () => {
   test("prune dry-run and apply preserve config, latest artifacts, locks, and retained evidence", async () => {
     await withTempRepo(async (repo) => {
       await writeFixtureSource(repo);
-      await runCli(["scan", "--json"], repo);
+      await runCli(["scan", "--evidence-only", "--json"], repo);
       const latestRun = (await latestRunFile(repo)).replace(/\.json$/, "");
       await writeOldRunArtifacts(repo);
 
@@ -464,7 +464,7 @@ describe("deepclean cli", () => {
   test("source-safe export omits source excerpts, prompts, and absolute local paths", async () => {
     await withTempRepo(async (repo) => {
       await writeFixtureSource(repo);
-      await runCli(["scan", "--json"], repo);
+      await runCli(["scan", "--evidence-only", "--json"], repo);
       const result = await runCli(["export", "--source-safe", "--output", ".deepclean/source-safe.json", "--json"], repo);
       expect(result.code).toBe(0);
       const payload = JSON.parse(result.stdout) as {
@@ -555,7 +555,7 @@ test("checkout", () => calculateCheckout([], false));
   test("scans source files and produces agent-readable candidates", async () => {
     await withTempRepo(async (repo) => {
       await writeFixtureSource(repo);
-      const scan = await runCli(["scan", "--json"], repo);
+      const scan = await runCli(["scan", "--evidence-only", "--json"], repo);
       expect(scan.code).toBe(0);
       const scanPayload = JSON.parse(scan.stdout) as {
         ok: boolean;
@@ -597,7 +597,7 @@ test("checkout", () => calculateCheckout([], false));
   test("links repeated scans to stable findings and lifecycle history", async () => {
     await withTempRepo(async (repo) => {
       await writeFixtureSource(repo);
-      const first = await runCli(["scan", "--json"], repo);
+      const first = await runCli(["scan", "--evidence-only", "--json"], repo);
       expect(first.code).toBe(0);
       const firstPayload = JSON.parse(first.stdout) as {
         data: { candidates: Array<{ id: string; findingId?: string; signature?: { value: string }; files: Array<{ path: string }> }> };
@@ -621,7 +621,7 @@ ${Array.from({ length: 96 }, (_, index) => `  const value${index} = ${index};`).
 }
 `, "utf8");
 
-      const second = await runCli(["scan", "--json"], repo);
+      const second = await runCli(["scan", "--evidence-only", "--json"], repo);
       expect(second.code).toBe(0);
       const secondPayload = JSON.parse(second.stdout) as {
         data: { candidates: Array<{ id: string; findingId?: string; files: Array<{ path: string }> }> };
@@ -653,7 +653,7 @@ ${Array.from({ length: 96 }, (_, index) => `  const value${index} = ${index};`).
   test("revalidate records an unchanged finding from a fresh scan", async () => {
     await withTempRepo(async (repo) => {
       await writeFixtureSource(repo);
-      await runCli(["scan", "--json"], repo);
+      await runCli(["scan", "--evidence-only", "--json"], repo);
       const candidates = JSON.parse(
         await readFile(path.join(repo, ".deepclean", "candidates", (await latestRunFile(repo))), "utf8"),
       ) as Array<{ id: string; findingId?: string }>;
@@ -709,7 +709,7 @@ ${Array.from({ length: 120 }, (_, index) => `  const dirtyValue${index} = ${inde
 }
 `, "utf8");
 
-      const result = await runCli(["scan", "--since", "HEAD~1", "--include-dirty", "--json"], repo);
+      const result = await runCli(["scan", "--since", "HEAD~1", "--include-dirty", "--evidence-only", "--json"], repo);
       expect(result.code).toBe(0);
       const payload = JSON.parse(result.stdout) as {
         data: {
@@ -744,6 +744,7 @@ ${Array.from({ length: 120 }, (_, index) => `  const dirtyValue${index} = ${inde
         "--categories",
         "complexity",
         "--new-only",
+        "--evidence-only",
         "--json",
       ], repo);
       expect(result.code).toBe(0);
@@ -770,7 +771,7 @@ ${Array.from({ length: 120 }, (_, index) => `  const dirtyValue${index} = ${inde
   test("ci mode passes, fails policy, and writes artifacts", async () => {
     await withTempRepo(async (repo) => {
       await writeFixtureSource(repo);
-      const pass = await runCli(["ci", "--json", "--max-new-p0", "0"], repo);
+      const pass = await runCli(["ci", "--evidence-only", "--json", "--max-new-p0", "0"], repo);
       expect(pass.code).toBe(0);
       const passPayload = JSON.parse(pass.stdout) as {
         data: { ciRun: { status: string }; result: { blockingFindingIds: string[] } };
@@ -780,6 +781,7 @@ ${Array.from({ length: 120 }, (_, index) => `  const dirtyValue${index} = ${inde
 
       const fail = await runCli([
         "ci",
+        "--evidence-only",
         "--json",
         "--max-new-p2",
         "0",
@@ -803,14 +805,87 @@ ${Array.from({ length: 120 }, (_, index) => `  const dirtyValue${index} = ${inde
     });
   });
 
-  test("ci mode fails fast when synthesis is required but not requested", async () => {
+  test("ci mode uses synthesis by default when a provider is configured", async () => {
     await withTempRepo(async (repo) => {
       await writeFixtureSource(repo);
-      const result = await runCli(["ci", "--require-synthesis", "--json"], repo);
+      await installFakeCodex(repo, `#!/usr/bin/env node
+const fs = require("node:fs");
+const stdin = fs.readFileSync(0, "utf8");
+const evidenceId = stdin.match(/"id": "(ev-[^"]+)"/)?.[1];
+if (!evidenceId) process.exit(2);
+const outputPath = process.argv[process.argv.indexOf("-o") + 1];
+fs.writeFileSync(outputPath, JSON.stringify({
+  candidates: [{
+    title: "Shared calculation boundary needs cleanup",
+    category: "architecture",
+    priority: "P1",
+    confidence: "high",
+    impact: "feature",
+    effort: "medium",
+    risk: "moderate",
+    files: [{ path: "src/checkout.ts", startLine: 1, endLine: 1 }],
+    evidenceIds: [evidenceId],
+    whyItMatters: "The cleanup should be prioritized from evidence.",
+    likelyRootCause: "The same responsibility is spread across files.",
+    suggestedDirection: "Create one focused module for the shared behavior.",
+    verification: ["npm test"]
+  }],
+  rejectedEvidenceIds: [],
+  notes: []
+}));
+`);
+
+      const result = await runCli(["ci", "--require-synthesis", "--json", "--max-new-p0", "0"], repo);
+      expect(result.code).toBe(0);
+      const payload = JSON.parse(result.stdout) as {
+        data: {
+          scan: {
+            synthesis: { requested: boolean; candidateCount: number };
+            candidates: Array<{ provenance: { source: string } }>;
+          };
+        };
+      };
+      expect(payload.data.scan.synthesis.requested).toBe(true);
+      expect(payload.data.scan.synthesis.candidateCount).toBe(1);
+      expect(payload.data.scan.candidates[0]?.provenance.source).toBe("model-synthesis");
+    });
+  });
+
+  test("ci mode fails fast when synthesis is required but disabled", async () => {
+    await withTempRepo(async (repo) => {
+      await writeFixtureSource(repo);
+      const result = await runCli(["ci", "--require-synthesis", "--evidence-only", "--json"], repo);
       expect(result.code).toBe(2);
       const payload = JSON.parse(result.stdout) as { ok: boolean; error: { code: string } };
       expect(payload.ok).toBe(false);
       expect(payload.error.code).toBe("ci_synthesis_required");
+    });
+  });
+
+  test("ci mode fails when required synthesis provider is unavailable", async () => {
+    await withTempRepo(async (repo) => {
+      await writeFixtureSource(repo);
+      await runCli(["init", "--json"], repo);
+      const configPath = path.join(repo, ".deepclean", "config.json");
+      const config = JSON.parse(await readFile(configPath, "utf8")) as {
+        reviewSynthesis: { command: string };
+      };
+      config.reviewSynthesis.command = path.join(repo, "missing-codex");
+      await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+
+      const result = await runCli(["ci", "--require-synthesis", "--json", "--max-new-p0", "0"], repo);
+      expect(result.code).toBe(2);
+      const payload = JSON.parse(result.stdout) as {
+        ok: boolean;
+        error: { code: string };
+        diagnostics: Array<{ code: string; level: string }>;
+      };
+      expect(payload.ok).toBe(false);
+      expect(payload.error.code).toBe("ci_synthesis_failed");
+      expect(payload.diagnostics.some((diagnostic) => (
+        diagnostic.code === "codex_provider_unavailable"
+        && diagnostic.level === "error"
+      ))).toBe(true);
     });
   });
 
@@ -882,7 +957,7 @@ ${Array.from({ length: 120 }, (_, index) => `  const dirtyValue${index} = ${inde
   test("triage requires a note for non-open statuses", async () => {
     await withTempRepo(async (repo) => {
       await writeFixtureSource(repo);
-      await runCli(["scan", "--json"], repo);
+      await runCli(["scan", "--evidence-only", "--json"], repo);
       const result = await runCli(["triage", "candidate-001", "--status", "ignored", "--json"], repo);
       expect(result.code).toBe(2);
       const payload = JSON.parse(result.stdout) as { ok: boolean; error: { code: string } };
@@ -894,7 +969,7 @@ ${Array.from({ length: 120 }, (_, index) => `  const dirtyValue${index} = ${inde
   test("handoff writes an agent packet", async () => {
     await withTempRepo(async (repo) => {
       await writeFixtureSource(repo);
-      await runCli(["scan", "--json"], repo);
+      await runCli(["scan", "--evidence-only", "--json"], repo);
       const result = await runCli(["handoff", "candidate-001", "--json"], repo);
       expect(result.code).toBe(0);
       const payload = JSON.parse(result.stdout) as {
@@ -909,7 +984,7 @@ ${Array.from({ length: 120 }, (_, index) => `  const dirtyValue${index} = ${inde
   test("clusters related candidates and writes a cluster artifact", async () => {
     await withTempRepo(async (repo) => {
       await writeFixtureSource(repo);
-      await runCli(["scan", "--json"], repo);
+      await runCli(["scan", "--evidence-only", "--json"], repo);
       const result = await runCli(["cluster", "--json"], repo);
       expect(result.code).toBe(0);
       const payload = JSON.parse(result.stdout) as {
@@ -926,7 +1001,7 @@ ${Array.from({ length: 120 }, (_, index) => `  const dirtyValue${index} = ${inde
   test("plan writes an agent packet for a cluster", async () => {
     await withTempRepo(async (repo) => {
       await writeFixtureSource(repo);
-      await runCli(["scan", "--json"], repo);
+      await runCli(["scan", "--evidence-only", "--json"], repo);
       await runCli(["cluster", "--json"], repo);
       const result = await runCli(["plan", "theme-001", "--json"], repo);
       expect(result.code).toBe(0);
@@ -944,7 +1019,7 @@ ${Array.from({ length: 120 }, (_, index) => `  const dirtyValue${index} = ${inde
   test("report includes start-here recommendations for agents", async () => {
     await withTempRepo(async (repo) => {
       await writeFixtureSource(repo);
-      await runCli(["scan", "--json"], repo);
+      await runCli(["scan", "--evidence-only", "--json"], repo);
       const result = await runCli(["report", "--json"], repo);
       expect(result.code).toBe(0);
       const payload = JSON.parse(result.stdout) as {
@@ -976,7 +1051,7 @@ ${Array.from({ length: 120 }, (_, index) => `  const dirtyValue${index} = ${inde
   test("shared filters apply to report, list, next, and queue export", async () => {
     await withTempRepo(async (repo) => {
       await writeFixtureSource(repo);
-      await runCli(["scan", "--json"], repo);
+      await runCli(["scan", "--evidence-only", "--json"], repo);
       const filters = ["--status", "open", "--category", "complexity", "--path", "src/checkout.ts"];
 
       const list = await runCli(["list", ...filters, "--format", "codex", "--json"], repo);
@@ -1015,7 +1090,7 @@ ${Array.from({ length: 120 }, (_, index) => `  const dirtyValue${index} = ${inde
   test("handoff warns for stale findings", async () => {
     await withTempRepo(async (repo) => {
       await writeFixtureSource(repo);
-      await runCli(["scan", "--json"], repo);
+      await runCli(["scan", "--evidence-only", "--json"], repo);
       const candidatesPath = path.join(repo, ".deepclean", "candidates", await latestRunFile(repo));
       const candidates = JSON.parse(await readFile(candidatesPath, "utf8")) as Array<{ id: string; lifecycleState?: string; status?: string }>;
       candidates[0] = { ...candidates[0]!, lifecycleState: "stale", status: "stale" };
@@ -1044,7 +1119,7 @@ ${Array.from({ length: 120 }, (_, index) => `  const dirtyValue${index} = ${inde
       await writeFile(path.join(repo, "frontend", "app.ts"), `export function app() {\n${tsBody}\n  return true;\n}\n`, "utf8");
       await writeFile(path.join(repo, "Makefile"), "lint:\n\ttrue\n\ntypecheck:\n\ttrue\n\ntest:\n\ttrue\n", "utf8");
 
-      const result = await runCli(["scan", "--json"], repo);
+      const result = await runCli(["scan", "--evidence-only", "--json"], repo);
       expect(result.code).toBe(0);
       const payload = JSON.parse(result.stdout) as {
         data: { candidates: Array<{ files: Array<{ path: string }>; verification: string[] }> };
@@ -1060,7 +1135,7 @@ ${Array.from({ length: 120 }, (_, index) => `  const dirtyValue${index} = ${inde
     });
   });
 
-  test("scan can synthesize candidates through a local Codex-compatible command", async () => {
+  test("scan synthesizes candidates by default even with legacy enabled false config", async () => {
     await withTempRepo(async (repo) => {
       await writeFixtureSource(repo);
       await installFakeCodex(repo, `#!/usr/bin/env node
@@ -1101,10 +1176,15 @@ fs.writeFileSync(outputPath, JSON.stringify({
   notes: ["fake synthesis complete"]
 }));
 `);
+      const configPath = path.join(repo, ".deepclean", "config.json");
+      const config = JSON.parse(await readFile(configPath, "utf8")) as {
+        reviewSynthesis: { enabled: boolean };
+      };
+      config.reviewSynthesis.enabled = false;
+      await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
 
       const result = await runCli([
         "scan",
-        "--synthesize",
         "--model",
         "gpt-test",
         "--effort",
@@ -1147,6 +1227,30 @@ fs.writeFileSync(outputPath, JSON.stringify({
     });
   });
 
+  test("evidence-only mode skips provider execution", async () => {
+    await withTempRepo(async (repo) => {
+      await writeFixtureSource(repo);
+      const marker = path.join(repo, "provider-invoked.txt");
+      await installFakeCodex(repo, `#!/usr/bin/env node
+const fs = require("node:fs");
+fs.writeFileSync(${JSON.stringify(marker)}, "called");
+process.exit(0);
+`);
+
+      const result = await runCli(["scan", "--evidence-only", "--json"], repo);
+      expect(result.code).toBe(0);
+      const payload = JSON.parse(result.stdout) as {
+        data: { synthesis: { requested: boolean; candidateCount: number; runtime: { offline: boolean } } };
+        diagnostics: Array<{ code: string }>;
+      };
+      expect(payload.data.synthesis.requested).toBe(false);
+      expect(payload.data.synthesis.candidateCount).toBe(0);
+      expect(payload.data.synthesis.runtime.offline).toBe(true);
+      expect(payload.diagnostics.some((diagnostic) => diagnostic.code === "synthesis_skipped_by_policy")).toBe(true);
+      await expect(stat(marker)).rejects.toThrow();
+    });
+  });
+
   test("offline mode skips provider execution and records a policy diagnostic", async () => {
     await withTempRepo(async (repo) => {
       await writeFixtureSource(repo);
@@ -1182,7 +1286,7 @@ process.exit(0);
       config.reviewSynthesis.command = path.join(repo, "missing-codex");
       await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
 
-      const result = await runCli(["scan", "--synthesize", "--json"], repo);
+      const result = await runCli(["scan", "--json"], repo);
       expect(result.code).toBe(0);
       const payload = JSON.parse(result.stdout) as {
         diagnostics: Array<{ code: string }>;
@@ -1277,7 +1381,7 @@ process.exit(0);
       config.candidateCaps.byKind["duplicate-cluster"] = 0;
       await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
 
-      const result = await runCli(["scan", "--json"], repo);
+      const result = await runCli(["scan", "--evidence-only", "--json"], repo);
       expect(result.code).toBe(0);
       const payload = JSON.parse(result.stdout) as {
         data: { candidates: Array<{ category: string }> };
@@ -1307,7 +1411,7 @@ process.exit(0);
         }],
       }), "utf8");
 
-      const result = await runCli(["scan", "--json"], repo);
+      const result = await runCli(["scan", "--evidence-only", "--json"], repo);
       expect(result.code).toBe(0);
       const payload = JSON.parse(result.stdout) as {
         data: { candidates: Array<{ category: string; title: string }> };
@@ -1334,7 +1438,7 @@ export const value = buildThing();
       await writeFile(path.join(repo, "src", "feature.ts"), "export const feature = true;\n", "utf8");
       await writeFile(path.join(repo, "src", "utils", "index.ts"), "export const helper = 1;\n", "utf8");
 
-      const result = await runCli(["scan", "--json"], repo);
+      const result = await runCli(["scan", "--evidence-only", "--json"], repo);
       expect(result.code).toBe(0);
       const payload = JSON.parse(result.stdout) as { data: { runId: string } };
       const evidence = JSON.parse(
@@ -1360,7 +1464,7 @@ export const value = buildThing();
       config.externalAnalyzers.semgrep.command = "deepclean-missing-semgrep";
       await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
 
-      const result = await runCli(["scan", "--json"], repo);
+      const result = await runCli(["scan", "--evidence-only", "--json"], repo);
       expect(result.code).toBe(0);
       const payload = JSON.parse(result.stdout) as {
         data: { evidenceCount: number };
@@ -1415,7 +1519,7 @@ export const value = buildThing();
       config.clusters.maxFiles = 1;
       await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
 
-      await runCli(["scan", "--json"], repo);
+      await runCli(["scan", "--evidence-only", "--json"], repo);
       const result = await runCli(["cluster", "--json"], repo);
       expect(result.code).toBe(0);
       const payload = JSON.parse(result.stdout) as {
@@ -1645,7 +1749,7 @@ async function prepareFixableRepo(repo: string): Promise<{ candidateId: string; 
   await execFileAsync("git", ["config", "user.name", "Deepclean Test"], { cwd: repo });
   await execFileAsync("git", ["add", "."], { cwd: repo });
   await execFileAsync("git", ["commit", "-m", "initial"], { cwd: repo });
-  const scan = await runCli(["scan", "--json"], repo);
+  const scan = await runCli(["scan", "--evidence-only", "--json"], repo);
   const scanPayload = JSON.parse(scan.stdout) as {
     data: { candidates: Array<{ id: string; findingId?: string; confidence: string; risk: string }> };
   };

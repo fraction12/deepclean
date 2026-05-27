@@ -35,11 +35,11 @@ Add `.deepclean/` to `.gitignore` unless a repo deliberately wants to share repo
 
 ## Codex Synthesis
 
-`deepclean scan --synthesize` invokes the local `codex` command in read-only mode. By default the prompt includes structured evidence and redacts source samples. It does not dynamically load OpenClaw skills or arbitrary local agent instructions; the built-in reviewer pack is recorded in candidate provenance.
+`deepclean scan` invokes the local `codex` command in read-only mode by default after local evidence collection. By default the prompt includes structured evidence and redacts source samples. It does not dynamically load OpenClaw skills or arbitrary local agent instructions; the built-in reviewer pack is recorded in candidate provenance.
 
 Use `--allow-source-in-model` only when the target repo and configured provider are allowed to receive source excerpts. This may include snippets from files that triggered local evidence.
 
-Provider execution is disabled by `--offline`, `--local-only`, or `reviewSynthesis.offline`. `reviewSynthesis.privacyMode` may be `local-only`, `metadata`, or `source-ok`; `metadata` is the default and keeps source excerpts out unless the user explicitly allows source and sets a positive excerpt budget.
+Provider execution is disabled by `--evidence-only`, `--offline`, `--local-only`, or `reviewSynthesis.offline`. `reviewSynthesis.privacyMode` may be `local-only`, `metadata`, or `source-ok`; `metadata` is the default and keeps source excerpts out unless the user explicitly allows source and sets a positive excerpt budget.
 
 ## Generated Record Sensitivity
 

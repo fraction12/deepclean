@@ -175,7 +175,8 @@ Commands:
   ci                           Run non-interactive scan and policy gates for CI
   map                          Write semantic feature records without producing candidates
   scan                         Collect local evidence and generate candidates
-    --synthesize               Run local Codex synthesis over evidence
+    --synthesize               Run local Codex synthesis over evidence (default)
+    --evidence-only            Skip synthesis and produce local evidence candidates only
     --allow-source-in-model    Include source samples in Codex prompt
     --offline                  Skip provider calls and network-style analyzers
     --local-only               Alias for --offline
@@ -848,17 +849,28 @@ async function executeFeatureMap(context: CommandContext): Promise<{
 
 async function ciCommand(context: CommandContext): Promise<number> {
   const requireSynthesis = flagBoolean(context.parsed.flags, "require-synthesis");
-  if (requireSynthesis && !flagBoolean(context.parsed.flags, "synthesize")) {
+  const config = await ensureState(context.paths);
+  if (requireSynthesis && synthesisDisabledByPolicy(context, config)) {
     const diagnostic: Diagnostic = {
       level: "error",
       code: "ci_synthesis_required",
-      message: "CI policy requires synthesis; rerun with --synthesize and a configured provider.",
+      message: "CI policy requires synthesis; rerun without evidence-only/local-only flags and with a configured provider.",
     };
     emit(context.json, fail("ci", "ci_synthesis_required", diagnostic.message, [diagnostic]));
     return 2;
   }
 
-  const scan = await executeScan(context, { synthesize: flagBoolean(context.parsed.flags, "synthesize") });
+  const scan = await executeScan(context, {});
+  const synthesisFailure = requireSynthesis ? requiredSynthesisFailure(scan) : undefined;
+  if (synthesisFailure) {
+    const diagnostics = [
+      synthesisFailure,
+      ...scan.diagnostics.filter((diagnostic) => !sameSynthesisFailure(diagnostic, synthesisFailure)),
+    ];
+    emit(context.json, fail("ci", "ci_synthesis_failed", synthesisFailure.message, diagnostics));
+    return 2;
+  }
+
   const policy = ciPolicyFromFlags(context);
   const gate = evaluateCiPolicy(scan.data.candidates, policy);
   const createdAt = new Date().toISOString();
@@ -938,16 +950,13 @@ async function executeScan(
     config.candidateCaps,
     verificationProfile,
   );
-  const synthesisRequested = options.synthesize ?? (
-    flagBoolean(context.parsed.flags, "synthesize")
-    || config.reviewSynthesis.enabled
-  );
+  const synthesisRequested = options.synthesize ?? true;
   const runtime = providerRuntimeControls(context, config);
   if (synthesisRequested && runtime.offline) {
     adapterResult.diagnostics.push({
       level: "info",
       code: "synthesis_skipped_by_policy",
-      message: "Provider synthesis was skipped because offline/local-only mode is active.",
+      message: "Provider synthesis was skipped because evidence-only/offline/local-only mode is active.",
       adapter: "codex-synthesis",
     });
   }
@@ -2423,6 +2432,7 @@ function providerRuntimeControls(context: CommandContext, config: DeepcleanConfi
     ?? config.reviewSynthesis.privacyMode;
   const offline = flagBoolean(context.parsed.flags, "offline")
     || flagBoolean(context.parsed.flags, "local-only")
+    || flagBoolean(context.parsed.flags, "evidence-only")
     || config.reviewSynthesis.offline
     || privacyMode === "local-only";
   const excerptBudget = numberFlag(context, "excerpt-budget") ?? config.reviewSynthesis.excerptBudget;
@@ -2453,6 +2463,54 @@ function providerRuntimeControls(context: CommandContext, config: DeepcleanConfi
     runtime.effort = effort;
   }
   return runtime;
+}
+
+function synthesisDisabledByPolicy(context: CommandContext, config: DeepcleanConfig): boolean {
+  const privacyMode = privacyModeFromFlag(flagString(context.parsed.flags, "privacy-mode"))
+    ?? config.reviewSynthesis.privacyMode;
+  return flagBoolean(context.parsed.flags, "offline")
+    || flagBoolean(context.parsed.flags, "local-only")
+    || flagBoolean(context.parsed.flags, "evidence-only")
+    || config.reviewSynthesis.offline
+    || privacyMode === "local-only";
+}
+
+const requiredSynthesisFailureCodes = new Set([
+  "codex_provider_unavailable",
+  "codex_synthesis_timeout",
+  "codex_synthesis_failed",
+  "codex_synthesis_error",
+]);
+
+function requiredSynthesisFailure(scan: ScanExecutionResult): Diagnostic | undefined {
+  if (!scan.data.synthesis.requested) {
+    return {
+      level: "error",
+      code: "ci_synthesis_required",
+      message: "CI policy requires synthesis, but the scan did not run provider synthesis.",
+      adapter: "codex-synthesis",
+    };
+  }
+
+  const diagnostic = scan.diagnostics.find((item) => (
+    item.adapter === "codex-synthesis"
+    && requiredSynthesisFailureCodes.has(item.code)
+  ));
+  if (!diagnostic) {
+    return undefined;
+  }
+
+  return {
+    ...diagnostic,
+    level: "error",
+    message: `CI policy requires synthesis, but provider synthesis failed: ${diagnostic.message}`,
+  };
+}
+
+function sameSynthesisFailure(diagnostic: Diagnostic, failure: Diagnostic): boolean {
+  return diagnostic.adapter === failure.adapter
+    && diagnostic.code === failure.code
+    && requiredSynthesisFailureCodes.has(diagnostic.code);
 }
 
 function providerRuntimeSummary(runtime: ProviderRuntimeControls): Record<string, unknown> {

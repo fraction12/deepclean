@@ -30,19 +30,18 @@ deepclean next
 deepclean plan candidate-001
 ```
 
-To include local Codex synthesis:
+`deepclean scan` collects local evidence first, then runs Codex synthesis by default. Use evidence-only mode when you only want deterministic local analysis:
 
 ```bash
-deepclean scan --synthesize --json
+deepclean scan --evidence-only --json
 deepclean report
-deepclean plan theme-001
 ```
 
 Global flags work before or after the command:
 
 ```bash
-deepclean --root ./some-repo scan --synthesize
-deepclean scan --root ./some-repo --synthesize
+deepclean --root ./some-repo scan
+deepclean scan --root ./some-repo --evidence-only
 ```
 
 ## Workflow
@@ -51,7 +50,6 @@ deepclean scan --root ./some-repo --synthesize
 deepclean init
 deepclean map
 deepclean scan
-deepclean scan --synthesize
 deepclean report
 deepclean cluster
 deepclean plan theme-001 --format codex
@@ -84,7 +82,7 @@ Core commands support `--json` for automation:
 ```bash
 deepclean scan --json
 deepclean map --json
-deepclean scan --synthesize --json
+deepclean scan --evidence-only --json
 deepclean report --json
 deepclean cluster --json
 deepclean plan theme-001 --json
@@ -104,7 +102,7 @@ Useful global flags:
 
 ## Local Evidence
 
-Deepclean runs local evidence first and optional model synthesis second. The built-in evidence layer includes:
+Deepclean runs local evidence first and model synthesis second unless evidence-only or local-only mode is selected. The built-in evidence layer includes:
 
 - semantic feature mapping for package scripts, TS/JS modules/routes/components, Python modules, test suites, and config files
 - file metrics
@@ -122,7 +120,7 @@ For TS/JS projects using NodeNext-style source imports, Deepclean resolves emitt
 
 ## Codex Synthesis
 
-`deepclean scan --synthesize` runs the local `codex` CLI in read-only mode over the collected evidence bundle. The model is asked to return strict JSON, and candidates without valid evidence IDs are rejected.
+`deepclean scan` runs the local `codex` CLI in read-only mode over the collected evidence bundle by default. The model is asked to return strict JSON, and candidates without valid evidence IDs are rejected.
 
 Synthesis uses a built-in reviewer pack so runs do not depend on arbitrary local agent skills. The current pack looks for architecture boundaries, conceptual duplication, dependency graph risk, testability gaps, domain language drift, agent-sized cleanup slices, and weak findings that should be rejected.
 
@@ -137,7 +135,7 @@ Reviewer packs can be configured in `.deepclean/config.json`:
 }
 ```
 
-Source samples are redacted from the synthesis prompt by default. Use `--allow-source-in-model` only when the target repository and provider configuration make that acceptable.
+Source samples are redacted from the synthesis prompt by default. Use `--allow-source-in-model` only when the target repository and provider configuration make that acceptable. Use `--evidence-only`, `--offline`, or `--local-only` when no provider should run.
 
 See [Privacy And Trust](docs/privacy-and-trust.md), [Reviewer References](docs/reviewer-references.md), and [Troubleshooting](docs/troubleshooting.md) before using synthesis on private repos.
 
