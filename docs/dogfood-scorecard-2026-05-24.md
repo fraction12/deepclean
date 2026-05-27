@@ -13,7 +13,7 @@
 - Ranking quality: pass. Model-synthesized findings rank ahead of raw local metric findings at the same priority.
 - Theme usability: pass with caveat. Broad themes are now split where possible and marked `too-broad` when not agent-ready.
 - Report readability: pass. Reports now include `Start Here`, top themes, warnings, and suggested plan targets.
-- Privacy behavior: pass. Source samples are redacted by default; Codex synthesis is explicit.
+- Privacy behavior: pass for this historical run. Source samples were redacted by default; current alpha scans now request Codex synthesis by default and use `--evidence-only` for no-provider runs.
 - Handoff readiness: pass. Candidate and bounded theme plans generate Codex-ready packets.
 
 ## Public Alpha Caveats

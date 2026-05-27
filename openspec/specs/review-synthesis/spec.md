@@ -49,7 +49,7 @@ The system SHALL handle provider failures without discarding local evidence coll
 The system SHALL support maintainability investigation review modes focused on cleanup candidates, with built-in reviewer rubrics as the default and optional configured custom rubrics.
 
 #### Scenario: Default scan runs
-- **WHEN** an agent runs `deepclean scan --synthesize`
+- **WHEN** an agent runs `deepclean scan`
 - **THEN** the default synthesis objective is to rank maintainability cleanup candidates using the built-in reviewer pack and not to generate code patches
 
 ### Requirement: Configurable reviewer pack
@@ -70,7 +70,7 @@ The system SHALL validate custom reviewer rubric files before including them in 
 The system MUST NOT depend on OpenClaw skills, local agent workspaces, or private user instruction files for default public-alpha synthesis behavior.
 
 #### Scenario: User runs Deepclean outside OpenClaw
-- **WHEN** a user installs Deepclean in a plain terminal and runs `deepclean scan --synthesize`
+- **WHEN** a user installs Deepclean in a plain terminal and runs `deepclean scan`
 - **THEN** the built-in reviewer pack is sufficient for synthesis prompts without reading external agent skills
 
 ### Requirement: Credited external reviewer references

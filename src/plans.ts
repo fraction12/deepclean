@@ -42,7 +42,7 @@ export function buildCandidatePlan(
       description: "Run the listed verification commands, then run Deepclean again to confirm the candidate no longer appears or has lower priority.",
       candidateIds: [candidate.id],
       files: [],
-      verification: [...candidate.verification, "deepclean scan --synthesize"],
+      verification: [...candidate.verification, "deepclean scan"],
     },
   ];
   const plan = basePlan({
@@ -95,7 +95,7 @@ export function buildClusterPlan(
       description: "Run verification, regenerate the report, and triage any remaining candidates in this cluster with notes.",
       candidateIds: ordered.map((candidate) => candidate.id),
       files: clusterFiles,
-      verification: [...cluster.verification, "deepclean scan --synthesize", "deepclean cluster"],
+      verification: [...cluster.verification, "deepclean scan", "deepclean cluster"],
     },
   ];
   const plan = basePlan({

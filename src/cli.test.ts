@@ -1505,6 +1505,8 @@ export const value = buildThing();
     });
     const plan = buildCandidatePlan("run-test", candidate, []);
     expect(plan.steps[0]?.files).toHaveLength(1);
+    expect(plan.steps.at(-1)?.verification).toContain("deepclean scan");
+    expect(plan.steps.at(-1)?.verification).not.toContain("deepclean scan --synthesize");
     expect(plan.content.match(/src\/example\.ts:1-20/g)?.length).toBeLessThanOrEqual(3);
   });
 
