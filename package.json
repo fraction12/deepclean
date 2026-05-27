@@ -34,14 +34,17 @@
     "deepclean": "dist/cli.js"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
+    "build": "npm run clean && tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "ci": "npm run typecheck && npm test && npm run build && npm run smoke:package",
+    "ci": "npm run typecheck && npm test && npm run smoke:build-clean && npm run smoke:package",
     "dev": "tsx src/cli.ts",
-    "release:check": "npm run ci && node scripts/release-check.mjs",
+    "release:check": "npm run ci && node scripts/prepare-release-smoke.mjs && node scripts/release-check.mjs",
+    "release:prepare": "node scripts/prepare-release.mjs",
     "spec:validate": "node scripts/spec-validate.mjs",
     "sync:matt-skills": "node scripts/sync-matt-pocock-skills.mjs",
-    "test": "vitest run src/cli.test.ts",
+    "smoke:build-clean": "node scripts/build-clean-smoke.mjs",
+    "test": "vitest run --exclude \"dist/**\"",
     "smoke:package": "npm run build && node scripts/package-smoke.mjs"
   },
   "engines": {
