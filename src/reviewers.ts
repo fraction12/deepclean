@@ -224,11 +224,14 @@ export const reviewerRubrics: ReviewerRubric[] = [
       "candidate dependencies that should block or sequence later cleanup plans",
       "missing agent brief details: established facts, unresolved questions, constraints, verification, and expected output",
       "themes that should be split because they cross too many modules or require multiple decisions",
+      "slices with a clear stop line, explicit non-goals, and behavior-preserving verification",
+      "small boundary extractions that make future work harder to break without rewriting the surrounding system",
     ],
     reject: [
       "broad modernization themes that no agent could complete in one bounded pass",
       "plans that describe layers to edit instead of end-to-end behavior to preserve",
       "findings with unresolved product or domain questions presented as ready-to-fix",
+      "large-file or large-function findings with no proof of change pressure, bug proximity, missing tests, caller pain, or natural extraction boundary",
     ],
     output: [
       "state whether the candidate is agent-ready or design-needed",
@@ -266,12 +269,15 @@ export const reviewerRubrics: ReviewerRubric[] = [
       "candidates supported by multiple evidence types or a strong graph/duplication signal",
       "clear impact, root cause, and future-agent handoff value",
       "bounded cleanup work rather than broad modernization",
+      "proof that the cleanup improves reliability or future-change safety, not just aesthetics",
+      "explicit non-goals that keep future agents from over-refactoring",
     ],
     reject: [
       "one-metric findings presented as architectural conclusions",
       "anything without valid evidence IDs",
       "claims that require reading source that was not provided",
       "recommendations to rewrite large areas without a staged verification plan",
+      "themes masquerading as tasks when the next PR-sized slice is not named",
     ],
     output: [
       "prefer fewer stronger findings",

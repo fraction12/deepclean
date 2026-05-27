@@ -1031,6 +1031,8 @@ fs.writeFileSync(outputPath, JSON.stringify({
         data: { handoff: { content: string }; path: string };
       };
       expect(payload.data.handoff.content).toContain("TASK:");
+      expect(payload.data.handoff.content).toContain("Tests first:");
+      expect(payload.data.handoff.content).toContain("Do not:");
       const saved = await readFile(payload.data.path, "utf8");
       expect(saved).toContain("candidateId");
     });
@@ -1066,6 +1068,8 @@ fs.writeFileSync(outputPath, JSON.stringify({
       expect(payload.data.plan.targetType).toBe("cluster");
       expect(payload.data.plan.steps.length).toBeGreaterThan(1);
       expect(payload.data.plan.content).toContain("TASK:");
+      expect(payload.data.plan.content).toContain("Slice Queue:");
+      expect(payload.data.plan.content).toContain("Expected No-op Behavior:");
       const saved = await readFile(payload.data.path, "utf8");
       expect(saved).toContain("constraints");
     });
@@ -1614,7 +1618,9 @@ export const value = buildThing();
     expect(plan.steps[0]?.files).toHaveLength(1);
     expect(plan.steps.at(-1)?.verification).toContain("deepclean scan");
     expect(plan.steps.at(-1)?.verification).not.toContain("deepclean scan --synthesize");
-    expect(plan.content.match(/src\/example\.ts:1-20/g)?.length).toBeLessThanOrEqual(3);
+    expect(plan.content).toContain("Slice Queue:");
+    expect(plan.content).toContain("Stop line:");
+    expect(plan.content).toContain("Non-goals:");
   });
 
   test("marks broad themes as too broad and blocks agent-ready plans", async () => {
