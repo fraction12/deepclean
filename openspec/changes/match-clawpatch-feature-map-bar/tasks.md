@@ -1,10 +1,10 @@
-- [ ] 1. Extend feature record schema with map source, entrypoints, file roles, reasons, and feature confidence metadata.
-- [ ] 2. Add `deepclean map --source heuristic|auto|agent` with deterministic mapping available without providers.
-- [ ] 3. Strengthen deterministic detectors for TS/JS imports, React route/page/component entrypoints, Python route modules, package scripts, jobs/workers/services, tests, config, and generated path exclusion.
-- [ ] 4. Attach feature IDs and per-file roles to evidence records during scan when feature mapping exists.
-- [ ] 5. Attach affected feature IDs to candidates and prefer feature-scoped candidate explanations where evidence supports the boundary.
-- [ ] 6. Add feature-scoped filtering to report/next/show/plan/handoff surfaces where appropriate.
-- [ ] 7. Update report and plan rendering to group by feature and distinguish entrypoints, owned files, context/shared files, tests, verification, and non-goals.
-- [ ] 8. Constrain provider-assisted feature enrichment to deterministic seed maps and validate enriched output before persisting it.
-- [ ] 9. Add CLI tests and fixture repos that prove map parity behavior without provider access.
-- [ ] 10. Run `npm run typecheck`, `npm test`, `npm run spec:validate`, and `npm run release:check`.
+- [x] 1. Extend feature record schema with map source, entrypoints, file roles, reasons, and feature confidence metadata.
+- [x] 2. Add `deepclean map --source heuristic|auto|agent` with deterministic mapping available without providers.
+- [x] 3. Strengthen deterministic detectors for TS/JS imports, React route/page/component entrypoints, Python route modules, package scripts, jobs/workers/services, tests, config, and generated path exclusion.
+- [x] 4. Attach feature IDs and per-file roles to evidence records during scan when feature mapping exists.
+- [x] 5. Attach affected feature IDs to candidates and prefer feature-scoped candidate explanations where evidence supports the boundary.
+- [x] 6. Add feature-scoped filtering to report/next/show/plan/handoff surfaces where appropriate.
+- [x] 7. Update report and plan rendering to group by feature and distinguish entrypoints, owned files, context/shared files, tests, verification, and non-goals.
+- [x] 8. Constrain provider-assisted feature enrichment to deterministic seed maps and validate enriched output before persisting it.
+- [x] 9. Add CLI tests and fixture repos that prove map parity behavior without provider access.
+- [x] 10. Run `npm run typecheck`, `npm test`, `npm run spec:validate`, and `npm run release:check`.

@@ -18,6 +18,7 @@ import {
   type DeepcleanConfig,
   type Diagnostic,
   type EvidenceRecord,
+  type FeatureRecord,
   type FileReference,
   type SynthesisAttemptRecord,
 } from "./types.js";
@@ -71,6 +72,7 @@ export async function synthesizeWithCodex(options: {
   runId: string;
   createdAt: string;
   evidence: EvidenceRecord[];
+  features?: FeatureRecord[] | undefined;
   config: DeepcleanConfig;
   existingCandidates: CandidateRecord[];
   includeSource: boolean;
@@ -206,6 +208,8 @@ export async function synthesizeWithCodex(options: {
         risk: draft.risk,
         files: draft.files,
         evidenceIds: validation.evidenceIds,
+        affectedFeatureIds: [],
+        featureScope: "unmapped",
         whyItMatters: draft.whyItMatters,
         likelyRootCause: draft.likelyRootCause,
         suggestedDirection: draft.suggestedDirection,
@@ -291,6 +295,7 @@ export async function synthesizeWithCodex(options: {
 
 function buildPrompt(options: {
   evidence: EvidenceRecord[];
+  features?: FeatureRecord[] | undefined;
   existingCandidates: CandidateRecord[];
   includeSource: boolean;
   verificationProfile?: VerificationProfile | undefined;
@@ -306,6 +311,19 @@ function buildPrompt(options: {
     confidence: record.confidence,
     data: redactedData(record.data, options.includeSource),
   }));
+  const featureBundle = (options.features ?? []).map((feature) => ({
+    featureId: feature.featureId,
+    title: feature.title,
+    kind: feature.kind,
+    confidence: feature.confidence,
+    entrypoints: feature.entrypoints,
+    ownedFiles: feature.ownedFiles,
+    contextFiles: feature.contextFiles,
+    testFiles: feature.testFiles,
+    fileRoles: feature.fileRoles,
+    reasons: feature.reasons,
+    verification: feature.verification,
+  }));
   const existing = options.existingCandidates.map((candidate) => ({
     id: candidate.id,
     title: candidate.title,
@@ -313,6 +331,8 @@ function buildPrompt(options: {
     priority: candidate.priority,
     confidence: candidate.confidence,
     evidenceIds: candidate.evidenceIds,
+    affectedFeatureIds: candidate.affectedFeatureIds,
+    featureScope: candidate.featureScope,
   }));
 
   return `You are Deepclean's maintainability synthesis reviewer.
@@ -350,9 +370,13 @@ ${JSON.stringify(options.verificationProfile ?? {}, null, 2)}
 Cleanup surfaces:
 ${JSON.stringify(cleanupSurfaces, null, 2)}
 
+Feature map:
+${JSON.stringify(featureBundle, null, 2)}
+
 Hard rules:
 - every candidate MUST cite one or more provided evidenceIds
 - every file reference MUST include path, startLine, and endLine; use startLine 1 and endLine 1 when exact line evidence is unavailable
+- use the feature map as the bounded review surface; do not invent feature ownership outside listed feature IDs, paths, imports, tests, commands, or reasons
 - do not suggest modifying code as part of this response
 - no security claims unless directly supported by evidence
 - verification commands should be practical for a future agent, usually npm test and npm run typecheck

@@ -3,7 +3,13 @@ import path from "node:path";
 import { defaultExcludeDirs } from "./defaults.js";
 import { isTestPath, normalizePath, type SourceFile } from "./discovery.js";
 import { stableId } from "./ids.js";
-import { schemaVersion, type FeatureRecord, type FileReference } from "./types.js";
+import {
+  schemaVersion,
+  type CandidateRecord,
+  type EvidenceRecord,
+  type FeatureRecord,
+  type FileReference,
+} from "./types.js";
 import { commandsForFiles, type VerificationProfile } from "./verification.js";
 
 interface FeatureMapOptions {
@@ -13,6 +19,7 @@ interface FeatureMapOptions {
   files: SourceFile[];
   verificationProfile: VerificationProfile;
   excludes?: string[];
+  mapSource?: FeatureRecord["mapSource"];
 }
 
 interface PackageJson {
@@ -33,6 +40,47 @@ export async function mapSemanticFeatures(options: FeatureMapOptions): Promise<F
     ...configFeatures(options, packages),
   ];
   return dedupeFeatures(features).sort(compareFeatures);
+}
+
+export function attachFeatureContextToEvidence(
+  evidence: EvidenceRecord[],
+  features: FeatureRecord[],
+): EvidenceRecord[] {
+  const index = featureIndex(features);
+  return evidence.map((record) => {
+    const fileRoles = record.files.flatMap((file) => rolesForPath(index, file.path));
+    return {
+      ...record,
+      affectedFeatureIds: uniqueStrings(fileRoles.map((role) => role.featureId)),
+      fileRoles,
+    };
+  });
+}
+
+export function attachFeatureContextToCandidates(
+  candidates: CandidateRecord[],
+  features: FeatureRecord[] = [],
+): CandidateRecord[] {
+  const index = featureIndex(features);
+  return candidates.map((candidate) => ({
+    ...candidate,
+    affectedFeatureIds: uniqueStrings([
+      ...candidate.affectedFeatureIds,
+      ...candidate.files.flatMap((file) => rolesForPath(index, file.path).map((role) => role.featureId)),
+    ]),
+    featureScope: candidateFeatureScope([
+      ...candidate.affectedFeatureIds,
+      ...candidate.files.flatMap((file) => rolesForPath(index, file.path).map((role) => role.featureId)),
+    ], candidate.featureScope),
+  }));
+}
+
+export function featuresForCandidate(
+  candidate: CandidateRecord,
+  features: FeatureRecord[],
+): FeatureRecord[] {
+  const ids = new Set(candidate.affectedFeatureIds);
+  return features.filter((feature) => ids.has(feature.featureId));
 }
 
 function packageScriptFeatures(options: FeatureMapOptions, packages: PackageRecord[]): FeatureRecord[] {
@@ -59,6 +107,7 @@ function packageScriptFeatures(options: FeatureMapOptions, packages: PackageReco
         testFiles: script.includes("test") ? [{ path: packageJson.path }] : [],
         verification: [command],
         tags: ["package-script", `script:${script}`, packageRoot ? `package:${packageRoot}` : "package:root"],
+        reasons: [`package.json script "${script}" is an executable repository entrypoint.`],
       }));
     }
   }
@@ -66,10 +115,12 @@ function packageScriptFeatures(options: FeatureMapOptions, packages: PackageReco
 }
 
 function sourceFeatures(options: FeatureMapOptions): FeatureRecord[] {
-  const sourceFiles = options.files.filter((file) => !isTestPath(file.path));
+  const sourceFiles = options.files.filter((file) => !isTestPath(file.path) && !isGeneratedPath(file.path));
+  const sourceByPath = new Map(options.files.map((file) => [file.path, file]));
   return sourceFiles.map((file) => {
     const kind = sourceFeatureKind(file);
     const tests = nearbyTests(file, options.files);
+    const contextFiles = uniqueFileReferences([...localImportReferences(file, sourceByPath), ...tests]);
     const owned = [{ path: file.path, startLine: 1, endLine: Math.max(1, file.lines.length) }];
     const verification = commandsForFiles(options.verificationProfile, owned, tests.length > 0 ? ["npm test"] : []);
     const label = sourceFeatureTitle(file, kind);
@@ -83,16 +134,17 @@ function sourceFeatures(options: FeatureMapOptions): FeatureRecord[] {
       confidence: kind === "route" || kind === "component" ? "high" : "medium",
       entrypoints: [{ path: file.path }],
       ownedFiles: owned,
-      contextFiles: tests,
+      contextFiles,
       testFiles: tests,
       verification,
       tags: sourceTags(file, kind),
+      reasons: sourceReasons(file, kind, tests, contextFiles),
     });
   });
 }
 
 function testSuiteFeatures(options: FeatureMapOptions): FeatureRecord[] {
-  const tests = options.files.filter((file) => isTestPath(file.path));
+  const tests = options.files.filter((file) => isTestPath(file.path) && !isGeneratedPath(file.path));
   return tests.map((file) => featureRecord({
     options,
     key: `test-suite:${file.path}`,
@@ -107,6 +159,7 @@ function testSuiteFeatures(options: FeatureMapOptions): FeatureRecord[] {
     testFiles: [{ path: file.path }],
     verification: commandsForFiles(options.verificationProfile, [{ path: file.path }], ["npm test"]),
     tags: ["test-suite", languageTag(file)],
+    reasons: ["test path matched Deepclean's deterministic test discovery rules."],
   }));
 }
 
@@ -137,6 +190,7 @@ function configFeatures(options: FeatureMapOptions, packages: PackageRecord[]): 
     testFiles: [],
     verification: options.verificationProfile.defaultCommands,
     tags: ["config"],
+    reasons: ["file is a recognized project configuration or package manifest entrypoint."],
   }));
 }
 
@@ -154,7 +208,15 @@ function featureRecord(args: {
   testFiles: FileReference[];
   verification: string[];
   tags: string[];
+  reasons: string[];
 }): FeatureRecord {
+  const fileRoles = deriveFeatureFileRoles({
+    kind: args.kind,
+    entrypoints: args.entrypoints,
+    ownedFiles: args.ownedFiles,
+    contextFiles: args.contextFiles,
+    testFiles: args.testFiles,
+  });
   return {
     schemaVersion,
     recordType: "feature",
@@ -164,11 +226,15 @@ function featureRecord(args: {
     summary: args.summary,
     kind: args.kind,
     source: args.source,
+    mapSource: args.options.mapSource ?? "heuristic",
+    mapperVersion: "local-v1",
     confidence: args.confidence,
     entrypoints: uniqueFileReferences(args.entrypoints),
     ownedFiles: uniqueFileReferences(args.ownedFiles),
     contextFiles: uniqueFileReferences(args.contextFiles),
     testFiles: uniqueFileReferences(args.testFiles),
+    fileRoles,
+    reasons: uniqueStrings(args.reasons).slice(0, 8),
     verification: uniqueStrings(args.verification).slice(0, 8),
     tags: uniqueStrings(args.tags),
     createdAt: args.options.createdAt,
@@ -177,21 +243,24 @@ function featureRecord(args: {
 }
 
 function sourceFeatureKind(file: SourceFile): FeatureRecord["kind"] {
-  if (file.extension === ".py") {
-    return "python-module";
-  }
   if (isRouteFile(file)) {
     return "route";
   }
   if (isComponentFile(file)) {
     return "component";
   }
+  if (file.extension === ".py") {
+    return "python-module";
+  }
   return "module";
 }
 
 function isRouteFile(file: SourceFile): boolean {
   return /(^|\/)(app|pages|routes)\//.test(file.path)
+    || /(^|\/)(api|views|routers?)\//.test(file.path)
     || /\b(router|app)\.(get|post|put|patch|delete)\(/.test(file.text)
+    || /@(router|app)\.(get|post|put|patch|delete)\b/.test(file.text)
+    || /\b(APIRouter|FastAPI)\(/.test(file.text)
     || /\b(createBrowserRouter|createRoutesFromElements)\(/.test(file.text);
 }
 
@@ -232,6 +301,12 @@ function sourceFeatureSummary(file: SourceFile, kind: FeatureRecord["kind"]): st
 
 function sourceTags(file: SourceFile, kind: FeatureRecord["kind"]): string[] {
   const tags = [kind, languageTag(file), `area:${areaTag(file.path)}`];
+  if (/(^|\/)(services?|service)\//.test(file.path)) {
+    tags.push("service");
+  }
+  if (/(^|\/)(jobs?|workers?|queues?)\//.test(file.path) || /\b(worker|job|queue)\b/i.test(file.path)) {
+    tags.push("job-worker");
+  }
   if (file.text.includes("fetch(") || file.text.includes("axios.") || file.text.includes("requests.")) {
     tags.push("external-client");
   }
@@ -239,6 +314,95 @@ function sourceTags(file: SourceFile, kind: FeatureRecord["kind"]): string[] {
     tags.push("environment");
   }
   return tags;
+}
+
+function sourceReasons(
+  file: SourceFile,
+  kind: FeatureRecord["kind"],
+  tests: FileReference[],
+  contextFiles: FileReference[],
+): string[] {
+  const reasons = [`${file.path} matched deterministic ${kind} discovery.`];
+  if (kind === "route") {
+    reasons.push("file path or source text indicates a route entrypoint.");
+  }
+  if (kind === "component") {
+    reasons.push("file extension and JSX/component exports indicate a UI component.");
+  }
+  if (tests.length > 0) {
+    reasons.push("nearby tests were matched by source basename or directory.");
+  }
+  if (contextFiles.some((contextFile) => !tests.some((testFile) => testFile.path === contextFile.path))) {
+    reasons.push("local imports were resolved into context files.");
+  }
+  if (/(^|\/)(services?|service)\//.test(file.path)) {
+    reasons.push("path indicates service-layer ownership.");
+  }
+  if (/(^|\/)(jobs?|workers?|queues?)\//.test(file.path) || /\b(worker|job|queue)\b/i.test(file.path)) {
+    reasons.push("path indicates job or worker ownership.");
+  }
+  return reasons;
+}
+
+function localImportReferences(file: SourceFile, sourceByPath: Map<string, SourceFile>): FileReference[] {
+  const references: FileReference[] = [];
+  const patterns = [
+    /\bimport\s+(?:[^'"]+\s+from\s+)?["']([^"']+)["']/g,
+    /\bexport\s+[^'"]+\s+from\s+["']([^"']+)["']/g,
+    /\bimport\(["']([^"']+)["']\)/g,
+    /\brequire\(["']([^"']+)["']\)/g,
+    /^\s*from\s+([.\w]+)\s+import\s+/gm,
+    /^\s*import\s+([.\w]+)\s*$/gm,
+  ];
+  for (const pattern of patterns) {
+    for (const match of file.text.matchAll(pattern)) {
+      const specifier = match[1];
+      if (!specifier) {
+        continue;
+      }
+      const resolved = resolveLocalImport(file.path, specifier, sourceByPath);
+      if (resolved && resolved !== file.path) {
+        references.push({ path: resolved });
+      }
+    }
+  }
+  return uniqueFileReferences(references).slice(0, 8);
+}
+
+function resolveLocalImport(
+  fromPath: string,
+  specifier: string,
+  sourceByPath: Map<string, SourceFile>,
+): string | undefined {
+  if (!specifier.startsWith(".") && !specifier.startsWith("/")) {
+    return undefined;
+  }
+  const fromDir = path.posix.dirname(fromPath);
+  const base = normalizePath(specifier.startsWith("/")
+    ? specifier.slice(1)
+    : path.posix.normalize(path.posix.join(fromDir, specifier)));
+  const candidates = [
+    base,
+    base.replace(/\.[cm]?js$/, ".ts"),
+    base.replace(/\.jsx$/, ".tsx"),
+    `${base}.ts`,
+    `${base}.tsx`,
+    `${base}.js`,
+    `${base}.jsx`,
+    `${base}.py`,
+    `${base}/index.ts`,
+    `${base}/index.tsx`,
+    `${base}/index.js`,
+    `${base}/index.jsx`,
+    `${base}/__init__.py`,
+  ];
+  return candidates.find((candidate) => sourceByPath.has(candidate) && !isGeneratedPath(candidate));
+}
+
+function isGeneratedPath(filePath: string): boolean {
+  return /(^|\/)(generated|__generated__|gen|vendor|dist|build|coverage)\//.test(filePath)
+    || /\.generated\.[^.]+$/.test(filePath)
+    || /\.gen\.[^.]+$/.test(filePath);
 }
 
 function languageTag(file: SourceFile): string {
@@ -322,6 +486,86 @@ function uniqueFileReferences(files: FileReference[]): FileReference[] {
 
 function uniqueStrings(values: string[]): string[] {
   return [...new Set(values.filter(Boolean))];
+}
+
+function deriveFeatureFileRoles(args: {
+  kind: FeatureRecord["kind"];
+  entrypoints: FileReference[];
+  ownedFiles: FileReference[];
+  contextFiles: FileReference[];
+  testFiles: FileReference[];
+}): FeatureRecord["fileRoles"] {
+  const roles = new Map<string, FeatureRecord["fileRoles"][number]["role"]>();
+  for (const file of args.contextFiles) {
+    roles.set(file.path, "context");
+  }
+  for (const file of args.ownedFiles) {
+    roles.set(file.path, args.kind === "config" ? "config" : "owned");
+  }
+  for (const file of args.entrypoints) {
+    roles.set(file.path, args.kind === "config" ? "config" : "entrypoint");
+  }
+  for (const file of args.testFiles) {
+    roles.set(file.path, "test");
+  }
+  return [...roles.entries()]
+    .map(([filePath, role]) => ({ path: filePath, role }))
+    .sort((a, b) => a.path.localeCompare(b.path) || a.role.localeCompare(b.role));
+}
+
+function featureIndex(features: FeatureRecord[]): Map<string, Array<{
+  featureId: string;
+  role: FeatureRecord["fileRoles"][number]["role"];
+}>> {
+  const index = new Map<string, Array<{
+    featureId: string;
+    role: FeatureRecord["fileRoles"][number]["role"];
+  }>>();
+  for (const feature of features) {
+    for (const role of feature.fileRoles) {
+      const current = index.get(role.path) ?? [];
+      current.push({ featureId: feature.featureId, role: role.role });
+      index.set(role.path, current);
+    }
+  }
+  for (const [filePath, roles] of index.entries()) {
+    const featureIds = new Set(roles.map((role) => role.featureId));
+    if (featureIds.size <= 1) {
+      continue;
+    }
+    index.set(filePath, roles.map((role) => (
+      role.role === "owned" || role.role === "entrypoint"
+        ? { ...role, role: "shared" as const }
+        : role
+    )));
+  }
+  return index;
+}
+
+function rolesForPath(
+  index: Map<string, Array<{ featureId: string; role: FeatureRecord["fileRoles"][number]["role"] }>>,
+  filePath: string,
+): Array<{ path: string; featureId: string; role: FeatureRecord["fileRoles"][number]["role"] }> {
+  return (index.get(filePath) ?? [])
+    .map((role) => ({ path: filePath, ...role }))
+    .sort((a, b) => a.featureId.localeCompare(b.featureId) || a.role.localeCompare(b.role));
+}
+
+function candidateFeatureScope(
+  featureIds: string[],
+  existing: CandidateRecord["featureScope"] | undefined,
+): CandidateRecord["featureScope"] {
+  const uniqueFeatureIds = uniqueStrings(featureIds);
+  if (uniqueFeatureIds.length === 0) {
+    return existing ?? "unmapped";
+  }
+  if (uniqueFeatureIds.length === 1) {
+    if (existing === "shared-context") {
+      return "shared-context";
+    }
+    return "feature-local";
+  }
+  return "cross-feature";
 }
 
 function dedupeFeatures(features: FeatureRecord[]): FeatureRecord[] {

@@ -235,13 +235,16 @@ function evidenceFromSarif(context: AdapterContext, parsed: unknown, sarifPath: 
 
 function makeEvidence(
   context: AdapterContext,
-  values: Omit<EvidenceRecord, "schemaVersion" | "recordType" | "runId" | "createdAt">,
+  values: Omit<EvidenceRecord, "schemaVersion" | "recordType" | "runId" | "createdAt" | "affectedFeatureIds" | "fileRoles"> &
+    Partial<Pick<EvidenceRecord, "affectedFeatureIds" | "fileRoles">>,
 ): EvidenceRecord {
   return {
     schemaVersion,
     recordType: "evidence",
     runId: context.runId,
     createdAt: context.createdAt,
+    affectedFeatureIds: [],
+    fileRoles: [],
     ...values,
   };
 }

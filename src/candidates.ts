@@ -164,6 +164,8 @@ function candidateForEvidence(
     status: "open" as const,
     files: evidence.files,
     evidenceIds: [evidence.id],
+    affectedFeatureIds: evidence.affectedFeatureIds,
+    featureScope: featureScopeForEvidence(evidence),
     provenance: {
       source: "local-evidence" as const,
     },
@@ -282,6 +284,20 @@ function candidateForEvidence(
     default:
       return undefined;
   }
+}
+
+function featureScopeForEvidence(evidence: EvidenceRecord): CandidateRecord["featureScope"] {
+  if (evidence.affectedFeatureIds.length === 0) {
+    return "unmapped";
+  }
+  if (evidence.affectedFeatureIds.length > 1) {
+    return "cross-feature";
+  }
+  const roles = new Set(evidence.fileRoles.map((role) => role.role));
+  if (roles.has("shared") || roles.has("context")) {
+    return "shared-context";
+  }
+  return "feature-local";
 }
 
 function compareEvidence(a: EvidenceRecord, b: EvidenceRecord): number {

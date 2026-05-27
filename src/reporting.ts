@@ -3,6 +3,7 @@ import {
   type CandidateRecord,
   type ClusterRecord,
   type EvidenceRecord,
+  type FeatureRecord,
   type HandoffRecord,
   type ReportRecord,
 } from "./types.js";
@@ -12,6 +13,7 @@ export function buildReportRecord(
   runId: string,
   candidates: CandidateRecord[],
   clusters: ClusterRecord[] = [],
+  features: FeatureRecord[] = [],
 ): ReportRecord {
   const byPriority: Record<string, number> = {};
   for (const candidate of candidates) {
@@ -30,12 +32,12 @@ export function buildReportRecord(
       total: candidates.length,
       byPriority,
     },
-    recommendations: buildReportRecommendations(candidates, clusters),
+    recommendations: buildReportRecommendations(candidates, clusters, features),
   };
 }
 
-export function renderMarkdownReport(candidates: CandidateRecord[]): string {
-  const recommendations = buildReportRecommendations(candidates, []);
+export function renderMarkdownReport(candidates: CandidateRecord[], features: FeatureRecord[] = []): string {
+  const recommendations = buildReportRecommendations(candidates, [], features);
   const queuedCandidates = agentQueueCandidates(candidates.filter((candidate) => candidate.status === "open"));
   const lines = [
     "# Deepclean Report",
@@ -43,33 +45,13 @@ export function renderMarkdownReport(candidates: CandidateRecord[]): string {
     `Found ${candidates.length} cleanup candidate${candidates.length === 1 ? "" : "s"}.`,
     "",
     ...recommendationMarkdown(recommendations),
+    ...featureMapMarkdown(candidates, features),
     ...agentQueueMarkdown(queuedCandidates),
   ];
 
   lines.push("## Candidate Appendix", "");
   for (const candidate of candidates.slice(0, 40)) {
-    lines.push(
-      `## ${candidate.priority} ${candidate.id}: ${candidate.title}`,
-      "",
-      `- Status: ${candidate.status}`,
-      `- Finding: ${candidate.findingId ?? "unlinked"}`,
-      `- Revalidation: ${candidate.lifecycleState ?? "open"}`,
-      `- Category: ${candidate.category}`,
-      `- Confidence: ${candidate.confidence}`,
-      `- Impact: ${candidate.impact}`,
-      `- Effort: ${candidate.effort}`,
-      `- Risk: ${candidate.risk}`,
-      `- Files: ${candidate.files.map((file) => formatFile(file)).join(", ") || "n/a"}`,
-      "",
-      `Why it matters: ${candidate.whyItMatters}`,
-      "",
-      `Likely root cause: ${candidate.likelyRootCause}`,
-      "",
-      `Suggested direction: ${candidate.suggestedDirection}`,
-      "",
-      `Verification: ${candidate.verification.join(", ")}`,
-      "",
-    );
+    lines.push(...candidateMarkdown(candidate));
   }
   if (candidates.length > 40) {
     lines.push(`_Appendix truncated to 40 candidates. Full candidate records are in the JSON artifact._`, "");
@@ -81,8 +63,9 @@ export function renderMarkdownReport(candidates: CandidateRecord[]): string {
 export function renderMarkdownReportWithClusters(
   candidates: CandidateRecord[],
   clusters: ClusterRecord[],
+  features: FeatureRecord[] = [],
 ): string {
-  const recommendations = buildReportRecommendations(candidates, clusters);
+  const recommendations = buildReportRecommendations(candidates, clusters, features);
   const queuedCandidates = agentQueueCandidates(candidates.filter((candidate) => candidate.status === "open"));
   const lines = [
     "# Deepclean Report",
@@ -90,6 +73,7 @@ export function renderMarkdownReportWithClusters(
     `Found ${candidates.length} cleanup candidate${candidates.length === 1 ? "" : "s"} across ${clusters.length} theme${clusters.length === 1 ? "" : "s"}.`,
     "",
     ...recommendationMarkdown(recommendations),
+    ...featureMapMarkdown(candidates, features),
     ...agentQueueMarkdown(queuedCandidates),
   ];
 
@@ -140,6 +124,7 @@ function agentQueueMarkdown(candidates: CandidateRecord[]): string[] {
     const source = candidate.provenance.source === "model-synthesis" ? "synthesized" : "local";
     lines.push(
       `- ${candidate.id} ${candidate.priority} ${candidate.title} (${source}, ${candidate.confidence})`,
+      `  Feature scope: ${candidate.featureScope}; Features: ${candidate.affectedFeatureIds.join(", ") || "unmapped"}`,
       `  Files: ${candidate.files.slice(0, 4).map(formatFile).join(", ") || "n/a"}`,
       `  Verification: ${candidate.verification.join(", ")}`,
     );
@@ -159,6 +144,7 @@ function clusterWarningMarkdown(cluster: ClusterRecord): string[] {
 function buildReportRecommendations(
   candidates: CandidateRecord[],
   clusters: ClusterRecord[],
+  features: FeatureRecord[] = [],
 ): NonNullable<ReportRecord["recommendations"]> {
   const openCandidates = candidates.filter((candidate) => candidate.status === "open");
   const boundedThemes = clusters.filter((cluster) => (cluster.actionability ?? "bounded") === "bounded");
@@ -168,11 +154,18 @@ function buildReportRecommendations(
   const warnings = clusters.flatMap((cluster) => (cluster.warnings ?? []).map((warning) => `${cluster.id}: ${warning}`));
   const firstTheme = boundedThemes[0];
   const firstCandidate = queuedCandidates[0];
+  const firstFeature = firstCandidate
+    ? features.find((feature) => firstCandidate.affectedFeatureIds.includes(feature.featureId))
+    : undefined;
   const startHere = firstCandidate
     ? {
       id: firstCandidate.id,
       type: "candidate" as const,
-      reason: "Highest-ranked PR-sized cleanup slice; generate a focused plan before making changes.",
+      reason: firstFeature
+        ? `Highest-ranked PR-sized cleanup slice inside ${firstFeature.title}; keep the plan inside that feature boundary unless the candidate is marked cross-feature.`
+        : "Highest-ranked PR-sized cleanup slice; generate a focused plan before making changes.",
+      featureId: firstFeature?.featureId,
+      featureTitle: firstFeature?.title,
     }
     : firstTheme
       ? {
@@ -188,6 +181,42 @@ function buildReportRecommendations(
     warnings,
     suggestedPlanTargets: [...topCandidateIds.slice(0, 4), ...topThemeIds.slice(0, 1)],
   };
+}
+
+function featureMapMarkdown(candidates: CandidateRecord[], features: FeatureRecord[]): string[] {
+  if (features.length === 0) {
+    return [];
+  }
+  const candidateIdsByFeature = new Map<string, string[]>();
+  for (const candidate of candidates) {
+    for (const featureId of candidate.affectedFeatureIds) {
+      const current = candidateIdsByFeature.get(featureId) ?? [];
+      current.push(candidate.id);
+      candidateIdsByFeature.set(featureId, current);
+    }
+  }
+  const mappedFeatures = features
+    .filter((feature) => candidateIdsByFeature.has(feature.featureId))
+    .slice(0, 12);
+  if (mappedFeatures.length === 0) {
+    return [];
+  }
+  const lines = ["## Feature Map", ""];
+  for (const feature of mappedFeatures) {
+    const candidateIds = candidateIdsByFeature.get(feature.featureId) ?? [];
+    lines.push(
+      `### ${feature.featureId}: ${feature.title}`,
+      "",
+      `- Candidates: ${candidateIds.join(", ")}`,
+      `- Entrypoints: ${feature.entrypoints.map(formatFile).join(", ") || "n/a"}`,
+      `- Owned files: ${feature.ownedFiles.map(formatFile).join(", ") || "n/a"}`,
+      `- Context/shared files: ${feature.contextFiles.map(formatFile).join(", ") || "n/a"}`,
+      `- Tests: ${feature.testFiles.map(formatFile).join(", ") || "n/a"}`,
+      `- Verification: ${feature.verification.join(", ") || "n/a"}`,
+      "",
+    );
+  }
+  return lines;
 }
 
 function agentQueueCandidates(candidates: CandidateRecord[]): CandidateRecord[] {
@@ -255,6 +284,8 @@ function candidateMarkdown(candidate: CandidateRecord): string[] {
     `- Impact: ${candidate.impact}`,
     `- Effort: ${candidate.effort}`,
     `- Risk: ${candidate.risk}`,
+    `- Feature scope: ${candidate.featureScope}`,
+    `- Features: ${candidate.affectedFeatureIds.join(", ") || "unmapped"}`,
     `- Files: ${candidate.files.map((file) => formatFile(file)).join(", ") || "n/a"}`,
     "",
     `Why it matters: ${candidate.whyItMatters}`,
@@ -272,6 +303,7 @@ export function buildHandoff(
   candidate: CandidateRecord,
   evidence: EvidenceRecord[],
   format: string,
+  features: FeatureRecord[] = [],
 ): HandoffRecord {
   return {
     schemaVersion,
@@ -280,13 +312,14 @@ export function buildHandoff(
     candidateId: candidate.id,
     format,
     createdAt: new Date().toISOString(),
-    content: renderHandoff(candidate, evidence),
+    content: renderHandoff(candidate, evidence, features),
   };
 }
 
 export function renderHandoff(
   candidate: CandidateRecord,
   evidence: EvidenceRecord[],
+  features: FeatureRecord[] = [],
 ): string {
   const testFirst = candidate.fixReadiness?.suggestedRegressionTest
     || "Add or identify the smallest behavior-level regression check before moving code.";
@@ -302,7 +335,10 @@ export function renderHandoff(
     `Impact: ${candidate.impact}`,
     `Effort: ${candidate.effort}`,
     `Risk: ${candidate.risk}`,
+    `Feature scope: ${candidate.featureScope}`,
+    `Features: ${candidate.affectedFeatureIds.join(", ") || "unmapped"}`,
     "",
+    ...featureBoundaryMarkdown(features),
     "Why:",
     candidate.whyItMatters,
     "",
@@ -323,6 +359,9 @@ export function renderHandoff(
     "",
     "Do not:",
     "- Do not rewrite broad helper modules beyond this candidate.",
+    ...(candidate.featureScope === "cross-feature"
+      ? ["- Do not edit across multiple feature boundaries until the work is split into a smaller feature-local slice."]
+      : []),
     "- Do not change public API, CLI, or response shapes unless the tests prove current behavior is wrong.",
     "- Do not perform unrelated refactors.",
     "- Do not keep expanding into adjacent cleanup once this slice passes verification.",
@@ -330,6 +369,24 @@ export function renderHandoff(
     "Verification:",
     ...candidate.verification.map((command) => `- ${command}`),
   ].join("\n");
+}
+
+function featureBoundaryMarkdown(features: FeatureRecord[]): string[] {
+  if (features.length === 0) {
+    return [];
+  }
+  const lines = ["Feature boundary:"];
+  for (const feature of features) {
+    lines.push(
+      `- ${feature.featureId}: ${feature.title}`,
+      `  Entrypoints: ${feature.entrypoints.map(formatFile).join(", ") || "n/a"}`,
+      `  Owned files: ${feature.ownedFiles.map(formatFile).join(", ") || "n/a"}`,
+      `  Context/shared files: ${feature.contextFiles.map(formatFile).join(", ") || "n/a"}`,
+      `  Tests: ${feature.testFiles.map(formatFile).join(", ") || "n/a"}`,
+    );
+  }
+  lines.push("");
+  return lines;
 }
 
 type FileLike = { path: string; startLine?: number | undefined; endLine?: number | undefined };
