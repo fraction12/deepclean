@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 
+import { execFile } from "node:child_process";
 import { realpathSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
+import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { parseArgs, flagBoolean, flagString, type ParsedArgs } from "./args.js";
 import { candidatesFromEvidence, rankCandidates, reassignCandidateIds } from "./candidates.js";
@@ -20,6 +22,7 @@ import {
 import {
   ensureState,
   latestRunId,
+  readConfig,
   readLatestCandidates,
   readLatestClusters,
   readLatestEvidence,
@@ -40,14 +43,20 @@ import {
   schemaVersion,
   type CandidateRecord,
   type ClusterRecord,
+  type DeepcleanConfig,
+  type Diagnostic,
   type EvidenceRecord,
 } from "./types.js";
 import { timestampId } from "./ids.js";
 import { synthesizeWithCodex } from "./synthesis.js";
 import { inferVerificationProfile } from "./verification.js";
 
+const execFileAsync = promisify(execFile);
+
 const commands = [
   "init",
+  "doctor",
+  "status",
   "scan",
   "report",
   "next",
@@ -75,6 +84,8 @@ Usage:
 
 Commands:
   init                         Create or validate .deepclean state
+  doctor                       Check environment, config, state, git, provider, and privacy readiness
+  status                       Summarize current project-local Deepclean state
   scan                         Collect local evidence and generate candidates
     --synthesize               Run local Codex synthesis over evidence
     --allow-source-in-model    Include source samples in Codex prompt
@@ -141,6 +152,10 @@ export async function main(argv: string[], cwd = process.cwd()): Promise<number>
     switch (command) {
       case "init":
         return await initCommand(context);
+      case "doctor":
+        return await doctorCommand(context);
+      case "status":
+        return await statusCommand(context);
       case "scan":
         return await scanCommand(context);
       case "report":
@@ -179,6 +194,126 @@ async function initCommand(context: CommandContext): Promise<number> {
   emit(context.json, ok("init", data));
   if (!context.json && !context.quiet) {
     console.log(`Initialized Deepclean state at ${path.relative(context.paths.root, context.paths.stateDir) || context.paths.stateDir}`);
+  }
+  return 0;
+}
+
+async function doctorCommand(context: CommandContext): Promise<number> {
+  const diagnostics: Diagnostic[] = [];
+  const initialized = await pathExists(context.paths.stateDir);
+  const missingDirs = initialized ? await missingStateDirectories(context.paths) : [];
+  const configResult = await readConfigForDoctor(context.paths);
+  diagnostics.push(...configResult.diagnostics);
+  if (missingDirs.length > 0) {
+    diagnostics.push({
+      level: "warning",
+      code: "state_dirs_missing",
+      message: `Missing state directories: ${missingDirs.join(", ")}`,
+    });
+  }
+
+  const git = await gitDoctor(context.paths.root);
+  if (!git.available) {
+    diagnostics.push({
+      level: "warning",
+      code: "git_unavailable",
+      message: git.error ?? "Git is unavailable for this repository.",
+    });
+  }
+  const provider = configResult.config
+    ? await providerDoctor(context.paths.root, configResult.config.reviewSynthesis.command)
+    : { command: undefined, available: false, error: "Config is unavailable." };
+  if (configResult.config && !provider.available) {
+    diagnostics.push({
+      level: "warning",
+      code: "provider_unavailable",
+      message: provider.error ?? `Provider command is unavailable: ${provider.command}`,
+    });
+  }
+
+  const data = {
+    root: context.paths.root,
+    stateDir: context.paths.stateDir,
+    initialized,
+    packageVersion: await packageVersion(),
+    config: {
+      path: context.paths.configPath,
+      valid: configResult.valid,
+      error: configResult.error,
+    },
+    state: {
+      valid: initialized && missingDirs.length === 0,
+      missingDirs,
+    },
+    git,
+    provider,
+    privacy: configResult.config?.privacy,
+    supportedSurfaces: await supportedSurfaces(context.paths.root),
+  };
+
+  emit(context.json, ok("doctor", data, diagnostics));
+  if (!context.json && !context.quiet) {
+    console.log(`Deepclean ${data.packageVersion}`);
+    console.log(`root: ${data.root}`);
+    console.log(`state: ${data.state.valid ? "ok" : initialized ? "incomplete" : "not initialized"}`);
+    console.log(`config: ${data.config.valid ? "ok" : "invalid"}`);
+    console.log(`git: ${git.available ? git.dirty ? "dirty" : "clean" : "unavailable"}`);
+    console.log(`provider: ${provider.available ? "ok" : "unavailable"}`);
+    printDiagnostics(diagnostics);
+  }
+  return 0;
+}
+
+async function statusCommand(context: CommandContext): Promise<number> {
+  const diagnostics: Diagnostic[] = [];
+  const initialized = await pathExists(context.paths.stateDir);
+  const latest = initialized ? await latestRunId(context.paths) : undefined;
+  const candidates = latest ? await readLatestCandidates(context.paths) : [];
+  const clusters = latest ? await readLatestClusters(context.paths) : [];
+  const evidence = latest ? await readLatestEvidence(context.paths) : [];
+  const git = await gitDoctor(context.paths.root);
+  if (!git.available) {
+    diagnostics.push({
+      level: "warning",
+      code: "git_unavailable",
+      message: git.error ?? "Git is unavailable for this repository.",
+    });
+  }
+  const artifactCounts = await stateArtifactCounts(context.paths);
+  const statusCounts = countBy(candidates, (candidate) => candidate.status);
+  const data = {
+    root: context.paths.root,
+    stateDir: context.paths.stateDir,
+    initialized,
+    latestRunId: latest,
+    git: {
+      branch: git.branch,
+      dirty: git.dirty,
+      available: git.available,
+    },
+    queue: {
+      total: candidates.length,
+      open: candidates.filter((candidate) => candidate.status === "open").length,
+      byStatus: statusCounts,
+      themes: clusters.length,
+      evidence: evidence.length,
+    },
+    locks: {
+      active: artifactCounts["locks"] ?? 0,
+      stale: 0,
+    },
+    pendingRevalidation: candidates.filter((candidate) => candidate.lifecycleState === "stale").length,
+    artifacts: artifactCounts,
+  };
+
+  emit(context.json, ok("status", data, diagnostics));
+  if (!context.json && !context.quiet) {
+    console.log(`root: ${data.root}`);
+    console.log(`state: ${initialized ? "initialized" : "not initialized"}`);
+    console.log(`latest run: ${latest ?? "none"}`);
+    console.log(`queue: ${data.queue.open} open / ${data.queue.total} total`);
+    console.log(`git: ${git.available ? git.dirty ? "dirty" : "clean" : "unavailable"}`);
+    printDiagnostics(diagnostics);
   }
   return 0;
 }
@@ -587,6 +722,195 @@ function printCluster(cluster: ClusterRecord): void {
 function evidenceForIds(evidence: EvidenceRecord[], ids: string[]): EvidenceRecord[] {
   const wanted = new Set(ids);
   return evidence.filter((item) => wanted.has(item.id));
+}
+
+function printDiagnostics(diagnostics: Diagnostic[]): void {
+  for (const diagnostic of diagnostics) {
+    console.log(`${diagnostic.level}: ${diagnostic.code}: ${diagnostic.message}`);
+  }
+}
+
+async function pathExists(filePath: string): Promise<boolean> {
+  try {
+    await stat(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function missingStateDirectories(paths: StatePaths): Promise<string[]> {
+  const expected: Array<[string, string]> = [
+    ["runs", paths.runsDir],
+    ["findings", paths.findingsDir],
+    ["observations", paths.observationsDir],
+    ["evidence", paths.evidenceDir],
+    ["candidates", paths.candidatesDir],
+    ["clusters", paths.clustersDir],
+    ["reports", paths.reportsDir],
+    ["triage", paths.triageDir],
+    ["handoffs", paths.handoffsDir],
+    ["plans", paths.plansDir],
+    ["lifecycle", paths.lifecycleDir],
+    ["revalidations", paths.revalidationsDir],
+    ["ci", paths.ciDir],
+    ["locks", paths.locksDir],
+    ["retention", paths.retentionDir],
+    ["fixes", paths.fixesDir],
+  ];
+  const missing: string[] = [];
+  for (const [name, dir] of expected) {
+    if (!(await pathExists(dir))) {
+      missing.push(name);
+    }
+  }
+  return missing;
+}
+
+async function readConfigForDoctor(paths: StatePaths): Promise<{
+  valid: boolean;
+  config?: DeepcleanConfig;
+  error?: string;
+  diagnostics: Diagnostic[];
+}> {
+  if (!(await pathExists(paths.configPath))) {
+    return {
+      valid: false,
+      error: "Config file is missing.",
+      diagnostics: [{
+        level: "info",
+        code: "config_missing",
+        message: "Run `deepclean init` to create project-local configuration.",
+      }],
+    };
+  }
+  try {
+    return {
+      valid: true,
+      config: await readConfig(paths),
+      diagnostics: [],
+    };
+  } catch (error) {
+    return {
+      valid: false,
+      error: error instanceof Error ? error.message : String(error),
+      diagnostics: [{
+        level: "error",
+        code: "config_invalid",
+        message: error instanceof Error ? error.message : String(error),
+      }],
+    };
+  }
+}
+
+async function gitDoctor(root: string): Promise<{
+  available: boolean;
+  dirty: boolean;
+  branch?: string;
+  error?: string;
+}> {
+  try {
+    const { stdout: statusOutput } = await execFileAsync("git", ["status", "--short"], { cwd: root, timeout: 5000 });
+    const branchOutput = await execFileAsync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: root, timeout: 5000 })
+      .then((result) => result.stdout.trim())
+      .catch(() => undefined);
+    const result: {
+      available: boolean;
+      dirty: boolean;
+      branch?: string;
+    } = {
+      available: true,
+      dirty: statusOutput.trim().length > 0,
+    };
+    if (branchOutput) {
+      result.branch = branchOutput;
+    }
+    return result;
+  } catch (error) {
+    return {
+      available: false,
+      dirty: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+async function providerDoctor(root: string, command: string): Promise<{
+  command: string | undefined;
+  available: boolean;
+  error?: string;
+}> {
+  try {
+    await execFileAsync(command, ["--version"], { cwd: root, timeout: 5000 });
+    return { command, available: true };
+  } catch (error) {
+    return {
+      command,
+      available: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+async function supportedSurfaces(root: string): Promise<string[]> {
+  const checks: Array<[string, string]> = [
+    ["node", "package.json"],
+    ["typescript", "tsconfig.json"],
+    ["python", "pyproject.toml"],
+    ["python", "requirements.txt"],
+    ["make", "Makefile"],
+  ];
+  const found = new Set<string>();
+  for (const [surface, file] of checks) {
+    if (await pathExists(path.join(root, file))) {
+      found.add(surface);
+    }
+  }
+  return [...found].sort();
+}
+
+async function stateArtifactCounts(paths: StatePaths): Promise<Record<string, number>> {
+  const dirs: Array<[string, string]> = [
+    ["runs", paths.runsDir],
+    ["findings", paths.findingsDir],
+    ["observations", paths.observationsDir],
+    ["evidence", paths.evidenceDir],
+    ["candidates", paths.candidatesDir],
+    ["clusters", paths.clustersDir],
+    ["reports", paths.reportsDir],
+    ["triage", paths.triageDir],
+    ["handoffs", paths.handoffsDir],
+    ["plans", paths.plansDir],
+    ["lifecycle", paths.lifecycleDir],
+    ["revalidations", paths.revalidationsDir],
+    ["ci", paths.ciDir],
+    ["locks", paths.locksDir],
+    ["retention", paths.retentionDir],
+    ["fixes", paths.fixesDir],
+  ];
+  const counts: Record<string, number> = {};
+  for (const [name, dir] of dirs) {
+    counts[name] = await countJsonFiles(dir);
+  }
+  return counts;
+}
+
+async function countJsonFiles(dir: string): Promise<number> {
+  try {
+    const files = await readdir(dir);
+    return files.filter((file) => file.endsWith(".json")).length;
+  } catch {
+    return 0;
+  }
+}
+
+function countBy<T>(items: T[], keyFor: (item: T) => string): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const item of items) {
+    const key = keyFor(item);
+    counts[key] = (counts[key] ?? 0) + 1;
+  }
+  return counts;
 }
 
 async function packageVersion(): Promise<string> {
