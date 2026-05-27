@@ -230,7 +230,7 @@ Goal:
 - reject weak or noisy evidence rather than forcing findings
 - produce agent-ready cleanup directions, not code patches
 
-Clawpatch-style review flow for Deepclean:
+Cleanup-surface review flow:
 - Treat local evidence as the source of truth.
 - Review mapped cleanup surfaces the way a bug finder reviews semantic feature slices.
 - Produce findings only when the surface shows a durable maintainability issue, not just an ugly file.

@@ -19,4 +19,4 @@
 - Added SARIF ingestion and optional `jscpd` external duplicate evidence.
 - Removed self-dogfood state from the repo working tree and tightened ignore rules for local artifacts.
 - Added a vendored MIT-licensed Matt Pocock skills reference snapshot and distilled reviewer rubrics for deep module discipline, feedback loops, and agent-ready cleanup slices.
-- Hardened Clawpatch-style deslop mapping: TS/JS `.js` source specifiers now resolve to local TS source files, dynamic imports and `require(...)` are included in graph evidence, optional Semgrep orchestration is supported, report recommendations prefer strong synthesized findings over weak metric noise, and generated plans dedupe repeated file references.
+- Hardened cleanup-surface mapping: TS/JS `.js` source specifiers now resolve to local TS source files, dynamic imports and `require(...)` are included in graph evidence, optional Semgrep orchestration is supported, report recommendations prefer strong synthesized findings over weak metric noise, and generated plans dedupe repeated file references.
