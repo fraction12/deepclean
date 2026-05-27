@@ -398,6 +398,73 @@ describe("deepclean cli", () => {
     });
   });
 
+  test("prune dry-run and apply preserve config, latest artifacts, locks, and retained evidence", async () => {
+    await withTempRepo(async (repo) => {
+      await writeFixtureSource(repo);
+      await runCli(["scan", "--json"], repo);
+      const latestRun = (await latestRunFile(repo)).replace(/\.json$/, "");
+      await writeOldRunArtifacts(repo);
+
+      const dryRun = await runCli(["prune", "--keep-runs", "1", "--dry-run", "--json"], repo);
+      expect(dryRun.code).toBe(0);
+      const dryRunPayload = JSON.parse(dryRun.stdout) as {
+        data: { manifest: { dryRun: boolean; deletePaths: string[]; retainedPaths: string[]; blockedPaths: Array<{ path: string; reason: string }> } };
+      };
+      expect(dryRunPayload.data.manifest.dryRun).toBe(true);
+      expect(dryRunPayload.data.manifest.deletePaths).toEqual(expect.arrayContaining([
+        ".deepclean/runs/run-20000101000000-old.json",
+        ".deepclean/evidence/run-20000101000000-old.json",
+        ".deepclean/reports/report-old.json",
+        ".deepclean/reports/report-old.md",
+      ]));
+      expect(dryRunPayload.data.manifest.retainedPaths).toContain(`.deepclean/evidence/${latestRun}.json`);
+      expect(dryRunPayload.data.manifest.blockedPaths.some((blocked) => blocked.path === ".deepclean/config.json")).toBe(true);
+      expect(dryRunPayload.data.manifest.blockedPaths.some((blocked) => blocked.path === ".deepclean/locks/state-writer.json")).toBe(true);
+      await expect(stat(path.join(repo, ".deepclean", "runs", "run-20000101000000-old.json"))).resolves.toBeTruthy();
+
+      const apply = await runCli(["prune", "--keep-runs", "1", "--json"], repo);
+      expect(apply.code).toBe(0);
+      const applyPayload = JSON.parse(apply.stdout) as { data: { manifest: { dryRun: boolean; deletePaths: string[] } } };
+      expect(applyPayload.data.manifest.dryRun).toBe(false);
+      expect(applyPayload.data.manifest.deletePaths).toEqual(dryRunPayload.data.manifest.deletePaths);
+      await expect(stat(path.join(repo, ".deepclean", "runs", "run-20000101000000-old.json"))).rejects.toThrow();
+      await expect(stat(path.join(repo, ".deepclean", "config.json"))).resolves.toBeTruthy();
+      await expect(stat(path.join(repo, ".deepclean", "evidence", `${latestRun}.json`))).resolves.toBeTruthy();
+      expect(await readLockStatuses(resolveStatePaths({ cwd: repo }))).toEqual([]);
+    });
+  });
+
+  test("source-safe export omits source excerpts, prompts, and absolute local paths", async () => {
+    await withTempRepo(async (repo) => {
+      await writeFixtureSource(repo);
+      await runCli(["scan", "--json"], repo);
+      const result = await runCli(["export", "--source-safe", "--output", ".deepclean/source-safe.json", "--json"], repo);
+      expect(result.code).toBe(0);
+      const payload = JSON.parse(result.stdout) as {
+        data: {
+          export: {
+            sourceSafe: boolean;
+            project: string;
+            candidates: Array<{ files: Array<{ path: string }>; evidenceIds: string[] }>;
+            evidence: Array<{ files: Array<{ path: string }>; title: string }>;
+            privacyNotes: string[];
+          };
+          outputPath: string;
+        };
+      };
+      expect(payload.data.export.sourceSafe).toBe(true);
+      expect(payload.data.export.project).toBe(path.basename(repo));
+      expect(payload.data.export.candidates.length).toBeGreaterThan(0);
+      expect(payload.data.export.candidates[0]?.files[0]?.path.startsWith("/")).toBe(false);
+      const saved = await readFile(payload.data.outputPath, "utf8");
+      expect(saved).not.toContain(repo);
+      expect(saved).not.toContain("const subtotal");
+      expect(saved).not.toContain("providerPrompt");
+      expect(saved).not.toContain("promptText");
+      expect(saved).not.toContain(".deepclean/reports");
+    });
+  });
+
   test("scans source files and produces agent-readable candidates", async () => {
     await withTempRepo(async (repo) => {
       await writeFixtureSource(repo);
@@ -1249,6 +1316,70 @@ async function writeLockFixture(repo: string, overrides: Partial<LockRecord> = {
   };
   await mkdir(path.join(repo, ".deepclean", "locks"), { recursive: true });
   await writeFile(path.join(repo, ".deepclean", "locks", "state-writer.json"), `${JSON.stringify(lock, null, 2)}\n`, "utf8");
+}
+
+async function writeOldRunArtifacts(repo: string): Promise<void> {
+  const state = path.join(repo, ".deepclean");
+  const oldRunId = "run-20000101000000-old";
+  await mkdir(path.join(state, "runs"), { recursive: true });
+  await mkdir(path.join(state, "evidence"), { recursive: true });
+  await mkdir(path.join(state, "candidates"), { recursive: true });
+  await mkdir(path.join(state, "clusters"), { recursive: true });
+  await mkdir(path.join(state, "observations"), { recursive: true });
+  await mkdir(path.join(state, "reports"), { recursive: true });
+  await mkdir(path.join(state, "plans"), { recursive: true });
+  await mkdir(path.join(state, "handoffs"), { recursive: true });
+  await writeFile(path.join(state, "runs", `${oldRunId}.json`), `${JSON.stringify({
+    schemaVersion,
+    recordType: "run",
+    id: oldRunId,
+    command: "scan",
+    root: repo,
+    startedAt: "2000-01-01T00:00:00.000Z",
+    completedAt: "2000-01-01T00:00:00.000Z",
+    evidenceCount: 0,
+    candidateCount: 0,
+    clusterCount: 0,
+    synthesis: { requested: false, candidateCount: 0 },
+    diagnostics: [],
+  }, null, 2)}\n`, "utf8");
+  for (const dir of ["evidence", "candidates", "clusters", "observations"]) {
+    await writeFile(path.join(state, dir, `${oldRunId}.json`), "[]\n", "utf8");
+  }
+  await writeFile(path.join(state, "reports", "report-old.json"), `${JSON.stringify({
+    schemaVersion,
+    recordType: "report",
+    id: "report-old",
+    runId: oldRunId,
+    createdAt: "2000-01-01T00:00:00.000Z",
+    candidateIds: [],
+    summary: { open: 0, total: 0, byPriority: {} },
+  }, null, 2)}\n`, "utf8");
+  await writeFile(path.join(state, "reports", "report-old.md"), "# Old report\n", "utf8");
+  await writeFile(path.join(state, "plans", "plan-old.json"), `${JSON.stringify({
+    schemaVersion,
+    recordType: "plan",
+    id: "plan-old",
+    runId: oldRunId,
+    targetType: "candidate",
+    targetId: "candidate-old",
+    title: "Old plan",
+    summary: "Old plan",
+    steps: [],
+    constraints: [],
+    verification: [],
+    createdAt: "2000-01-01T00:00:00.000Z",
+    content: "Old plan",
+  }, null, 2)}\n`, "utf8");
+  await writeFile(path.join(state, "handoffs", "handoff-old.json"), `${JSON.stringify({
+    schemaVersion,
+    recordType: "handoff",
+    id: "handoff-old",
+    candidateId: "candidate-old",
+    format: "codex",
+    createdAt: "2000-01-01T00:00:00.000Z",
+    content: "Old handoff",
+  }, null, 2)}\n`, "utf8");
 }
 
 async function latestRunFile(repo: string): Promise<string> {

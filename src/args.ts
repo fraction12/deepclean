@@ -83,6 +83,8 @@ const valueFlags = new Set([
   "sarif",
   "lock-timeout-ms",
   "stale-lock-ms",
+  "keep-runs",
+  "keep-days",
   "max-p0",
   "max-p1",
   "max-p2",

@@ -2,7 +2,7 @@
 
 import { execFile } from "node:child_process";
 import { realpathSync } from "node:fs";
-import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
@@ -50,6 +50,7 @@ import {
   writeLifecycleEvents,
   writePlan,
   writeReport,
+  writeRetentionManifest,
   writeRevalidation,
   writeRun,
   writeTriage,
@@ -63,6 +64,7 @@ import {
   type DeepcleanConfig,
   type Diagnostic,
   type EvidenceRecord,
+  type RetentionManifestRecord,
   type RevalidationRecord,
 } from "./types.js";
 import { timestampId } from "./ids.js";
@@ -85,6 +87,8 @@ const commands = [
   "history",
   "revalidate",
   "unlock",
+  "prune",
+  "scrub",
   "cluster",
   "plan",
   "triage",
@@ -167,11 +171,17 @@ Commands:
   revalidate <finding-id|candidate-id|all>
                                Freshly recheck whether findings still hold
   unlock --stale               Remove stale project-local writer locks
+  prune                       Remove stale Deepclean artifacts with retention safety
+    --dry-run                  Persist a manifest without deleting files
+    --keep-runs <n>            Keep latest n runs, defaults to 5
+    --keep-days <n>            Also keep runs newer than n days
+  scrub                        Emit source-safe generated-state export
   cluster [theme-id]           Group related candidates into cleanup themes
   plan <candidate-or-theme>    Generate an agent-ready cleanup plan
   triage <candidate-id>        Update candidate status with --status and --note
   handoff <candidate-id>       Generate an agent-ready handoff packet
   export <candidate-id>        Alias for handoff
+  export --source-safe         Alias for scrub
 
 Global flags:
   --json                       Emit JSON envelope
@@ -251,6 +261,10 @@ export async function main(argv: string[], cwd = process.cwd()): Promise<number>
         return await withWriteLock(context, () => revalidateCommand(context));
       case "unlock":
         return await unlockCommand(context);
+      case "prune":
+        return await withWriteLock(context, () => pruneCommand(context));
+      case "scrub":
+        return await scrubCommand(context);
       case "cluster":
         return await withWriteLock(context, () => clusterCommand(context));
       case "plan":
@@ -258,7 +272,11 @@ export async function main(argv: string[], cwd = process.cwd()): Promise<number>
       case "triage":
         return await withWriteLock(context, () => triageCommand(context));
       case "handoff":
+        return await withWriteLock(context, () => handoffCommand(context));
       case "export":
+        if (flagBoolean(context.parsed.flags, "source-safe")) {
+          return await scrubCommand(context);
+        }
         return await withWriteLock(context, () => handoffCommand(context));
     }
     emit(json, fail(command, "unknown_command", `Unknown command: ${command}`));
@@ -474,6 +492,108 @@ async function unlockCommand(context: CommandContext): Promise<number> {
     }
   }
   return result.active.length > 0 ? 4 : 0;
+}
+
+async function pruneCommand(context: CommandContext): Promise<number> {
+  await ensureState(context.paths);
+  const manifest = await buildRetentionManifest(context);
+  if (!manifest.dryRun) {
+    for (const relativePath of manifest.deletePaths) {
+      await rm(path.resolve(context.paths.root, relativePath), { force: true });
+    }
+  }
+  const manifestPath = await writeRetentionManifest(context.paths, manifest);
+  emit(context.json, ok("prune", {
+    dryRun: manifest.dryRun,
+    manifest,
+    manifestPath,
+    deleteCount: manifest.deletePaths.length,
+    retainedCount: manifest.retainedPaths.length,
+    blockedCount: manifest.blockedPaths.length,
+  }));
+  if (!context.json && !context.quiet) {
+    console.log(`${manifest.dryRun ? "Would delete" : "Deleted"} ${manifest.deletePaths.length} artifact${manifest.deletePaths.length === 1 ? "" : "s"}.`);
+    console.log(`Retention manifest written to ${path.relative(context.paths.root, manifestPath)}`);
+  }
+  return 0;
+}
+
+async function scrubCommand(context: CommandContext): Promise<number> {
+  const [candidates, clusters, evidence] = await Promise.all([
+    readLatestCandidates(context.paths),
+    readLatestClusters(context.paths),
+    readLatestEvidence(context.paths),
+  ]);
+  const latest = await latestRunId(context.paths);
+  const output = {
+    schemaVersion,
+    sourceSafe: true,
+    generatedAt: new Date().toISOString(),
+    project: path.basename(context.paths.root),
+    latestRunId: latest,
+    counts: {
+      candidates: candidates.length,
+      clusters: clusters.length,
+      evidence: evidence.length,
+    },
+    candidates: rankCandidates(candidates).map((candidate) => ({
+      id: candidate.id,
+      findingId: candidate.findingId,
+      title: candidate.title,
+      category: candidate.category,
+      status: candidate.status,
+      lifecycleState: candidate.lifecycleState,
+      priority: candidate.priority,
+      confidence: candidate.confidence,
+      impact: candidate.impact,
+      effort: candidate.effort,
+      risk: candidate.risk,
+      baselineStatus: candidate.baselineStatus,
+      evidenceIds: candidate.evidenceIds,
+      files: candidate.files.map((file) => sourceSafeFile(context.paths.root, file)),
+      verification: candidate.verification,
+    })),
+    clusters: clusters.map((cluster) => ({
+      id: cluster.id,
+      title: cluster.title,
+      category: cluster.category,
+      priority: cluster.priority,
+      confidence: cluster.confidence,
+      candidateIds: cluster.candidateIds,
+      evidenceIds: cluster.evidenceIds,
+      files: cluster.files.map((file) => sourceSafeFile(context.paths.root, file)),
+      actionability: cluster.actionability,
+      warnings: cluster.warnings,
+    })),
+    evidence: evidence.map((record) => ({
+      id: record.id,
+      kind: record.kind,
+      title: record.title,
+      files: record.files.map((file) => sourceSafeFile(context.paths.root, file)),
+    })),
+    privacyNotes: [
+      "Source-safe export omits source excerpts, model prompts, provider payloads, absolute state paths, and generated handoff/plan prose.",
+      "Repository-relative paths are retained so findings remain actionable.",
+    ],
+  };
+
+  const outputPath = flagString(context.parsed.flags, "output");
+  if (outputPath) {
+    const resolved = path.resolve(context.paths.root, outputPath);
+    await mkdir(path.dirname(resolved), { recursive: true });
+    await writeFile(resolved, `${JSON.stringify(output, null, 2)}\n`, "utf8");
+  }
+  emit(context.json, ok("scrub", {
+    export: output,
+    ...(outputPath ? { outputPath: path.resolve(context.paths.root, outputPath) } : {}),
+  }));
+  if (!context.json && !context.quiet) {
+    console.log(`Source-safe export: ${output.counts.candidates} candidates, ${output.counts.evidence} evidence references`);
+    if (outputPath) {
+      console.log(`Export written to ${outputPath}`);
+    }
+  }
+  return 0;
 }
 
 async function ciCommand(context: CommandContext): Promise<number> {
@@ -1514,6 +1634,203 @@ function ciPolicyFromFlags(context: CommandContext): Record<string, unknown> {
     policy["fail-category"] = failCategory;
   }
   return policy;
+}
+
+async function buildRetentionManifest(context: CommandContext): Promise<RetentionManifestRecord> {
+  const keepRuns = numberFlag(context, "keep-runs") ?? 5;
+  const keepDays = numberFlag(context, "keep-days");
+  const dryRun = flagBoolean(context.parsed.flags, "dry-run");
+  const now = new Date();
+  const runRecords = await readRunRetentionRecords(context.paths);
+  const sortedRuns = [...runRecords].sort((a, b) => a.id.localeCompare(b.id));
+  const retainedRunIds = new Set<string>();
+  for (const run of sortedRuns.slice(Math.max(0, sortedRuns.length - keepRuns))) {
+    retainedRunIds.add(run.id);
+  }
+  const latest = sortedRuns.at(-1);
+  if (latest) {
+    retainedRunIds.add(latest.id);
+  }
+  if (keepDays !== undefined) {
+    const cutoff = now.getTime() - keepDays * 24 * 60 * 60 * 1000;
+    for (const run of sortedRuns) {
+      if (Date.parse(run.createdAt) >= cutoff) {
+        retainedRunIds.add(run.id);
+      }
+    }
+  }
+
+  const retainedPaths = new Set<string>();
+  const deletePaths = new Set<string>();
+  const blockedPaths: Array<{ path: string; reason: string }> = [{
+    path: relativeStatePath(context.paths, context.paths.configPath),
+    reason: "config is never pruned",
+  }];
+  const activeLocks = (await readLockStatuses(context.paths)).filter((lock) => !lock.stale);
+  for (const lock of activeLocks) {
+    blockedPaths.push({
+      path: relativeStatePath(context.paths, lock.filePath),
+      reason: "active locks are never pruned",
+    });
+  }
+
+  for (const [dir, extension] of [
+    [context.paths.runsDir, "json"],
+    [context.paths.evidenceDir, "json"],
+    [context.paths.candidatesDir, "json"],
+    [context.paths.clustersDir, "json"],
+    [context.paths.observationsDir, "json"],
+  ] as const) {
+    const files = await filesWithExtension(dir, extension);
+    for (const file of files) {
+      const runId = path.basename(file, `.${extension}`);
+      const relativePath = relativeStatePath(context.paths, file);
+      if (retainedRunIds.has(runId)) {
+        retainedPaths.add(relativePath);
+      } else {
+        deletePaths.add(relativePath);
+      }
+    }
+  }
+
+  const retainedCandidateIds = await candidateIdsForRuns(context.paths, retainedRunIds);
+  await classifyRunLinkedArtifacts(context.paths, context.paths.reportsDir, retainedRunIds, retainedPaths, deletePaths, ["json", "md"]);
+  await classifyRunLinkedArtifacts(context.paths, context.paths.plansDir, retainedRunIds, retainedPaths, deletePaths, ["json"]);
+  await classifyHandoffArtifacts(context.paths, retainedCandidateIds, retainedPaths, deletePaths);
+
+  return {
+    schemaVersion,
+    recordType: "retention_manifest",
+    id: timestampId("retention"),
+    dryRun,
+    keepRuns,
+    ...(keepDays !== undefined ? { keepDays } : {}),
+    deletePaths: [...deletePaths].sort(),
+    retainedPaths: [...retainedPaths].sort(),
+    blockedPaths,
+    privacyNotes: [
+      "Prune never deletes .deepclean/config.json.",
+      "Active locks and latest retained run artifacts are preserved.",
+      "Source-safe sharing should use deepclean scrub or export --source-safe before attaching generated state outside the local machine.",
+    ],
+    createdAt: now.toISOString(),
+  };
+}
+
+async function readRunRetentionRecords(paths: StatePaths): Promise<Array<{ id: string; createdAt: string }>> {
+  const files = await filesWithExtension(paths.runsDir, "json");
+  const records: Array<{ id: string; createdAt: string }> = [];
+  for (const file of files) {
+    try {
+      const raw = JSON.parse(await readFile(file, "utf8")) as { id?: unknown; completedAt?: unknown; startedAt?: unknown };
+      const id = typeof raw.id === "string" ? raw.id : path.basename(file, ".json");
+      const createdAt = typeof raw.completedAt === "string"
+        ? raw.completedAt
+        : typeof raw.startedAt === "string"
+          ? raw.startedAt
+          : "1970-01-01T00:00:00.000Z";
+      records.push({ id, createdAt });
+    } catch {
+      records.push({ id: path.basename(file, ".json"), createdAt: "1970-01-01T00:00:00.000Z" });
+    }
+  }
+  return records;
+}
+
+async function candidateIdsForRuns(paths: StatePaths, retainedRunIds: Set<string>): Promise<Set<string>> {
+  const ids = new Set<string>();
+  for (const runId of retainedRunIds) {
+    for (const candidate of await readCandidates(paths, runId).catch(() => [])) {
+      ids.add(candidate.id);
+    }
+  }
+  return ids;
+}
+
+async function classifyRunLinkedArtifacts(
+  paths: StatePaths,
+  dir: string,
+  retainedRunIds: Set<string>,
+  retainedPaths: Set<string>,
+  deletePaths: Set<string>,
+  extensions: string[],
+): Promise<void> {
+  const jsonFiles = await filesWithExtension(dir, "json");
+  for (const jsonFile of jsonFiles) {
+    let runId: string | undefined;
+    try {
+      const raw = JSON.parse(await readFile(jsonFile, "utf8")) as { runId?: unknown };
+      runId = typeof raw.runId === "string" ? raw.runId : undefined;
+    } catch {
+      runId = undefined;
+    }
+    const id = path.basename(jsonFile, ".json");
+    for (const extension of extensions) {
+      const artifact = path.join(dir, `${id}.${extension}`);
+      if (!(await pathExists(artifact))) {
+        continue;
+      }
+      const relativePath = relativeStatePath(paths, artifact);
+      if (runId && retainedRunIds.has(runId)) {
+        retainedPaths.add(relativePath);
+      } else {
+        deletePaths.add(relativePath);
+      }
+    }
+  }
+}
+
+async function classifyHandoffArtifacts(
+  paths: StatePaths,
+  retainedCandidateIds: Set<string>,
+  retainedPaths: Set<string>,
+  deletePaths: Set<string>,
+): Promise<void> {
+  const jsonFiles = await filesWithExtension(paths.handoffsDir, "json");
+  for (const file of jsonFiles) {
+    let candidateId: string | undefined;
+    try {
+      const raw = JSON.parse(await readFile(file, "utf8")) as { candidateId?: unknown };
+      candidateId = typeof raw.candidateId === "string" ? raw.candidateId : undefined;
+    } catch {
+      candidateId = undefined;
+    }
+    const relativePath = relativeStatePath(paths, file);
+    if (candidateId && retainedCandidateIds.has(candidateId)) {
+      retainedPaths.add(relativePath);
+    } else {
+      deletePaths.add(relativePath);
+    }
+  }
+}
+
+async function filesWithExtension(dir: string, extension: string): Promise<string[]> {
+  try {
+    return (await readdir(dir))
+      .filter((file) => file.endsWith(`.${extension}`))
+      .map((file) => path.join(dir, file))
+      .sort();
+  } catch {
+    return [];
+  }
+}
+
+function relativeStatePath(paths: StatePaths, filePath: string): string {
+  return path.relative(paths.root, filePath).split(path.sep).join("/");
+}
+
+function sourceSafeFile(
+  root: string,
+  file: { path: string; startLine?: number | undefined; endLine?: number | undefined },
+): { path: string; startLine?: number; endLine?: number } {
+  const normalized = path.isAbsolute(file.path)
+    ? path.relative(root, file.path)
+    : file.path;
+  return {
+    path: normalized.split(path.sep).join("/"),
+    ...(file.startLine ? { startLine: file.startLine } : {}),
+    ...(file.endLine ? { endLine: file.endLine } : {}),
+  };
 }
 
 function evaluateCiPolicy(candidates: CandidateRecord[], policy: Record<string, unknown>): {

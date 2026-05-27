@@ -10,7 +10,7 @@ Each slice below MUST land through its own pull request unless an adjacent slice
 - [x] PR-06 CI mode: `deepclean ci`, policy gates, baseline-aware failures, CI artifacts, and GitHub Actions docs.
 - [x] PR-07 Query/report filters: `list` or `findings`, shared filter model, baseline comparison, queue exports, and handoff freshness checks.
 - [x] PR-08 Locks/concurrency: writer locks, stale lock reporting, recovery guidance, and contention tests.
-- [ ] PR-09 Retention/sharing: `prune --dry-run`, applied prune manifests, scrub/export, retention safety tests, and privacy docs.
+- [x] PR-09 Retention/sharing: `prune --dry-run`, applied prune manifests, scrub/export, retention safety tests, and privacy docs.
 - [ ] PR-10 Provider/runtime controls: provider/model/runtime flags, timeout/rate-limit diagnostics, offline/local-only modes, and synthesis docs.
 - [ ] PR-11 Guarded fix execution: explicit opt-in fix flow, clean-tree guard, dry-run patch preview, verification capture, and no external side effects.
 - [ ] PR-12 Final hardening: full dogfood on Deepclean, source-safe larger-repo dogfood, release docs, changelog, and final OpenSpec validation.
@@ -85,12 +85,12 @@ Each slice below MUST land through its own pull request unless an adjacent slice
 
 ## 9. Retention, Prune, Scrub, and Export
 
-- [ ] 9.1 Add `deepclean prune --dry-run` with retention by runs, reports, plans, handoffs, evidence, and age.
-- [ ] 9.2 Preserve records needed by retained findings and lifecycle history.
-- [ ] 9.3 Add `deepclean scrub` or export mode for source-safe sharing.
-- [ ] 9.4 Persist retention manifests for dry-run and applied prune operations.
-- [ ] 9.5 Add tests to prevent deleting config, latest artifacts, active locks, or referenced evidence.
-- [ ] 9.6 PR checkpoint: merge only after PR-09 proves dry-run/apply parity and confirms source-safe export omits excerpts, prompts, and sensitive local paths.
+- [x] 9.1 Add `deepclean prune --dry-run` with retention by runs, reports, plans, handoffs, evidence, and age.
+- [x] 9.2 Preserve records needed by retained findings and lifecycle history.
+- [x] 9.3 Add `deepclean scrub` or export mode for source-safe sharing.
+- [x] 9.4 Persist retention manifests for dry-run and applied prune operations.
+- [x] 9.5 Add tests to prevent deleting config, latest artifacts, active locks, or referenced evidence.
+- [x] 9.6 PR checkpoint: merge only after PR-09 proves dry-run/apply parity and confirms source-safe export omits excerpts, prompts, and sensitive local paths.
 
 ## 10. Provider and Runtime Controls
 
