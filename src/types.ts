@@ -9,6 +9,8 @@ export const candidateStatuses = [
   "ignored",
   "false-positive",
   "stale",
+  "fixed",
+  "superseded",
 ] as const;
 
 export const candidateCategories = [

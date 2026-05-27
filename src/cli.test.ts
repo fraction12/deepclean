@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, readFile, rm, writeFile, mkdir, stat } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, readdir, rm, writeFile, mkdir, stat } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
@@ -7,6 +7,7 @@ import { describe, expect, test } from "vitest";
 import { main } from "./cli.js";
 import { buildCandidatePlan } from "./plans.js";
 import { buildReportRecord } from "./reporting.js";
+import { classifyRevalidation } from "./revalidation.js";
 import {
   candidateObservationRecordSchema,
   candidateRecordSchema,
@@ -19,6 +20,7 @@ import {
   revalidationRecordSchema,
   schemaVersion,
   type CandidateRecord,
+  type FindingRecord,
 } from "./types.js";
 
 const execFileAsync = promisify(execFile);
@@ -389,6 +391,100 @@ ${Array.from({ length: 96 }, (_, index) => `  const value${index} = ${index};`).
       };
       expect(candidateHistoryPayload.data.finding.id).toBe(firstCandidate?.findingId);
       expect(candidateHistoryPayload.data.candidate.id).toBe(secondCandidate?.id);
+    });
+  });
+
+  test("revalidate records an unchanged finding from a fresh scan", async () => {
+    await withTempRepo(async (repo) => {
+      await writeFixtureSource(repo);
+      await runCli(["scan", "--json"], repo);
+      const candidates = JSON.parse(
+        await readFile(path.join(repo, ".deepclean", "candidates", (await latestRunFile(repo))), "utf8"),
+      ) as Array<{ id: string; findingId?: string }>;
+      const target = candidates[0]?.findingId;
+      expect(target).toBeTruthy();
+
+      const result = await runCli(["revalidate", target ?? "", "--json"], repo);
+      expect(result.code).toBe(0);
+      const payload = JSON.parse(result.stdout) as {
+        data: { revalidations: Array<{ outcome: string; targetId?: string }> };
+      };
+      expect(payload.data.revalidations[0]?.targetId).toBe(target);
+      expect(payload.data.revalidations[0]?.outcome).toBe("unchanged");
+
+      const history = await runCli(["history", target ?? "", "--json"], repo);
+      const historyPayload = JSON.parse(history.stdout) as {
+        data: { events: Array<{ kind: string; data?: { outcome?: string } }> };
+      };
+      expect(historyPayload.data.events.some((event) => (
+        event.kind === "revalidated"
+        && event.data?.outcome === "unchanged"
+      ))).toBe(true);
+    });
+  });
+
+  test("classifies revalidation outcomes", async () => {
+    await withTempRepo(async (repo) => {
+      await mkdir(path.join(repo, "src"), { recursive: true });
+      await writeFile(path.join(repo, "src", "example.ts"), "export const value = 1;\n", "utf8");
+      const finding = findingFixture();
+      const unchanged = await classifyRevalidation({
+        root: repo,
+        finding,
+        currentCandidates: [candidateFixture({ findingId: finding.id })],
+        runId: "run-now",
+        createdAt: "2026-05-24T00:00:00.000Z",
+      });
+      expect(unchanged.outcome).toBe("unchanged");
+
+      const changed = await classifyRevalidation({
+        root: repo,
+        finding,
+        currentCandidates: [candidateFixture({ findingId: "finding-other", category: finding.category })],
+        runId: "run-now",
+        createdAt: "2026-05-24T00:00:00.000Z",
+      });
+      expect(changed.outcome).toBe("changed");
+
+      const superseded = await classifyRevalidation({
+        root: repo,
+        finding,
+        currentCandidates: [candidateFixture({
+          findingId: "finding-replacement",
+          category: finding.category,
+          impact: "cross-cutting",
+        })],
+        runId: "run-now",
+        createdAt: "2026-05-24T00:00:00.000Z",
+      });
+      expect(superseded.outcome).toBe("superseded");
+
+      const stale = await classifyRevalidation({
+        root: repo,
+        finding,
+        currentCandidates: [],
+        runId: "run-now",
+        createdAt: "2026-05-24T00:00:00.000Z",
+      });
+      expect(stale.outcome).toBe("stale");
+
+      const fixed = await classifyRevalidation({
+        root: repo,
+        finding: { ...finding, files: [{ path: "src/missing.ts" }] },
+        currentCandidates: [],
+        runId: "run-now",
+        createdAt: "2026-05-24T00:00:00.000Z",
+      });
+      expect(fixed.outcome).toBe("fixed");
+
+      const inconclusive = await classifyRevalidation({
+        root: repo,
+        finding: undefined,
+        currentCandidates: [],
+        runId: "run-now",
+        createdAt: "2026-05-24T00:00:00.000Z",
+      });
+      expect(inconclusive.outcome).toBe("inconclusive");
     });
   });
 
@@ -860,6 +956,54 @@ async function installFakeCodex(repo: string, source: string): Promise<void> {
   };
   config.reviewSynthesis.command = fakeCodex;
   await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+}
+
+async function latestRunFile(repo: string): Promise<string> {
+  const runs = (await readdir(path.join(repo, ".deepclean", "runs")))
+    .filter((file) => file.endsWith(".json"))
+    .sort();
+  const run = runs.at(-1);
+  if (!run) {
+    throw new Error("No run file found");
+  }
+  return run;
+}
+
+function findingFixture(overrides: Partial<FindingRecord> = {}): FindingRecord {
+  const now = "2026-05-24T00:00:00.000Z";
+  const signature = {
+    version: "1" as const,
+    value: "sig-fixture",
+    components: {
+      category: "architecture",
+      normalizedTitle: "fixture candidate",
+      evidenceKinds: ["dependency-hotspot"],
+      primaryAnchors: [{ path: "src/example.ts" }],
+    },
+  };
+  return {
+    schemaVersion,
+    recordType: "finding",
+    id: "finding-fixture",
+    signature,
+    identityConfidence: "high",
+    title: "Fixture candidate",
+    category: "architecture",
+    status: "open",
+    lifecycleState: "open",
+    priority: "P2",
+    confidence: "medium",
+    impact: "feature",
+    effort: "medium",
+    risk: "moderate",
+    files: [{ path: "src/example.ts", startLine: 1, endLine: 20 }],
+    evidenceIds: ["ev-test"],
+    observationIds: ["observation-fixture"],
+    currentObservationId: "observation-fixture",
+    createdAt: now,
+    updatedAt: now,
+    ...overrides,
+  };
 }
 
 function candidateFixture(overrides: Partial<CandidateRecord> = {}): CandidateRecord {

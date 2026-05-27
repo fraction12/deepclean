@@ -14,6 +14,7 @@ import { runEvidenceAdapters } from "./evidence.js";
 import { attachStableIdentity } from "./identity.js";
 import { fail, ok } from "./json.js";
 import { buildCandidatePlan, buildClusterPlan } from "./plans.js";
+import { classifyRevalidation } from "./revalidation.js";
 import {
   buildHandoff,
   buildReportRecord,
@@ -41,6 +42,7 @@ import {
   writeLifecycleEvents,
   writePlan,
   writeReport,
+  writeRevalidation,
   writeRun,
   writeTriage,
   type StatePaths,
@@ -53,6 +55,7 @@ import {
   type DeepcleanConfig,
   type Diagnostic,
   type EvidenceRecord,
+  type RevalidationRecord,
 } from "./types.js";
 import { timestampId } from "./ids.js";
 import { synthesizeWithCodex } from "./synthesis.js";
@@ -69,6 +72,7 @@ const commands = [
   "next",
   "show",
   "history",
+  "revalidate",
   "cluster",
   "plan",
   "triage",
@@ -82,6 +86,25 @@ interface CommandContext {
   paths: StatePaths;
   json: boolean;
   quiet: boolean;
+}
+
+interface ScanExecutionResult {
+  runId: string;
+  diagnostics: Diagnostic[];
+  data: {
+    runId: string;
+    root: string;
+    sourceFileCount: number;
+    evidenceCount: number;
+    candidateCount: number;
+    clusterCount: number;
+    synthesis: {
+      requested: boolean;
+      candidateCount: number;
+    };
+    candidates: CandidateRecord[];
+    clusters: ClusterRecord[];
+  };
 }
 
 function printHelp(): void {
@@ -103,6 +126,8 @@ Commands:
   show <candidate-or-theme>    Show one candidate or cleanup theme with evidence
   history <finding-or-candidate-id>
                                Show lifecycle history for a finding
+  revalidate <finding-id|candidate-id|all>
+                               Freshly recheck whether findings still hold
   cluster [theme-id]           Group related candidates into cleanup themes
   plan <candidate-or-theme>    Generate an agent-ready cleanup plan
   triage <candidate-id>        Update candidate status with --status and --note
@@ -176,6 +201,8 @@ export async function main(argv: string[], cwd = process.cwd()): Promise<number>
         return await showCommand(context);
       case "history":
         return await historyCommand(context);
+      case "revalidate":
+        return await revalidateCommand(context);
       case "cluster":
         return await clusterCommand(context);
       case "plan":
@@ -331,6 +358,22 @@ async function statusCommand(context: CommandContext): Promise<number> {
 }
 
 async function scanCommand(context: CommandContext): Promise<number> {
+  const result = await executeScan(context, {});
+  emit(context.json, ok("scan", result.data, result.diagnostics));
+  if (!context.json && !context.quiet) {
+    const synthesisText = result.data.synthesis.requested
+      ? `, ${result.data.synthesis.candidateCount} synthesized`
+      : "";
+    console.log(`Scan complete: ${result.data.evidenceCount} evidence records, ${result.data.candidateCount} candidates, ${result.data.clusterCount} clusters${synthesisText}`);
+    printCandidateSummary(result.data.candidates);
+  }
+  return 0;
+}
+
+async function executeScan(
+  context: CommandContext,
+  options: { synthesize?: boolean | undefined },
+): Promise<ScanExecutionResult> {
   const startedAt = new Date().toISOString();
   const runId = timestampId("run");
   const config = await ensureState(context.paths);
@@ -351,8 +394,10 @@ async function scanCommand(context: CommandContext): Promise<number> {
     config.candidateCaps,
     verificationProfile,
   );
-  const synthesisRequested = flagBoolean(context.parsed.flags, "synthesize")
-    || config.reviewSynthesis.enabled;
+  const synthesisRequested = options.synthesize ?? (
+    flagBoolean(context.parsed.flags, "synthesize")
+    || config.reviewSynthesis.enabled
+  );
   const synthesisResult = synthesisRequested
     ? await synthesizeWithCodex({
       root: context.paths.root,
@@ -422,15 +467,7 @@ async function scanCommand(context: CommandContext): Promise<number> {
     clusters,
   };
 
-  emit(context.json, ok("scan", data, diagnostics));
-  if (!context.json && !context.quiet) {
-    const synthesisText = synthesisRequested
-      ? `, ${synthesisResult.candidates.length} synthesized`
-      : "";
-    console.log(`Scan complete: ${adapterResult.evidence.length} evidence records, ${candidates.length} candidates, ${clusters.length} clusters${synthesisText}`);
-    printCandidateSummary(candidates);
-  }
-  return 0;
+  return { runId, diagnostics, data };
 }
 
 async function reportCommand(context: CommandContext): Promise<number> {
@@ -533,6 +570,87 @@ async function historyCommand(context: CommandContext): Promise<number> {
     console.log(`${finding.id}: ${finding.title}`);
     for (const event of history) {
       console.log(`${event.createdAt} ${event.kind}${event.toState ? ` -> ${event.toState}` : ""}`);
+    }
+  }
+  return 0;
+}
+
+async function revalidateCommand(context: CommandContext): Promise<number> {
+  const target = requireCandidateId(context);
+  const beforeFindings = await readFindings(context.paths);
+  const targetFindings = await resolveRevalidationTargets(context.paths, target, beforeFindings);
+  if (targetFindings.length === 0 && target !== "all") {
+    emit(context.json, fail("revalidate", "finding_not_found", `Finding not found: ${target}`));
+    return 1;
+  }
+
+  const scan = await executeScan(context, { synthesize: false });
+  const now = new Date().toISOString();
+  const records: RevalidationRecord[] = [];
+  for (const finding of target === "all" ? beforeFindings : targetFindings) {
+    records.push(await classifyRevalidation({
+      root: context.paths.root,
+      finding,
+      currentCandidates: scan.data.candidates,
+      runId: scan.runId,
+      createdAt: now,
+    }));
+  }
+  if (target === "all" && beforeFindings.length === 0) {
+    records.push(await classifyRevalidation({
+      root: context.paths.root,
+      finding: undefined,
+      currentCandidates: scan.data.candidates,
+      runId: scan.runId,
+      createdAt: now,
+    }));
+  }
+
+  for (const record of records) {
+    await writeRevalidation(context.paths, record);
+  }
+  const updatedFindings = beforeFindings.map((finding) => {
+    const record = records.find((item) => item.targetId === finding.id);
+    if (!record) {
+      return finding;
+    }
+    const state = revalidationOutcomeToLifecycleState(record.outcome);
+    return {
+      ...finding,
+      lifecycleState: state,
+      status: revalidationOutcomeToStatus(record.outcome, finding.status),
+      updatedAt: record.createdAt,
+    };
+  });
+  await writeFindings(context.paths, updatedFindings);
+  await writeLifecycleEvents(context.paths, records.flatMap((record) => (
+    record.targetId
+      ? [{
+        schemaVersion,
+        recordType: "lifecycle_event" as const,
+        id: timestampId("event"),
+        targetType: "finding" as const,
+        targetId: record.targetId,
+        findingId: record.targetId,
+        runId: record.runId,
+        kind: "revalidated" as const,
+        toState: record.outcome,
+        command: "revalidate",
+        createdAt: record.createdAt,
+        data: { revalidationId: record.id, outcome: record.outcome },
+      }]
+      : []
+  )));
+
+  emit(context.json, ok("revalidate", {
+    target,
+    runId: scan.runId,
+    revalidations: records,
+    candidates: scan.data.candidates,
+  }, scan.diagnostics));
+  if (!context.json && !context.quiet) {
+    for (const record of records) {
+      console.log(`${record.targetId ?? "all"}: ${record.outcome}`);
     }
   }
   return 0;
@@ -747,6 +865,23 @@ async function candidateForHistoryLookup(
     return (await readCandidates(paths, runId)).find((candidate) => candidate.id === id);
   }
   return (await readLatestCandidates(paths)).find((candidate) => candidate.id === id);
+}
+
+async function resolveRevalidationTargets(
+  paths: StatePaths,
+  target: string,
+  findings: Awaited<ReturnType<typeof readFindings>>,
+): Promise<Awaited<ReturnType<typeof readFindings>>> {
+  if (target === "all") {
+    return findings;
+  }
+  if (target.startsWith("candidate-")) {
+    const candidate = await candidateForHistoryLookup(paths, target, undefined);
+    return candidate?.findingId
+      ? findings.filter((finding) => finding.id === candidate.findingId)
+      : [];
+  }
+  return findings.filter((finding) => finding.id === target);
 }
 
 function requireCandidateId(context: CommandContext): string {
@@ -990,6 +1125,42 @@ function countBy<T>(items: T[], keyFor: (item: T) => string): Record<string, num
     counts[key] = (counts[key] ?? 0) + 1;
   }
   return counts;
+}
+
+function revalidationOutcomeToLifecycleState(
+  outcome: "unchanged" | "changed" | "fixed" | "stale" | "superseded" | "inconclusive",
+): "open" | "fixed" | "stale" | "superseded" | "inconclusive" {
+  switch (outcome) {
+    case "fixed":
+      return "fixed";
+    case "stale":
+      return "stale";
+    case "superseded":
+      return "superseded";
+    case "inconclusive":
+      return "inconclusive";
+    case "changed":
+    case "unchanged":
+      return "open";
+  }
+}
+
+function revalidationOutcomeToStatus(
+  outcome: "unchanged" | "changed" | "fixed" | "stale" | "superseded" | "inconclusive",
+  fallback: CandidateRecord["status"],
+): CandidateRecord["status"] {
+  switch (outcome) {
+    case "fixed":
+      return "fixed";
+    case "stale":
+      return "stale";
+    case "superseded":
+      return "superseded";
+    case "inconclusive":
+    case "changed":
+    case "unchanged":
+      return fallback === "fixed" || fallback === "stale" || fallback === "superseded" ? "open" : fallback;
+  }
 }
 
 async function packageVersion(): Promise<string> {
