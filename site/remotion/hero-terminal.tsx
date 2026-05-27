@@ -193,7 +193,7 @@ export const HeroTerminal = () => {
             marginBottom: 26,
           }}
         >
-          Start with the cleanup that actually matters.
+          Start with the change that actually helps.
         </div>
         <div style={{ display: "grid", gap: 14 }}>
           {findings.map((finding, index) => {

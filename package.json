@@ -2,7 +2,7 @@
   "name": "@fraction12/deepclean",
   "version": "0.1.0-alpha.0",
   "private": false,
-  "description": "Local cleanup reports and agent-ready plans for codebases that need structural cleanup.",
+  "description": "Local structure reports and agent-ready plans for fast-moving codebases.",
   "type": "module",
   "license": "MIT",
   "homepage": "https://fraction12.github.io/deepclean/",
