@@ -4,7 +4,7 @@ Each slice below MUST land through its own pull request unless an adjacent slice
 
 - [x] PR-01 State foundation: schemas, lazy migration, compatibility fixtures, and privacy notes for generated records.
 - [x] PR-02 Health/status: `doctor`, `status`, structured diagnostics, and user docs.
-- [ ] PR-03 Stable identity: signatures, durable finding IDs, observation linking, lifecycle event persistence, and `history`.
+- [x] PR-03 Stable identity: signatures, durable finding IDs, observation linking, lifecycle event persistence, and `history`.
 - [ ] PR-04 Revalidation: `revalidate`, outcome classification, freshness metadata, report badges, and lifecycle updates.
 - [ ] PR-05 Incremental scans: git/ref/path/reviewer scoped scanning, baseline metadata, dirty-tree provenance, and tests.
 - [ ] PR-06 CI mode: `deepclean ci`, policy gates, baseline-aware failures, CI artifacts, and GitHub Actions docs.
@@ -33,12 +33,12 @@ Each slice below MUST land through its own pull request unless an adjacent slice
 
 ## 3. Stable Identity and Lifecycle
 
-- [ ] 3.1 Implement candidate signature generation and durable finding IDs.
-- [ ] 3.2 Link new observations to existing findings across full and incremental scans.
-- [ ] 3.3 Persist append-only lifecycle events for creation, observation, triage, suppression, stale, fixed, superseded, and verification transitions.
-- [ ] 3.4 Add `deepclean history <finding-id> --json`.
-- [ ] 3.5 Add tests for line drift, file rename tolerance, and false-merge prevention.
-- [ ] 3.6 PR checkpoint: merge only after PR-03 proves stable identity across at least two repeated scans and preserves old display-ID lookup.
+- [x] 3.1 Implement candidate signature generation and durable finding IDs.
+- [x] 3.2 Link new observations to existing findings across full and incremental scans.
+- [x] 3.3 Persist append-only lifecycle events for creation, observation, triage, suppression, stale, fixed, superseded, and verification transitions.
+- [x] 3.4 Add `deepclean history <finding-id> --json`.
+- [x] 3.5 Add tests for line drift, file rename tolerance, and false-merge prevention.
+- [x] 3.6 PR checkpoint: merge only after PR-03 proves stable identity across at least two repeated scans and preserves old display-ID lookup.
 
 ## 4. Revalidation
 

@@ -11,6 +11,7 @@ import { candidatesFromEvidence, rankCandidates, reassignCandidateIds } from "./
 import { buildClusters, unclusteredCandidateIds } from "./clusters.js";
 import { discoverSourceFiles } from "./discovery.js";
 import { runEvidenceAdapters } from "./evidence.js";
+import { attachStableIdentity } from "./identity.js";
 import { fail, ok } from "./json.js";
 import { buildCandidatePlan, buildClusterPlan } from "./plans.js";
 import {
@@ -23,15 +24,21 @@ import {
   ensureState,
   latestRunId,
   readConfig,
+  readCandidates,
+  readFindings,
   readLatestCandidates,
   readLatestClusters,
   readLatestEvidence,
+  readLifecycleEvents,
   resolveStatePaths,
   updateLatestCandidates,
   writeCandidates,
+  writeCandidateObservations,
   writeClusters,
   writeEvidence,
+  writeFindings,
   writeHandoff,
+  writeLifecycleEvents,
   writePlan,
   writeReport,
   writeRun,
@@ -61,6 +68,7 @@ const commands = [
   "report",
   "next",
   "show",
+  "history",
   "cluster",
   "plan",
   "triage",
@@ -93,6 +101,8 @@ Commands:
   report                       Write and print a ranked report
   next                         Show the highest-priority open candidate
   show <candidate-or-theme>    Show one candidate or cleanup theme with evidence
+  history <finding-or-candidate-id>
+                               Show lifecycle history for a finding
   cluster [theme-id]           Group related candidates into cleanup themes
   plan <candidate-or-theme>    Generate an agent-ready cleanup plan
   triage <candidate-id>        Update candidate status with --status and --note
@@ -164,6 +174,8 @@ export async function main(argv: string[], cwd = process.cwd()): Promise<number>
         return await nextCommand(context);
       case "show":
         return await showCommand(context);
+      case "history":
+        return await historyCommand(context);
       case "cluster":
         return await clusterCommand(context);
       case "plan":
@@ -356,14 +368,25 @@ async function scanCommand(context: CommandContext): Promise<number> {
     })
     : { candidates: [], diagnostics: [] };
   const diagnostics = [...adapterResult.diagnostics, ...synthesisResult.diagnostics];
-  const candidates = reassignCandidateIds(rankCandidates([
+  const rankedCandidates = reassignCandidateIds(rankCandidates([
     ...localCandidates,
     ...synthesisResult.candidates,
   ]));
+  const identity = attachStableIdentity({
+    runId,
+    candidates: rankedCandidates,
+    evidence: adapterResult.evidence,
+    existingFindings: await readFindings(context.paths),
+    observedAt: completedAt,
+  });
+  const candidates = identity.candidates;
   const clusters = buildClusters(runId, candidates, adapterResult.evidence, completedAt, config.clusters);
 
   await writeEvidence(context.paths, runId, adapterResult.evidence);
   await writeCandidates(context.paths, runId, candidates);
+  await writeFindings(context.paths, identity.findings);
+  await writeCandidateObservations(context.paths, runId, identity.observations);
+  await writeLifecycleEvents(context.paths, identity.lifecycleEvents);
   await writeClusters(context.paths, runId, clusters);
   await writeRun(context.paths, {
     schemaVersion,
@@ -483,6 +506,33 @@ async function showCommand(context: CommandContext): Promise<number> {
     printCandidate(candidate);
     for (const record of supportingEvidence) {
       console.log(`  evidence ${record.id}: ${record.summary}`);
+    }
+  }
+  return 0;
+}
+
+async function historyCommand(context: CommandContext): Promise<number> {
+  const id = requireCandidateId(context);
+  const runId = flagString(context.parsed.flags, "run");
+  const [findings, events] = await Promise.all([
+    readFindings(context.paths),
+    readLifecycleEvents(context.paths),
+  ]);
+  const candidate = id.startsWith("candidate-")
+    ? await candidateForHistoryLookup(context.paths, id, runId)
+    : undefined;
+  const findingId = candidate?.findingId ?? id;
+  const finding = findings.find((item) => item.id === findingId);
+  if (!finding) {
+    emit(context.json, fail("history", "finding_not_found", `Finding not found: ${id}`));
+    return 1;
+  }
+  const history = events.filter((event) => event.findingId === finding.id || event.targetId === finding.id);
+  emit(context.json, ok("history", { finding, candidate, events: history }));
+  if (!context.json && !context.quiet) {
+    console.log(`${finding.id}: ${finding.title}`);
+    for (const event of history) {
+      console.log(`${event.createdAt} ${event.kind}${event.toState ? ` -> ${event.toState}` : ""}`);
     }
   }
   return 0;
@@ -622,6 +672,24 @@ async function triageCommand(context: CommandContext): Promise<number> {
     createdAt: now,
   };
   await writeTriage(context.paths, triage);
+  if (updated.findingId) {
+    await writeLifecycleEvents(context.paths, [{
+      schemaVersion,
+      recordType: "lifecycle_event",
+      id: timestampId("event"),
+      targetType: "finding",
+      targetId: updated.findingId,
+      findingId: updated.findingId,
+      runId: updated.runId,
+      kind: "triaged",
+      fromState: existing.status,
+      toState: updated.status,
+      note: note ?? "",
+      command: "triage",
+      createdAt: now,
+      data: { candidateId: id, triageId: triage.id },
+    }]);
+  }
 
   emit(context.json, ok("triage", { candidate: updated, triage }));
   if (!context.json && !context.quiet) {
@@ -668,6 +736,17 @@ async function latestState(paths: StatePaths): Promise<{
     readLatestEvidence(paths),
   ]);
   return { runId, candidates, clusters, evidence };
+}
+
+async function candidateForHistoryLookup(
+  paths: StatePaths,
+  id: string,
+  runId?: string | undefined,
+): Promise<CandidateRecord | undefined> {
+  if (runId) {
+    return (await readCandidates(paths, runId)).find((candidate) => candidate.id === id);
+  }
+  return (await readLatestCandidates(paths)).find((candidate) => candidate.id === id);
 }
 
 function requireCandidateId(context: CommandContext): string {
