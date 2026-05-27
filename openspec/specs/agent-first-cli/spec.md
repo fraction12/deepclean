@@ -74,6 +74,5 @@ The system SHALL expose the package version through the CLI.
 The system SHALL emit clear diagnostics when local Codex synthesis cannot run.
 
 #### Scenario: Codex is unavailable
-- **WHEN** `deepclean scan --synthesize --json` cannot execute the configured Codex command
+- **WHEN** `deepclean scan --json` cannot execute the configured Codex command
 - **THEN** the scan still persists local evidence and returns a diagnostic explaining the provider failure
-

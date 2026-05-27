@@ -4,7 +4,7 @@
 The system SHALL support maintainability investigation review modes focused on cleanup candidates, with built-in reviewer rubrics as the default, optional configured custom rubrics, and runtime controls for provider-backed synthesis.
 
 #### Scenario: Default serious scan runs
-- **WHEN** an agent runs `deepclean scan --synthesize`
+- **WHEN** an agent runs `deepclean scan`
 - **THEN** the default synthesis objective is to rank maintainability cleanup candidates using the built-in reviewer pack and not to generate code patches
 
 ## ADDED Requirements
@@ -20,7 +20,7 @@ The system SHALL treat model-backed synthesis as the recommended path for seriou
 The system SHALL allow users to configure provider, model, effort, timeout, retries, requests per minute, concurrency, token budget, excerpt budget, offline mode, and privacy mode.
 
 #### Scenario: Agent sets provider controls
-- **WHEN** an agent runs `deepclean scan --synthesize --model <model> --timeout 120 --rpm 10 --json`
+- **WHEN** an agent runs `deepclean scan --model <model> --timeout 120 --rpm 10 --json`
 - **THEN** Deepclean applies those runtime controls and records them in synthesis provenance
 
 ### Requirement: Provider degradation diagnostics

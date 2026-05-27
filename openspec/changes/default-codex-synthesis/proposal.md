@@ -1,6 +1,6 @@
 ## Why
 
-Deepclean's best artifacts come from evidence-grounded Codex synthesis, but the current CLI makes that higher-quality path opt-in. Agents running Deepclean on repos or PRs should get the full review workflow by default while still having an explicit deterministic-only escape hatch.
+Deepclean's best artifacts come from evidence-grounded Codex synthesis. Before this change, the CLI made that higher-quality path opt-in. Agents running Deepclean on repos or PRs should get the full review workflow by default while still having an explicit deterministic-only escape hatch.
 
 ## What Changes
 

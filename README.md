@@ -44,6 +44,8 @@ deepclean --root ./some-repo scan
 deepclean scan --root ./some-repo --evidence-only
 ```
 
+Older examples may include `deepclean scan --synthesize`; that flag still works, but it is no longer required. Plain `deepclean scan` is the normal synthesized path. Use `--evidence-only`, `--offline`, or `--local-only` when a run must avoid provider execution.
+
 ## Workflow
 
 ```bash
