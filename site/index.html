@@ -39,12 +39,20 @@
     <main>
       <section class="hero" aria-labelledby="hero-title">
         <div class="hero-background" aria-hidden="true">
-          <span></span>
-          <span></span>
-          <span></span>
-          <span></span>
-          <span></span>
-          <span></span>
+          <canvas class="constellation-canvas" data-constellation></canvas>
+          <div class="constellation-glow"></div>
+          <div class="constellation-label label-primary">
+            <span>feature cluster</span>
+            lifecycle boundary
+          </div>
+          <div class="constellation-label label-secondary">
+            <span>ranked finding</span>
+            API/type split
+          </div>
+          <div class="constellation-label label-tertiary">
+            <span>agent handoff</span>
+            bounded change
+          </div>
         </div>
         <div class="hero-copy">
           <p class="eyebrow">Public alpha</p>
@@ -69,24 +77,12 @@
           <p class="hero-note">
             Local evidence first. No source edits. Built for one focused improvement at a time.
           </p>
-        </div>
-
-        <div class="hero-visual" aria-label="Animated Deepclean report preview">
-          <video
-            class="hero-video"
-            src="./assets/hero-terminal-loop.webm"
-            poster="./assets/hero-terminal-poster.png"
-            autoplay
-            muted
-            loop
-            playsinline
-            aria-hidden="true"
-          ></video>
-          <img
-            class="hero-poster"
-            src="./assets/hero-terminal-poster.png"
-            alt="Animated preview showing Deepclean converting repo signals into report findings and handoffs."
-          />
+          <div class="hero-stages" aria-label="Deepclean workflow stages">
+            <span data-stage="scan">Scan</span>
+            <span data-stage="map">Map</span>
+            <span data-stage="rank">Rank</span>
+            <span data-stage="handoff">Handoff</span>
+          </div>
         </div>
       </section>
 
@@ -140,5 +136,6 @@ deepclean next</code></pre>
       <span>MIT licensed public alpha.</span>
       <a href="https://github.com/fraction12/deepclean">View source</a>
     </footer>
+    <script type="module" src="./constellation.js"></script>
   </body>
 </html>
