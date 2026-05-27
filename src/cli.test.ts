@@ -336,6 +336,62 @@ describe("deepclean cli", () => {
     });
   });
 
+  test("links repeated scans to stable findings and lifecycle history", async () => {
+    await withTempRepo(async (repo) => {
+      await writeFixtureSource(repo);
+      const first = await runCli(["scan", "--json"], repo);
+      expect(first.code).toBe(0);
+      const firstPayload = JSON.parse(first.stdout) as {
+        data: { candidates: Array<{ id: string; findingId?: string; signature?: { value: string }; files: Array<{ path: string }> }> };
+      };
+      const firstCandidate = firstPayload.data.candidates.find((candidate) => (
+        candidate.files.some((file) => file.path === "src/checkout.ts")
+      ));
+      expect(firstCandidate?.findingId).toMatch(/^finding-/);
+      expect(firstCandidate?.signature?.value).toMatch(/^sig-/);
+
+      await writeFile(path.join(repo, "src", "checkout.ts"), `
+
+export function calculateCheckout(items: Array<{ price: number }>, coupon: boolean) {
+${Array.from({ length: 96 }, (_, index) => `  const value${index} = ${index};`).join("\n")}
+  const subtotal = items.reduce((sum, item) => sum + item.price, 0);
+  const discount = coupon ? subtotal * 0.1 : 0;
+  const tax = (subtotal - discount) * 0.07;
+  const total = subtotal - discount + tax;
+  if (total < 0) throw new Error('invalid total');
+  return { subtotal, discount, tax, total };
+}
+`, "utf8");
+
+      const second = await runCli(["scan", "--json"], repo);
+      expect(second.code).toBe(0);
+      const secondPayload = JSON.parse(second.stdout) as {
+        data: { candidates: Array<{ id: string; findingId?: string; files: Array<{ path: string }> }> };
+      };
+      const secondCandidate = secondPayload.data.candidates.find((candidate) => (
+        candidate.files.some((file) => file.path === "src/checkout.ts")
+      ));
+      expect(secondCandidate?.findingId).toBe(firstCandidate?.findingId);
+
+      const history = await runCli(["history", firstCandidate?.findingId ?? "", "--json"], repo);
+      expect(history.code).toBe(0);
+      const historyPayload = JSON.parse(history.stdout) as {
+        data: { finding: { id: string; observationIds: string[] }; events: Array<{ kind: string }> };
+      };
+      expect(historyPayload.data.finding.id).toBe(firstCandidate?.findingId);
+      expect(historyPayload.data.finding.observationIds.length).toBeGreaterThanOrEqual(2);
+      expect(historyPayload.data.events.filter((event) => event.kind === "observed").length).toBeGreaterThanOrEqual(2);
+
+      const candidateHistory = await runCli(["history", secondCandidate?.id ?? "", "--json"], repo);
+      expect(candidateHistory.code).toBe(0);
+      const candidateHistoryPayload = JSON.parse(candidateHistory.stdout) as {
+        data: { finding: { id: string }; candidate: { id: string } };
+      };
+      expect(candidateHistoryPayload.data.finding.id).toBe(firstCandidate?.findingId);
+      expect(candidateHistoryPayload.data.candidate.id).toBe(secondCandidate?.id);
+    });
+  });
+
   test("triage requires a note for non-open statuses", async () => {
     await withTempRepo(async (repo) => {
       await writeFixtureSource(repo);

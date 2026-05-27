@@ -169,6 +169,17 @@ export async function writeFinding(
   return filePath;
 }
 
+export async function writeFindings(
+  paths: StatePaths,
+  records: FindingRecord[],
+): Promise<string[]> {
+  const written: string[] = [];
+  for (const record of records) {
+    written.push(await writeFinding(paths, record));
+  }
+  return written;
+}
+
 export async function writeCandidateObservations(
   paths: StatePaths,
   runId: string,
@@ -190,6 +201,17 @@ export async function writeLifecycleEvent(
   const filePath = path.join(paths.lifecycleDir, `${record.id}.json`);
   await writeJson(filePath, record);
   return filePath;
+}
+
+export async function writeLifecycleEvents(
+  paths: StatePaths,
+  records: LifecycleEventRecord[],
+): Promise<string[]> {
+  const written: string[] = [];
+  for (const record of records) {
+    written.push(await writeLifecycleEvent(paths, record));
+  }
+  return written;
 }
 
 export async function writeRevalidation(
@@ -327,6 +349,49 @@ export async function readLatestEvidence(paths: StatePaths): Promise<EvidenceRec
     return [];
   }
   return readEvidence(paths, runId);
+}
+
+export async function readFindings(paths: StatePaths): Promise<FindingRecord[]> {
+  const files = await jsonFiles(paths.findingsDir);
+  const findings: FindingRecord[] = [];
+  for (const file of files) {
+    const raw = await readFile(path.join(paths.findingsDir, file), "utf8");
+    findings.push(findingRecordSchema.parse(JSON.parse(raw)));
+  }
+  return findings.sort((a, b) => a.id.localeCompare(b.id));
+}
+
+export async function readLatestObservations(
+  paths: StatePaths,
+): Promise<CandidateObservationRecord[]> {
+  const runId = await latestRunId(paths);
+  if (!runId) {
+    return [];
+  }
+  return readCandidateObservations(paths, runId);
+}
+
+export async function readCandidateObservations(
+  paths: StatePaths,
+  runId: string,
+): Promise<CandidateObservationRecord[]> {
+  try {
+    const raw = await readFile(path.join(paths.observationsDir, `${runId}.json`), "utf8");
+    const parsed = JSON.parse(raw) as unknown[];
+    return parsed.map((item) => candidateObservationRecordSchema.parse(item));
+  } catch {
+    return [];
+  }
+}
+
+export async function readLifecycleEvents(paths: StatePaths): Promise<LifecycleEventRecord[]> {
+  const files = await jsonFiles(paths.lifecycleDir);
+  const events: LifecycleEventRecord[] = [];
+  for (const file of files) {
+    const raw = await readFile(path.join(paths.lifecycleDir, file), "utf8");
+    events.push(lifecycleEventRecordSchema.parse(JSON.parse(raw)));
+  }
+  return events.sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
 }
 
 export async function readClusters(
