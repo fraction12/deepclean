@@ -5,9 +5,11 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, test } from "vitest";
 import { main } from "./cli.js";
+import { readLockStatuses, withStateWriteLock } from "./locks.js";
 import { buildCandidatePlan } from "./plans.js";
 import { buildReportRecord } from "./reporting.js";
 import { classifyRevalidation } from "./revalidation.js";
+import { resolveStatePaths } from "./state.js";
 import {
   candidateObservationRecordSchema,
   candidateRecordSchema,
@@ -21,6 +23,7 @@ import {
   schemaVersion,
   type CandidateRecord,
   type FindingRecord,
+  type LockRecord,
 } from "./types.js";
 
 const execFileAsync = promisify(execFile);
@@ -308,6 +311,90 @@ describe("deepclean cli", () => {
       diagnostics: [],
       createdAt: now,
       updatedAt: now,
+    });
+  });
+
+  test("reports and explicitly recovers stale writer locks", async () => {
+    await withTempRepo(async (repo) => {
+      await runCli(["init", "--json"], repo);
+      await writeLockFixture(repo, {
+        pid: 99999999,
+        command: "scan",
+        createdAt: "2000-01-01T00:00:00.000Z",
+      });
+
+      const status = await runCli(["status", "--stale-lock-ms", "1", "--json"], repo);
+      expect(status.code).toBe(0);
+      const statusPayload = JSON.parse(status.stdout) as {
+        data: { locks: { active: number; stale: number; records: Array<{ recoveryCommand?: string }> } };
+      };
+      expect(statusPayload.data.locks.active).toBe(0);
+      expect(statusPayload.data.locks.stale).toBe(1);
+      expect(statusPayload.data.locks.records[0]?.recoveryCommand).toContain("deepclean unlock --stale");
+
+      const doctor = await runCli(["doctor", "--stale-lock-ms", "1", "--json"], repo);
+      const doctorPayload = JSON.parse(doctor.stdout) as { diagnostics: Array<{ code: string }> };
+      expect(doctorPayload.diagnostics.some((diagnostic) => diagnostic.code === "stale_locks")).toBe(true);
+
+      const unlock = await runCli(["unlock", "--stale", "--stale-lock-ms", "1", "--json"], repo);
+      expect(unlock.code).toBe(0);
+      const unlockPayload = JSON.parse(unlock.stdout) as { data: { removed: unknown[]; active: unknown[] } };
+      expect(unlockPayload.data.removed.length).toBe(1);
+      expect(unlockPayload.data.active).toEqual([]);
+
+      const after = await runCli(["status", "--json"], repo);
+      const afterPayload = JSON.parse(after.stdout) as { data: { locks: { active: number; stale: number } } };
+      expect(afterPayload.data.locks.active).toBe(0);
+      expect(afterPayload.data.locks.stale).toBe(0);
+    });
+  });
+
+  test("refuses writes when an active writer lock exists", async () => {
+    await withTempRepo(async (repo) => {
+      await writeFixtureSource(repo);
+      await runCli(["init", "--json"], repo);
+      await writeLockFixture(repo, {
+        pid: process.pid,
+        command: "scan",
+        createdAt: new Date().toISOString(),
+      });
+
+      const result = await runCli(["scan", "--json"], repo);
+      expect(result.code).toBe(4);
+      const payload = JSON.parse(result.stdout) as {
+        ok: boolean;
+        error: { code: string };
+        diagnostics: Array<{ code: string }>;
+      };
+      expect(payload.ok).toBe(false);
+      expect(payload.error.code).toBe("lock_contention");
+      expect(payload.diagnostics[0]?.code).toBe("lock_contention");
+    });
+  });
+
+  test("serializes concurrent state writers without leaving locks behind", async () => {
+    await withTempRepo(async (repo) => {
+      await runCli(["init", "--json"], repo);
+      const paths = resolveStatePaths({ cwd: repo });
+      let activeWriters = 0;
+      let maxActiveWriters = 0;
+      const writes: string[] = [];
+      const writer = async (label: string) => withStateWriteLock(paths, {
+        command: `test-${label}`,
+        wait: true,
+        timeoutMs: 5000,
+      }, async () => {
+        activeWriters += 1;
+        maxActiveWriters = Math.max(maxActiveWriters, activeWriters);
+        await sleep(50);
+        writes.push(label);
+        activeWriters -= 1;
+      });
+
+      await Promise.all([writer("a"), writer("b")]);
+      expect(maxActiveWriters).toBe(1);
+      expect(writes.sort()).toEqual(["a", "b"]);
+      expect(await readLockStatuses(paths)).toEqual([]);
     });
   });
 
@@ -1148,6 +1235,22 @@ async function installFakeCodex(repo: string, source: string): Promise<void> {
   await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
 }
 
+async function writeLockFixture(repo: string, overrides: Partial<LockRecord> = {}): Promise<void> {
+  const lock: LockRecord = {
+    schemaVersion,
+    recordType: "lock",
+    id: "state-writer",
+    owner: "test@localhost",
+    pid: process.pid,
+    command: "scan",
+    statePath: path.join(repo, ".deepclean"),
+    createdAt: new Date().toISOString(),
+    ...overrides,
+  };
+  await mkdir(path.join(repo, ".deepclean", "locks"), { recursive: true });
+  await writeFile(path.join(repo, ".deepclean", "locks", "state-writer.json"), `${JSON.stringify(lock, null, 2)}\n`, "utf8");
+}
+
 async function latestRunFile(repo: string): Promise<string> {
   const runs = (await readdir(path.join(repo, ".deepclean", "runs")))
     .filter((file) => file.endsWith(".json"))
@@ -1157,6 +1260,10 @@ async function latestRunFile(repo: string): Promise<string> {
     throw new Error("No run file found");
   }
   return run;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function findingFixture(overrides: Partial<FindingRecord> = {}): FindingRecord {

@@ -81,6 +81,8 @@ const valueFlags = new Set([
   "reviewers",
   "output",
   "sarif",
+  "lock-timeout-ms",
+  "stale-lock-ms",
   "max-p0",
   "max-p1",
   "max-p2",
