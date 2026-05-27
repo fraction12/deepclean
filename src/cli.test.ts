@@ -1000,14 +1000,96 @@ fs.writeFileSync(outputPath, JSON.stringify({
 }));
 `);
 
-      const result = await runCli(["scan", "--synthesize", "--json"], repo);
+      const result = await runCli([
+        "scan",
+        "--synthesize",
+        "--model",
+        "gpt-test",
+        "--effort",
+        "high",
+        "--timeout",
+        "5",
+        "--retries",
+        "1",
+        "--rpm",
+        "7",
+        "--concurrency",
+        "2",
+        "--token-budget",
+        "1000",
+        "--excerpt-budget",
+        "0",
+        "--privacy-mode",
+        "metadata",
+        "--json",
+      ], repo);
       expect(result.code).toBe(0);
       const payload = JSON.parse(result.stdout) as {
-        data: { synthesis: { requested: boolean; candidateCount: number }; candidates: Array<{ provenance: { source: string } }> };
+        data: {
+          synthesis: { requested: boolean; candidateCount: number; runtime: Record<string, unknown> };
+          candidates: Array<{ provenance: { source: string; model?: string; runtime?: Record<string, unknown> } }>;
+        };
       };
       expect(payload.data.synthesis.requested).toBe(true);
       expect(payload.data.synthesis.candidateCount).toBe(1);
       expect(payload.data.candidates[0]?.provenance.source).toBe("model-synthesis");
+      expect(payload.data.candidates[0]?.provenance.model).toBe("gpt-test");
+      expect(payload.data.synthesis.runtime["timeoutMs"]).toBe(5000);
+      expect(payload.data.synthesis.runtime["retries"]).toBe(1);
+      expect(payload.data.synthesis.runtime["rpm"]).toBe(7);
+      expect(payload.data.synthesis.runtime["concurrency"]).toBe(2);
+      expect(payload.data.synthesis.runtime["tokenBudget"]).toBe(1000);
+      expect(payload.data.synthesis.runtime["excerptBudget"]).toBe(0);
+      expect(payload.data.synthesis.runtime["privacyMode"]).toBe("metadata");
+      expect(payload.data.candidates[0]?.provenance.runtime?.["timeoutMs"]).toBe(5000);
+    });
+  });
+
+  test("offline mode skips provider execution and records a policy diagnostic", async () => {
+    await withTempRepo(async (repo) => {
+      await writeFixtureSource(repo);
+      const marker = path.join(repo, "provider-invoked.txt");
+      await installFakeCodex(repo, `#!/usr/bin/env node
+const fs = require("node:fs");
+fs.writeFileSync(${JSON.stringify(marker)}, "called");
+process.exit(0);
+`);
+
+      const result = await runCli(["scan", "--synthesize", "--offline", "--json"], repo);
+      expect(result.code).toBe(0);
+      const payload = JSON.parse(result.stdout) as {
+        data: { synthesis: { requested: boolean; candidateCount: number; runtime: { offline: boolean } } };
+        diagnostics: Array<{ code: string }>;
+      };
+      expect(payload.data.synthesis.requested).toBe(false);
+      expect(payload.data.synthesis.candidateCount).toBe(0);
+      expect(payload.data.synthesis.runtime.offline).toBe(true);
+      expect(payload.diagnostics.some((diagnostic) => diagnostic.code === "synthesis_skipped_by_policy")).toBe(true);
+      await expect(stat(marker)).rejects.toThrow();
+    });
+  });
+
+  test("provider unavailable failures leave durable diagnostics", async () => {
+    await withTempRepo(async (repo) => {
+      await writeFixtureSource(repo);
+      await runCli(["init", "--json"], repo);
+      const configPath = path.join(repo, ".deepclean", "config.json");
+      const config = JSON.parse(await readFile(configPath, "utf8")) as {
+        reviewSynthesis: { command: string };
+      };
+      config.reviewSynthesis.command = path.join(repo, "missing-codex");
+      await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+
+      const result = await runCli(["scan", "--synthesize", "--json"], repo);
+      expect(result.code).toBe(0);
+      const payload = JSON.parse(result.stdout) as {
+        diagnostics: Array<{ code: string }>;
+        data: { evidenceCount: number; synthesis: { requested: boolean; candidateCount: number } };
+      };
+      expect(payload.data.evidenceCount).toBeGreaterThan(0);
+      expect(payload.data.synthesis.requested).toBe(true);
+      expect(payload.data.synthesis.candidateCount).toBe(0);
+      expect(payload.diagnostics.some((diagnostic) => diagnostic.code === "codex_provider_unavailable")).toBe(true);
     });
   });
 

@@ -106,6 +106,27 @@ deepclean scan --synthesize --json
 
 Deepclean preserves local evidence and local candidates when synthesis fails.
 
+## Provider Runtime Controls
+
+For serious cleanup prioritization, run model-backed synthesis explicitly:
+
+```bash
+deepclean scan \
+  --synthesize \
+  --model gpt-5.4 \
+  --timeout 120 \
+  --retries 1 \
+  --rpm 10 \
+  --privacy-mode metadata \
+  --json
+```
+
+Runtime controls can also live in `.deepclean/config.json` under `reviewSynthesis`: `model`, `effort`, `timeoutMs`, `retries`, `rpm`, `concurrency`, `tokenBudget`, `excerptBudget`, `offline`, and `privacyMode`.
+
+Use `--offline` or `--local-only` when no provider should run. Deepclean will keep local evidence/candidates, mark synthesis as skipped by policy, and emit `synthesis_skipped_by_policy`.
+
+`--privacy-mode metadata` keeps provider prompts metadata-only unless `--allow-source-in-model` is used with a positive `--excerpt-budget`. `--privacy-mode local-only` disables provider execution. `--privacy-mode source-ok` allows source excerpts when the excerpt budget is positive.
+
 ## Codex Times Out
 
 Increase `.deepclean/config.json`:

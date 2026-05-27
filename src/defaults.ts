@@ -60,6 +60,13 @@ export function defaultConfig(): DeepcleanConfig {
       provider: "codex",
       command: "codex",
       timeoutMs: 120_000,
+      retries: 0,
+      rpm: 10,
+      concurrency: 1,
+      tokenBudget: 120_000,
+      excerptBudget: 0,
+      offline: false,
+      privacyMode: "metadata",
       maxCandidates: 8,
     },
     candidateCaps: {

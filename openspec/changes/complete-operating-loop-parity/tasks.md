@@ -11,7 +11,7 @@ Each slice below MUST land through its own pull request unless an adjacent slice
 - [x] PR-07 Query/report filters: `list` or `findings`, shared filter model, baseline comparison, queue exports, and handoff freshness checks.
 - [x] PR-08 Locks/concurrency: writer locks, stale lock reporting, recovery guidance, and contention tests.
 - [x] PR-09 Retention/sharing: `prune --dry-run`, applied prune manifests, scrub/export, retention safety tests, and privacy docs.
-- [ ] PR-10 Provider/runtime controls: provider/model/runtime flags, timeout/rate-limit diagnostics, offline/local-only modes, and synthesis docs.
+- [x] PR-10 Provider/runtime controls: provider/model/runtime flags, timeout/rate-limit diagnostics, offline/local-only modes, and synthesis docs.
 - [ ] PR-11 Guarded fix execution: explicit opt-in fix flow, clean-tree guard, dry-run patch preview, verification capture, and no external side effects.
 - [ ] PR-12 Final hardening: full dogfood on Deepclean, source-safe larger-repo dogfood, release docs, changelog, and final OpenSpec validation.
 
@@ -94,11 +94,11 @@ Each slice below MUST land through its own pull request unless an adjacent slice
 
 ## 10. Provider and Runtime Controls
 
-- [ ] 10.1 Add config and CLI controls for provider, model, effort, timeout, retries, rpm, concurrency, token budget, excerpt budget, offline mode, and privacy mode.
-- [ ] 10.2 Persist provider runtime metadata in run and synthesis records.
-- [ ] 10.3 Add timeout, retry, rate-limit, and provider-unavailable diagnostics.
-- [ ] 10.4 Update synthesis docs to recommend model-backed review for serious cleanup while preserving local-only operation.
-- [ ] 10.5 PR checkpoint: merge only after PR-10 proves offline/local-only mode never invokes providers and provider failures leave durable diagnostics.
+- [x] 10.1 Add config and CLI controls for provider, model, effort, timeout, retries, rpm, concurrency, token budget, excerpt budget, offline mode, and privacy mode.
+- [x] 10.2 Persist provider runtime metadata in run and synthesis records.
+- [x] 10.3 Add timeout, retry, rate-limit, and provider-unavailable diagnostics.
+- [x] 10.4 Update synthesis docs to recommend model-backed review for serious cleanup while preserving local-only operation.
+- [x] 10.5 PR checkpoint: merge only after PR-10 proves offline/local-only mode never invokes providers and provider failures leave durable diagnostics.
 
 ## 11. Guarded Fix Execution
 

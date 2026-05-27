@@ -39,6 +39,8 @@ Add `.deepclean/` to `.gitignore` unless a repo deliberately wants to share repo
 
 Use `--allow-source-in-model` only when the target repo and configured provider are allowed to receive source excerpts. This may include snippets from files that triggered local evidence.
 
+Provider execution is disabled by `--offline`, `--local-only`, or `reviewSynthesis.offline`. `reviewSynthesis.privacyMode` may be `local-only`, `metadata`, or `source-ok`; `metadata` is the default and keeps source excerpts out unless the user explicitly allows source and sets a positive excerpt budget.
+
 ## Generated Record Sensitivity
 
 Treat `.deepclean/` as private by default. Records may contain repository-relative paths, absolute state paths in diagnostics, source excerpts, analyzer summaries, model prompt metadata, verification output paths, patch previews, and notes written by humans or agents.
