@@ -1,15 +1,15 @@
 :root {
-  --ink: #101827;
-  --panel: #15161a;
-  --surface: #f6fcff;
-  --surface-strong: #ffffff;
-  --line: #d8e7ef;
+  --ink: #edf8fb;
+  --panel: #080d12;
+  --surface: #05080c;
+  --surface-strong: #0d141b;
+  --line: rgba(193, 218, 227, 0.16);
   --aqua: #00bfea;
-  --aqua-dark: #0089a8;
+  --aqua-dark: #5ed9f2;
   --amber: #ffb020;
-  --muted: #5e6b7a;
-  --soft: #eaf5fa;
-  --shadow: 0 28px 90px rgba(16, 24, 39, 0.14);
+  --muted: #9caeba;
+  --soft: #101a22;
+  --shadow: 0 30px 90px rgba(0, 0, 0, 0.5);
   --display: "Clash Display", "Satoshi", "Avenir Next", sans-serif;
   --body: "Satoshi", "Avenir Next", system-ui, sans-serif;
   --mono: "SFMono-Regular", "Cascadia Code", "Liberation Mono", Menlo, monospace;
@@ -26,25 +26,13 @@ html {
 body {
   margin: 0;
   background:
-    linear-gradient(180deg, rgba(0, 191, 234, 0.07), rgba(0, 191, 234, 0) 360px),
-    var(--surface);
+    radial-gradient(circle at 72% 0%, rgba(0, 191, 234, 0.14), transparent 34rem),
+    linear-gradient(180deg, #0b1118 0%, var(--surface) 420px, #030507 100%);
   color: var(--ink);
   font-family: var(--body);
   font-size: 16px;
   line-height: 1.5;
   overflow-x: hidden;
-}
-
-body::before {
-  position: fixed;
-  inset: 0;
-  z-index: -1;
-  content: "";
-  background-image:
-    linear-gradient(rgba(16, 24, 39, 0.045) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(16, 24, 39, 0.045) 1px, transparent 1px);
-  background-size: 44px 44px;
-  mask-image: linear-gradient(180deg, black, transparent 62%);
 }
 
 a {
@@ -78,7 +66,7 @@ main,
 .brand-mark {
   width: 14px;
   height: 14px;
-  border: 2px solid var(--ink);
+  border: 2px solid rgba(237, 248, 251, 0.9);
   border-radius: 50%;
   box-shadow: 8px 0 0 var(--aqua), 16px 0 0 var(--amber);
 }
@@ -186,19 +174,19 @@ h3 {
 .button.primary {
   border-color: transparent;
   background: var(--ink);
-  color: white;
-  box-shadow: 0 14px 38px rgba(16, 24, 39, 0.2);
+  color: var(--surface);
+  box-shadow: 0 14px 38px rgba(0, 191, 234, 0.18);
   font-family: var(--mono);
   font-size: 0.88rem;
 }
 
 .button.secondary {
-  background: rgba(255, 255, 255, 0.7);
+  background: rgba(237, 248, 251, 0.06);
 }
 
 .prompt {
   margin-right: 10px;
-  color: var(--aqua);
+  color: var(--aqua-dark);
 }
 
 .trust-strip {
@@ -217,7 +205,7 @@ h3 {
   border: 1px solid var(--line);
   border-radius: 999px;
   padding: 0 12px;
-  background: rgba(255, 255, 255, 0.56);
+  background: rgba(237, 248, 251, 0.05);
 }
 
 .hero-visual {
@@ -273,7 +261,7 @@ h3 {
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 22px;
-  background: rgba(255, 255, 255, 0.72);
+  background: rgba(13, 20, 27, 0.76);
 }
 
 .steps span {
@@ -311,7 +299,7 @@ h3 {
   display: flex;
   align-items: center;
   min-height: 48px;
-  border: 1px solid rgba(16, 24, 39, 0.12);
+  border: 1px solid rgba(193, 218, 227, 0.14);
   border-left: 5px solid var(--aqua);
   border-radius: 8px;
   padding: 0 16px;

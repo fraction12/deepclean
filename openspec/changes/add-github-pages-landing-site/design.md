@@ -10,7 +10,7 @@ The page will be hosted with GitHub Pages for the `fraction12/deepclean` reposit
 
 - Build a minimal, polished static landing page for GitHub Pages.
 - Make one eye-catcher do the work: a large Remotion-authored terminal animation.
-- Use the approved Cleanroom Console palette: ink, clean surface, aqua, amber, and muted line/text colors.
+- Use the approved Cleanroom Console palette as a darker cleanroom terminal theme: deep surface, light ink, aqua, amber, and muted line/text colors.
 - Keep runtime static and dependency-light for visitors.
 - Add a maintainable render path for updating the hero media.
 
@@ -47,7 +47,7 @@ The site will load Clash Display and Satoshi from Fontshare, matching OpenClaw's
 
 ### Minimal content model
 
-The page will use a concise structure:
+The page will use a concise structure and avoid blueprint/crosshatch background patterns:
 
 1. Hero with install command, GitHub link, and terminal animation.
 2. Four-step workflow.

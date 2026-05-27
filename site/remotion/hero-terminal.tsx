@@ -5,13 +5,13 @@ import {
 } from "remotion";
 
 const colors = {
-  ink: "#101827",
-  panel: "#15161A",
-  surface: "#F6FCFF",
-  line: "#D8E7EF",
+  ink: "#05080C",
+  panel: "#080D12",
+  surface: "#EDF8FB",
+  line: "#C1DAE3",
   aqua: "#00BFEA",
   amber: "#FFB020",
-  muted: "#5E6B7A",
+  muted: "#9CAEBA",
 };
 
 const rows = [
@@ -42,15 +42,6 @@ export const HeroTerminal = () => {
         color: colors.surface,
       }}
     >
-      <div
-        style={{
-          position: "absolute",
-          inset: 0,
-          backgroundImage:
-            "linear-gradient(rgba(246, 252, 255, 0.035) 2px, transparent 2px), linear-gradient(90deg, rgba(246, 252, 255, 0.035) 2px, transparent 2px)",
-          backgroundSize: "74px 74px",
-        }}
-      />
       <div
         style={{
           position: "absolute",
