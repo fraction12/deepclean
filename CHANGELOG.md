@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Set the GitHub Pages site as the public project homepage and documented it in the README.
 - Added the complete operating loop: health/status, stable finding identity, lifecycle history, revalidation, incremental scans, CI policy mode, shared query filters, writer locks, retention pruning, source-safe exports, provider runtime controls, and guarded local fix attempts.
 - Added explicit PR checkpoints and dogfood evidence for `complete-operating-loop-parity`.
 - Added repo-specific verification inference so generated candidates and plans point at real local checks such as Makefile targets, frontend package scripts, and admin package scripts instead of generic commands.
