@@ -24,6 +24,13 @@ The system SHALL record synthesis provenance for model-generated candidates, inc
 - **WHEN** review synthesis creates a candidate
 - **THEN** the candidate records which provider and evidence bundle produced it
 
+### Requirement: Synthesis attempt ledger
+The system SHALL persist a provider attempt ledger for each synthesis run.
+
+#### Scenario: Provider synthesis runs
+- **WHEN** a scan invokes a synthesis provider
+- **THEN** the system records the prompt version, provider/runtime controls, reviewer IDs, evidence manifest, prompt size, accepted candidate count, rejected candidate count, validation diagnostics, and provider notes without storing the full prompt text
+
 ### Requirement: Private-code safety
 The system SHALL keep repository source local unless the user explicitly configures a provider that receives source excerpts.
 
@@ -37,6 +44,24 @@ The system MUST NOT persist a model-generated candidate unless it cites supporti
 #### Scenario: Model suggests unsupported issue
 - **WHEN** the model returns a plausible maintainability concern without cited evidence
 - **THEN** the system rejects or downgrades the item to a diagnostic rather than saving it as an open candidate
+
+#### Scenario: Model cites unsupported anchors
+- **WHEN** a model-generated candidate cites missing evidence IDs, file paths outside the cited evidence, invalid line ranges, out-of-bounds lines, or source quotes that do not match local source
+- **THEN** the system rejects the draft and records the rejection reason in the synthesis attempt ledger
+
+### Requirement: Finding explanation
+The system SHALL explain why a candidate exists using its local evidence, synthesis validation, and fix-readiness metadata.
+
+#### Scenario: User explains a candidate
+- **WHEN** a user runs `deepclean explain <candidate-or-finding-id>`
+- **THEN** the system returns the candidate, supporting evidence, synthesis attempt summary when available, validation result, fix-readiness guidance, verification commands, and diagnostics
+
+### Requirement: Fix-readiness metadata
+The system SHALL capture bounded fix-readiness metadata for synthesized candidates.
+
+#### Scenario: Synthesized candidate is accepted
+- **WHEN** review synthesis accepts a model-generated candidate
+- **THEN** the candidate records minimum fix scope, suggested regression test, why current tests may miss the issue, and confidence downgrade reasons
 
 ### Requirement: Partial synthesis handling
 The system SHALL handle provider failures without discarding local evidence collected earlier in the scan.

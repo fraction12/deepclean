@@ -57,6 +57,7 @@ deepclean cluster
 deepclean plan theme-001 --format codex
 deepclean next
 deepclean show <candidate-id>
+deepclean explain <candidate-or-finding-id>
 deepclean triage <candidate-id> --status ignored --note "intentional boundary"
 deepclean handoff <candidate-id> --format codex
 ```
@@ -68,6 +69,7 @@ Deepclean writes durable local artifacts under `.deepclean/`:
 - `runs/` - scan metadata
 - `features/` - semantic feature/work-unit maps
 - `evidence/` - raw local evidence records
+- `synthesis/` - provider attempt ledgers, prompt manifests, and candidate validation results
 - `candidates/` - cleanup candidates
 - `clusters/` - related cleanup themes
 - `reports/` - Markdown and JSON reports
@@ -90,6 +92,7 @@ deepclean cluster --json
 deepclean plan theme-001 --json
 deepclean next --json
 deepclean show candidate-001 --json
+deepclean explain candidate-001 --json
 deepclean handoff candidate-001 --json
 ```
 
@@ -122,7 +125,9 @@ For TS/JS projects using NodeNext-style source imports, Deepclean resolves emitt
 
 ## Codex Synthesis
 
-`deepclean scan` runs the local `codex` CLI in read-only mode over the collected evidence bundle by default. The model is asked to return strict JSON, and candidates without valid evidence IDs are rejected.
+`deepclean scan` runs the local `codex` CLI in read-only mode over the collected evidence bundle by default. The model is asked to return strict JSON, and candidates are validated before they are persisted: cited evidence IDs must exist, file paths must be anchored by cited evidence, line ranges must be sane, and optional quotes must match source. Rejected drafts stay in the synthesis attempt ledger as diagnostics rather than becoming open findings.
+
+Use `deepclean explain <candidate-or-finding-id>` to inspect why a candidate exists, which evidence supports it, which validation checks passed, and what fix-readiness guidance was attached.
 
 Synthesis uses a built-in reviewer pack so runs do not depend on arbitrary local agent skills. The current pack looks for architecture boundaries, conceptual duplication, dependency graph risk, testability gaps, domain language drift, agent-sized cleanup slices, and weak findings that should be rejected.
 
