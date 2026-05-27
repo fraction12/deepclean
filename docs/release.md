@@ -23,8 +23,9 @@ The release workflow uses GitHub OIDC and does not require a long-lived npm toke
 npm run release:check
 ```
 
-4. Commit and push.
-5. Tag the exact package version:
+4. For operating-loop changes, run or cite the latest dogfood scorecard in `docs/`.
+5. Commit and push.
+6. Tag the exact package version:
 
 ```bash
 git tag v0.1.0-alpha.1

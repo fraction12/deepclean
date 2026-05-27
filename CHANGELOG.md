@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added the complete operating loop: health/status, stable finding identity, lifecycle history, revalidation, incremental scans, CI policy mode, shared query filters, writer locks, retention pruning, source-safe exports, provider runtime controls, and guarded local fix attempts.
+- Added explicit PR checkpoints and dogfood evidence for `complete-operating-loop-parity`.
 - Added repo-specific verification inference so generated candidates and plans point at real local checks such as Makefile targets, frontend package scripts, and admin package scripts instead of generic commands.
 - Added explicit `reportPath`, `markdownPath`, `jsonPath`, and `planPath` fields to JSON output for automation.
 - Improved Markdown reports with a focused `Agent Queue`, bounded themes before too-broad themes, and a capped candidate appendix while preserving full raw records in JSON.
