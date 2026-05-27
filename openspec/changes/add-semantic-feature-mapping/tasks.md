@@ -1,0 +1,6 @@
+- [x] 1. Add feature record schema and project-state storage.
+- [x] 2. Add local semantic feature mapper for package scripts, TS/JS, Python, tests, and config.
+- [x] 3. Write feature maps during `scan`.
+- [x] 4. Add `deepclean map` command and JSON output.
+- [x] 5. Surface feature counts in run/status output.
+- [x] 6. Cover feature mapping with CLI tests and validate release checks.

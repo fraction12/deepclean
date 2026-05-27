@@ -14,6 +14,7 @@ import {
   candidateObservationRecordSchema,
   candidateRecordSchema,
   ciRunRecordSchema,
+  featureRecordSchema,
   findingRecordSchema,
   fixAttemptRecordSchema,
   lifecycleEventRecordSchema,
@@ -52,6 +53,7 @@ describe("deepclean cli", () => {
         "locks",
         "retention",
         "fixes",
+        "features",
       ];
       for (const dir of dirs) {
         expect((await stat(path.join(repo, ".deepclean", dir))).isDirectory()).toBe(true);
@@ -131,7 +133,7 @@ describe("deepclean cli", () => {
           initialized: boolean;
           latestRunId?: string;
           git: { available: boolean; dirty: boolean };
-          queue: { open: number; total: number; evidence: number; themes: number };
+          queue: { open: number; total: number; evidence: number; themes: number; features: number };
           artifacts: Record<string, number>;
         };
       };
@@ -143,8 +145,10 @@ describe("deepclean cli", () => {
       expect(payload.data.queue.total).toBeGreaterThan(0);
       expect(payload.data.queue.evidence).toBeGreaterThan(0);
       expect(payload.data.queue.themes).toBeGreaterThan(0);
+      expect(payload.data.queue.features).toBeGreaterThan(0);
       expect(payload.data.artifacts["runs"]).toBeGreaterThan(0);
       expect(payload.data.artifacts["candidates"]).toBeGreaterThan(0);
+      expect(payload.data.artifacts["features"]).toBeGreaterThan(0);
     });
   });
 
@@ -312,6 +316,26 @@ describe("deepclean cli", () => {
       createdAt: now,
       updatedAt: now,
     });
+
+    featureRecordSchema.parse({
+      schemaVersion,
+      recordType: "feature",
+      featureId: "feature-fixture",
+      runId: "run-test",
+      title: "Checkout calculation module",
+      summary: "Checkout behavior owned by src/checkout.ts.",
+      kind: "module",
+      source: "local-source",
+      confidence: "high",
+      entrypoints: [{ path: "src/checkout.ts" }],
+      ownedFiles: [{ path: "src/checkout.ts", startLine: 1, endLine: 20 }],
+      contextFiles: [{ path: "src/checkout.test.ts" }],
+      testFiles: [{ path: "src/checkout.test.ts" }],
+      verification: ["npm test"],
+      tags: ["module", "typescript", "area:src"],
+      createdAt: now,
+      updatedAt: now,
+    });
   });
 
   test("reports and explicitly recovers stale writer locks", async () => {
@@ -413,11 +437,13 @@ describe("deepclean cli", () => {
       expect(dryRunPayload.data.manifest.dryRun).toBe(true);
       expect(dryRunPayload.data.manifest.deletePaths).toEqual(expect.arrayContaining([
         ".deepclean/runs/run-20000101000000-old.json",
+        ".deepclean/features/run-20000101000000-old.json",
         ".deepclean/evidence/run-20000101000000-old.json",
         ".deepclean/reports/report-old.json",
         ".deepclean/reports/report-old.md",
       ]));
       expect(dryRunPayload.data.manifest.retainedPaths).toContain(`.deepclean/evidence/${latestRun}.json`);
+      expect(dryRunPayload.data.manifest.retainedPaths).toContain(`.deepclean/features/${latestRun}.json`);
       expect(dryRunPayload.data.manifest.blockedPaths.some((blocked) => blocked.path === ".deepclean/config.json")).toBe(true);
       expect(dryRunPayload.data.manifest.blockedPaths.some((blocked) => blocked.path === ".deepclean/locks/state-writer.json")).toBe(true);
       await expect(stat(path.join(repo, ".deepclean", "runs", "run-20000101000000-old.json"))).resolves.toBeTruthy();
@@ -430,6 +456,7 @@ describe("deepclean cli", () => {
       await expect(stat(path.join(repo, ".deepclean", "runs", "run-20000101000000-old.json"))).rejects.toThrow();
       await expect(stat(path.join(repo, ".deepclean", "config.json"))).resolves.toBeTruthy();
       await expect(stat(path.join(repo, ".deepclean", "evidence", `${latestRun}.json`))).resolves.toBeTruthy();
+      await expect(stat(path.join(repo, ".deepclean", "features", `${latestRun}.json`))).resolves.toBeTruthy();
       expect(await readLockStatuses(resolveStatePaths({ cwd: repo }))).toEqual([]);
     });
   });
@@ -446,6 +473,7 @@ describe("deepclean cli", () => {
             sourceSafe: boolean;
             project: string;
             candidates: Array<{ files: Array<{ path: string }>; evidenceIds: string[] }>;
+            features: Array<{ ownedFiles: Array<{ path: string }>; testFiles: Array<{ path: string }> }>;
             evidence: Array<{ files: Array<{ path: string }>; title: string }>;
             privacyNotes: string[];
           };
@@ -455,13 +483,72 @@ describe("deepclean cli", () => {
       expect(payload.data.export.sourceSafe).toBe(true);
       expect(payload.data.export.project).toBe(path.basename(repo));
       expect(payload.data.export.candidates.length).toBeGreaterThan(0);
+      expect(payload.data.export.features.length).toBeGreaterThan(0);
       expect(payload.data.export.candidates[0]?.files[0]?.path.startsWith("/")).toBe(false);
+      expect(payload.data.export.features[0]?.ownedFiles[0]?.path.startsWith("/")).toBe(false);
       const saved = await readFile(payload.data.outputPath, "utf8");
       expect(saved).not.toContain(repo);
       expect(saved).not.toContain("const subtotal");
       expect(saved).not.toContain("providerPrompt");
       expect(saved).not.toContain("promptText");
       expect(saved).not.toContain(".deepclean/reports");
+    });
+  });
+
+  test("maps semantic feature records as a standalone artifact", async () => {
+    await withTempRepo(async (repo) => {
+      await writeFixtureSource(repo);
+      await writeFile(path.join(repo, "package.json"), JSON.stringify({
+        scripts: {
+          build: "tsc -p tsconfig.json",
+          test: "vitest run",
+        },
+      }), "utf8");
+      await writeFile(path.join(repo, "src", "checkout.test.ts"), `
+import { calculateCheckout } from "./checkout.js";
+test("checkout", () => calculateCheckout([], false));
+`, "utf8");
+
+      const result = await runCli(["map", "--json"], repo);
+      expect(result.code).toBe(0);
+      const payload = JSON.parse(result.stdout) as {
+        data: {
+          mapId: string;
+          featureCount: number;
+          sourceFileCount: number;
+          path: string;
+          features: Array<{
+            featureId: string;
+            runId: string;
+            title: string;
+            kind: string;
+            ownedFiles: Array<{ path: string }>;
+            testFiles: Array<{ path: string }>;
+            verification: string[];
+          }>;
+        };
+      };
+      expect(payload.data.mapId).toMatch(/^map-/);
+      expect(payload.data.sourceFileCount).toBe(3);
+      expect(payload.data.featureCount).toBeGreaterThanOrEqual(4);
+      expect(payload.data.features.every((feature) => feature.featureId.startsWith("feature-"))).toBe(true);
+      expect(payload.data.features.every((feature) => feature.runId === payload.data.mapId)).toBe(true);
+      expect(payload.data.features.some((feature) => feature.kind === "package-script")).toBe(true);
+      expect(payload.data.features.some((feature) => (
+        feature.kind === "module"
+        && feature.ownedFiles.some((file) => file.path === "src/checkout.ts")
+        && feature.testFiles.some((file) => file.path === "src/checkout.test.ts")
+      ))).toBe(true);
+      expect(payload.data.features.some((feature) => (
+        feature.kind === "test-suite"
+        && feature.ownedFiles.some((file) => file.path === "src/checkout.test.ts")
+      ))).toBe(true);
+      expect(payload.data.features.some((feature) => (
+        feature.kind === "package-script"
+        && feature.verification.includes("npm run test")
+      ))).toBe(true);
+      const saved = await readFile(payload.data.path, "utf8");
+      expect(saved).toContain("\"recordType\": \"feature\"");
     });
   });
 
@@ -472,12 +559,27 @@ describe("deepclean cli", () => {
       expect(scan.code).toBe(0);
       const scanPayload = JSON.parse(scan.stdout) as {
         ok: boolean;
-        data: { evidenceCount: number; candidateCount: number; candidates: Array<{ id: string }> };
+        data: {
+          runId: string;
+          featureCount: number;
+          evidenceCount: number;
+          candidateCount: number;
+          candidates: Array<{ id: string }>;
+        };
       };
       expect(scanPayload.ok).toBe(true);
+      expect(scanPayload.data.featureCount).toBeGreaterThan(0);
       expect(scanPayload.data.evidenceCount).toBeGreaterThan(0);
       expect(scanPayload.data.candidateCount).toBeGreaterThan(0);
       expect(scanPayload.data.candidates[0]?.id).toMatch(/^candidate-/);
+      const features = JSON.parse(
+        await readFile(path.join(repo, ".deepclean", "features", `${scanPayload.data.runId}.json`), "utf8"),
+      ) as Array<{ kind: string; ownedFiles: Array<{ path: string }> }>;
+      expect(features.length).toBe(scanPayload.data.featureCount);
+      expect(features.some((feature) => (
+        feature.kind === "module"
+        && feature.ownedFiles.some((file) => file.path === "src/checkout.ts")
+      ))).toBe(true);
 
       const next = await runCli(["next", "--json"], repo);
       const nextPayload = JSON.parse(next.stdout) as { data: { candidate: { id: string } | null } };
@@ -1476,6 +1578,7 @@ async function writeOldRunArtifacts(repo: string): Promise<void> {
   const oldRunId = "run-20000101000000-old";
   await mkdir(path.join(state, "runs"), { recursive: true });
   await mkdir(path.join(state, "evidence"), { recursive: true });
+  await mkdir(path.join(state, "features"), { recursive: true });
   await mkdir(path.join(state, "candidates"), { recursive: true });
   await mkdir(path.join(state, "clusters"), { recursive: true });
   await mkdir(path.join(state, "observations"), { recursive: true });
@@ -1496,7 +1599,7 @@ async function writeOldRunArtifacts(repo: string): Promise<void> {
     synthesis: { requested: false, candidateCount: 0 },
     diagnostics: [],
   }, null, 2)}\n`, "utf8");
-  for (const dir of ["evidence", "candidates", "clusters", "observations"]) {
+  for (const dir of ["evidence", "features", "candidates", "clusters", "observations"]) {
     await writeFile(path.join(state, dir, `${oldRunId}.json`), "[]\n", "utf8");
   }
   await writeFile(path.join(state, "reports", "report-old.json"), `${JSON.stringify({

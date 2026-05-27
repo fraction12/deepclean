@@ -89,6 +89,15 @@ export const ciRunStatuses = [
   "policy-failed",
   "error",
 ] as const;
+export const featureKinds = [
+  "package-script",
+  "route",
+  "component",
+  "module",
+  "python-module",
+  "test-suite",
+  "config",
+] as const;
 
 export const diagnosticSchema = z.object({
   level: z.enum(["info", "warning", "error"]),
@@ -198,6 +207,28 @@ export const evidenceRecordSchema = z.object({
 });
 
 export type EvidenceRecord = z.infer<typeof evidenceRecordSchema>;
+
+export const featureRecordSchema = z.object({
+  schemaVersion: z.literal(schemaVersion),
+  recordType: z.literal("feature"),
+  featureId: z.string(),
+  runId: z.string(),
+  title: z.string(),
+  summary: z.string(),
+  kind: z.enum(featureKinds),
+  source: z.string(),
+  confidence: z.enum(confidenceLevels),
+  entrypoints: z.array(fileReferenceSchema),
+  ownedFiles: z.array(fileReferenceSchema),
+  contextFiles: z.array(fileReferenceSchema),
+  testFiles: z.array(fileReferenceSchema),
+  verification: z.array(z.string()),
+  tags: z.array(z.string()),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
+export type FeatureRecord = z.infer<typeof featureRecordSchema>;
 
 export const candidateRecordSchema = z.object({
   schemaVersion: z.literal(schemaVersion),
@@ -429,6 +460,7 @@ export const runRecordSchema = z.object({
   root: z.string(),
   startedAt: z.string(),
   completedAt: z.string(),
+  featureCount: z.number().int().nonnegative().optional(),
   evidenceCount: z.number().int().nonnegative(),
   candidateCount: z.number().int().nonnegative(),
   clusterCount: z.number().int().nonnegative().optional(),

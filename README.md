@@ -23,6 +23,7 @@ deepclean --version
 
 ```bash
 deepclean init
+deepclean map
 deepclean scan --json
 deepclean report
 deepclean next
@@ -48,6 +49,7 @@ deepclean scan --root ./some-repo --synthesize
 
 ```bash
 deepclean init
+deepclean map
 deepclean scan
 deepclean scan --synthesize
 deepclean report
@@ -64,6 +66,7 @@ deepclean handoff <candidate-id> --format codex
 Deepclean writes durable local artifacts under `.deepclean/`:
 
 - `runs/` - scan metadata
+- `features/` - semantic feature/work-unit maps
 - `evidence/` - raw local evidence records
 - `candidates/` - cleanup candidates
 - `clusters/` - related cleanup themes
@@ -80,6 +83,7 @@ Core commands support `--json` for automation:
 
 ```bash
 deepclean scan --json
+deepclean map --json
 deepclean scan --synthesize --json
 deepclean report --json
 deepclean cluster --json
@@ -102,6 +106,7 @@ Useful global flags:
 
 Deepclean runs local evidence first and optional model synthesis second. The built-in evidence layer includes:
 
+- semantic feature mapping for package scripts, TS/JS modules/routes/components, Python modules, test suites, and config files
 - file metrics
 - normalized line-window duplication
 - source/import graph summaries

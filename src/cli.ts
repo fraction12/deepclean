@@ -11,6 +11,7 @@ import { candidatesFromEvidence, rankCandidates, reassignCandidateIds } from "./
 import { buildClusters, unclusteredCandidateIds } from "./clusters.js";
 import { discoverSourceFiles, type SourceFile } from "./discovery.js";
 import { runEvidenceAdapters } from "./evidence.js";
+import { mapSemanticFeatures } from "./features.js";
 import { attachStableIdentity } from "./identity.js";
 import { fail, ok } from "./json.js";
 import {
@@ -37,6 +38,7 @@ import {
   readLatestCandidates,
   readLatestClusters,
   readLatestEvidence,
+  readLatestFeatures,
   readLifecycleEvents,
   resolveStatePaths,
   updateLatestCandidates,
@@ -45,6 +47,7 @@ import {
   writeCiRun,
   writeClusters,
   writeEvidence,
+  writeFeatures,
   writeFindings,
   writeFixAttempt,
   writeHandoff,
@@ -80,6 +83,7 @@ const commands = [
   "doctor",
   "status",
   "ci",
+  "map",
   "scan",
   "report",
   "next",
@@ -169,6 +173,7 @@ Commands:
   doctor                       Check environment, config, state, git, provider, and privacy readiness
   status                       Summarize current project-local Deepclean state
   ci                           Run non-interactive scan and policy gates for CI
+  map                          Write semantic feature records without producing candidates
   scan                         Collect local evidence and generate candidates
     --synthesize               Run local Codex synthesis over evidence
     --allow-source-in-model    Include source samples in Codex prompt
@@ -282,6 +287,8 @@ export async function main(argv: string[], cwd = process.cwd()): Promise<number>
         return await statusCommand(context);
       case "ci":
         return await withWriteLock(context, () => ciCommand(context));
+      case "map":
+        return await withWriteLock(context, () => mapCommand(context));
       case "scan":
         return await withWriteLock(context, () => scanCommand(context));
       case "report":
@@ -450,6 +457,7 @@ async function statusCommand(context: CommandContext): Promise<number> {
   const candidates = latest ? await readLatestCandidates(context.paths) : [];
   const clusters = latest ? await readLatestClusters(context.paths) : [];
   const evidence = latest ? await readLatestEvidence(context.paths) : [];
+  const features = initialized ? await readLatestFeatures(context.paths) : [];
   const git = await gitDoctor(context.paths.root);
   if (!git.available) {
     diagnostics.push({
@@ -479,6 +487,7 @@ async function statusCommand(context: CommandContext): Promise<number> {
       byStatus: statusCounts,
       themes: clusters.length,
       evidence: evidence.length,
+      features: features.length,
     },
     locks: {
       active: locks.filter((lock) => !lock.stale).length,
@@ -559,10 +568,11 @@ async function pruneCommand(context: CommandContext): Promise<number> {
 }
 
 async function scrubCommand(context: CommandContext): Promise<number> {
-  const [candidates, clusters, evidence] = await Promise.all([
+  const [candidates, clusters, evidence, features] = await Promise.all([
     readLatestCandidates(context.paths),
     readLatestClusters(context.paths),
     readLatestEvidence(context.paths),
+    readLatestFeatures(context.paths),
   ]);
   const latest = await latestRunId(context.paths);
   const output = {
@@ -575,6 +585,7 @@ async function scrubCommand(context: CommandContext): Promise<number> {
       candidates: candidates.length,
       clusters: clusters.length,
       evidence: evidence.length,
+      features: features.length,
     },
     candidates: rankCandidates(candidates).map((candidate) => ({
       id: candidate.id,
@@ -611,6 +622,16 @@ async function scrubCommand(context: CommandContext): Promise<number> {
       title: record.title,
       files: record.files.map((file) => sourceSafeFile(context.paths.root, file)),
     })),
+    features: features.map((feature) => ({
+      featureId: feature.featureId,
+      title: feature.title,
+      kind: feature.kind,
+      confidence: feature.confidence,
+      ownedFiles: feature.ownedFiles.map((file) => sourceSafeFile(context.paths.root, file)),
+      testFiles: feature.testFiles.map((file) => sourceSafeFile(context.paths.root, file)),
+      verification: feature.verification,
+      tags: feature.tags,
+    })),
     privacyNotes: [
       "Source-safe export omits source excerpts, model prompts, provider payloads, absolute state paths, and generated handoff/plan prose.",
       "Repository-relative paths are retained so findings remain actionable.",
@@ -628,7 +649,7 @@ async function scrubCommand(context: CommandContext): Promise<number> {
     ...(outputPath ? { outputPath: path.resolve(context.paths.root, outputPath) } : {}),
   }));
   if (!context.json && !context.quiet) {
-    console.log(`Source-safe export: ${output.counts.candidates} candidates, ${output.counts.evidence} evidence references`);
+    console.log(`Source-safe export: ${output.counts.candidates} candidates, ${output.counts.features} features, ${output.counts.evidence} evidence references`);
     if (outputPath) {
       console.log(`Export written to ${outputPath}`);
     }
@@ -779,6 +800,52 @@ async function fixCommand(context: CommandContext): Promise<number> {
   return status === "failed" ? 3 : 0;
 }
 
+async function mapCommand(context: CommandContext): Promise<number> {
+  const result = await executeFeatureMap(context);
+  emit(context.json, ok("map", result));
+  if (!context.json && !context.quiet) {
+    console.log(`Mapped ${result.featureCount} semantic feature${result.featureCount === 1 ? "" : "s"}.`);
+    console.log(`Features written to ${path.relative(context.paths.root, result.path)}`);
+  }
+  return 0;
+}
+
+async function executeFeatureMap(context: CommandContext): Promise<{
+  mapId: string;
+  root: string;
+  sourceFileCount: number;
+  featureCount: number;
+  features: Awaited<ReturnType<typeof mapSemanticFeatures>>;
+  scope: ScanScope;
+  path: string;
+}> {
+  const createdAt = new Date().toISOString();
+  const mapId = timestampId("map");
+  const config = await ensureState(context.paths);
+  const verificationProfile = await inferVerificationProfile(context.paths.root);
+  const discoveredFiles = await discoverSourceFiles(context.paths.root, config.exclude);
+  const scope = await resolveScanScope(context, discoveredFiles);
+  const files = discoveredFiles.filter((file) => fileInScope(file, scope));
+  const features = await mapSemanticFeatures({
+    root: context.paths.root,
+    runId: mapId,
+    createdAt,
+    files,
+    verificationProfile,
+    excludes: config.exclude,
+  });
+  const featurePath = await writeFeatures(context.paths, mapId, features);
+  return {
+    mapId,
+    root: context.paths.root,
+    sourceFileCount: files.length,
+    featureCount: features.length,
+    features,
+    scope,
+    path: featurePath,
+  };
+}
+
 async function ciCommand(context: CommandContext): Promise<number> {
   const requireSynthesis = flagBoolean(context.parsed.flags, "require-synthesis");
   if (requireSynthesis && !flagBoolean(context.parsed.flags, "synthesize")) {
@@ -847,6 +914,14 @@ async function executeScan(
   const discoveredFiles = await discoverSourceFiles(context.paths.root, config.exclude);
   const scope = await resolveScanScope(context, discoveredFiles);
   const files = discoveredFiles.filter((file) => fileInScope(file, scope));
+  const features = await mapSemanticFeatures({
+    root: context.paths.root,
+    runId,
+    createdAt: startedAt,
+    files,
+    verificationProfile,
+    excludes: config.exclude,
+  });
   const adapterResult = await runEvidenceAdapters(config.enabledAdapters, {
     root: context.paths.root,
     runId,
@@ -905,6 +980,7 @@ async function executeScan(
   const candidates = filterCandidatesByScanScope(identity.candidates, scope);
   const clusters = buildClusters(runId, candidates, evidence, completedAt, config.clusters);
 
+  await writeFeatures(context.paths, runId, features);
   await writeEvidence(context.paths, runId, evidence);
   await writeCandidates(context.paths, runId, candidates);
   await writeFindings(context.paths, identity.findings);
@@ -919,6 +995,7 @@ async function executeScan(
     root: context.paths.root,
     startedAt,
     completedAt,
+    featureCount: features.length,
     evidenceCount: evidence.length,
     candidateCount: candidates.length,
     clusterCount: clusters.length,
@@ -936,6 +1013,7 @@ async function executeScan(
     runId,
     root: context.paths.root,
     sourceFileCount: files.length,
+    featureCount: features.length,
     evidenceCount: evidence.length,
     candidateCount: candidates.length,
     clusterCount: clusters.length,
@@ -946,6 +1024,7 @@ async function executeScan(
     },
     candidates,
     clusters,
+    features,
     scope,
   };
 
@@ -1635,6 +1714,7 @@ async function missingStateDirectories(paths: StatePaths): Promise<string[]> {
     ["runs", paths.runsDir],
     ["findings", paths.findingsDir],
     ["observations", paths.observationsDir],
+    ["features", paths.featuresDir],
     ["evidence", paths.evidenceDir],
     ["candidates", paths.candidatesDir],
     ["clusters", paths.clustersDir],
@@ -2006,6 +2086,7 @@ async function buildRetentionManifest(context: CommandContext): Promise<Retentio
 
   for (const [dir, extension] of [
     [context.paths.runsDir, "json"],
+    [context.paths.featuresDir, "json"],
     [context.paths.evidenceDir, "json"],
     [context.paths.candidatesDir, "json"],
     [context.paths.clustersDir, "json"],
@@ -2433,6 +2514,7 @@ async function stateArtifactCounts(paths: StatePaths): Promise<Record<string, nu
     ["runs", paths.runsDir],
     ["findings", paths.findingsDir],
     ["observations", paths.observationsDir],
+    ["features", paths.featuresDir],
     ["evidence", paths.evidenceDir],
     ["candidates", paths.candidatesDir],
     ["clusters", paths.clustersDir],
