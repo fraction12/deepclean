@@ -61,7 +61,19 @@ export async function synthesizeWithCodex(options: {
   config: DeepcleanConfig;
   existingCandidates: CandidateRecord[];
   includeSource: boolean;
-  model?: string | undefined;
+  runtime: {
+    command: string;
+    model?: string | undefined;
+    effort?: string | undefined;
+    timeoutMs: number;
+    retries: number;
+    rpm: number;
+    concurrency: number;
+    tokenBudget: number;
+    excerptBudget: number;
+    privacyMode: "local-only" | "metadata" | "source-ok";
+    allowSourceInModel: boolean;
+  };
   verificationProfile?: VerificationProfile | undefined;
 }): Promise<SynthesisResult> {
   const diagnostics: Diagnostic[] = [];
@@ -87,17 +99,18 @@ export async function synthesizeWithCodex(options: {
       outputPath,
     ];
 
-    const model = options.model ?? options.config.reviewSynthesis.model;
+    const model = options.runtime.model;
     if (model) {
       args.push("-m", model);
     }
     args.push("-");
 
-    const result = await runProcess(
-      options.config.reviewSynthesis.command,
+    const result = await runProcessWithRetries(
+      options.runtime.command,
       args,
       prompt,
-      options.config.reviewSynthesis.timeoutMs,
+      options.runtime.timeoutMs,
+      options.runtime.retries,
     );
 
     if (result.exitCode !== 0) {
@@ -105,7 +118,11 @@ export async function synthesizeWithCodex(options: {
         candidates: [],
         diagnostics: [{
           level: "warning",
-          code: result.timedOut ? "codex_synthesis_timeout" : "codex_synthesis_failed",
+          code: result.timedOut
+            ? "codex_synthesis_timeout"
+            : result.providerUnavailable
+              ? "codex_provider_unavailable"
+              : "codex_synthesis_failed",
           message: codexFailureMessage(result),
           adapter: "codex-synthesis",
         }, ...diagnostics],
@@ -162,6 +179,17 @@ export async function synthesizeWithCodex(options: {
           model,
           promptVersion,
           reviewers: reviewerPack.rubrics.map((rubric) => rubric.id),
+          runtime: {
+            effort: options.runtime.effort,
+            timeoutMs: options.runtime.timeoutMs,
+            retries: options.runtime.retries,
+            rpm: options.runtime.rpm,
+            concurrency: options.runtime.concurrency,
+            tokenBudget: options.runtime.tokenBudget,
+            excerptBudget: options.runtime.excerptBudget,
+            privacyMode: options.runtime.privacyMode,
+            allowSourceInModel: options.runtime.allowSourceInModel,
+          },
         },
         createdAt: options.createdAt,
         updatedAt: options.createdAt,
@@ -310,9 +338,10 @@ async function runProcess(
   args: string[],
   stdin: string,
   timeoutMs: number,
-): Promise<{ exitCode: number | null; stdout: string; stderr: string; timedOut: boolean }> {
+): Promise<{ exitCode: number | null; stdout: string; stderr: string; timedOut: boolean; providerUnavailable: boolean }> {
   return new Promise((resolve) => {
     let timedOut = false;
+    let providerUnavailable = false;
     const child = spawn(command, args, {
       stdio: ["pipe", "pipe", "pipe"],
       env: process.env,
@@ -334,14 +363,31 @@ async function runProcess(
     });
     child.on("error", (error) => {
       clearTimeout(timeout);
-      resolve({ exitCode: 1, stdout, stderr: error.message, timedOut });
+      providerUnavailable = typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
+      resolve({ exitCode: 1, stdout, stderr: error.message, timedOut, providerUnavailable });
     });
     child.on("close", (exitCode) => {
       clearTimeout(timeout);
-      resolve({ exitCode, stdout, stderr, timedOut });
+      resolve({ exitCode, stdout, stderr, timedOut, providerUnavailable });
     });
     child.stdin.end(stdin);
   });
+}
+
+async function runProcessWithRetries(
+  command: string,
+  args: string[],
+  stdin: string,
+  timeoutMs: number,
+  retries: number,
+): Promise<{ exitCode: number | null; stdout: string; stderr: string; timedOut: boolean; providerUnavailable: boolean; attempts: number }> {
+  let last = await runProcess(command, args, stdin, timeoutMs);
+  let attempts = 1;
+  while (last.exitCode !== 0 && attempts <= retries && !last.providerUnavailable) {
+    attempts += 1;
+    last = await runProcess(command, args, stdin, timeoutMs);
+  }
+  return { ...last, attempts };
 }
 
 async function resolveReviewerPack(
@@ -389,9 +435,9 @@ async function resolveReviewerPack(
   return { rubrics: [...builtIn, ...custom], diagnostics };
 }
 
-function codexFailureMessage(result: { exitCode: number | null; stdout: string; stderr: string; timedOut: boolean }): string {
+function codexFailureMessage(result: { exitCode: number | null; stdout: string; stderr: string; timedOut: boolean; attempts?: number | undefined }): string {
   if (result.timedOut) {
-    return "Codex synthesis timed out before returning schema-valid JSON.";
+    return `Codex synthesis timed out before returning schema-valid JSON after ${result.attempts ?? 1} attempt(s).`;
   }
   const text = result.stderr || result.stdout || `Codex exited with code ${result.exitCode}`;
   if (/not found|ENOENT/i.test(text)) {

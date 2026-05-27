@@ -117,6 +117,7 @@ interface ScanExecutionResult {
     synthesis: {
       requested: boolean;
       candidateCount: number;
+      runtime?: Record<string, unknown>;
     };
     candidates: CandidateRecord[];
     clusters: ClusterRecord[];
@@ -138,6 +139,22 @@ interface ScanScope {
   dirtyPaths: string[];
 }
 
+interface ProviderRuntimeControls {
+  provider: "codex";
+  command: string;
+  model?: string;
+  effort?: string;
+  timeoutMs: number;
+  retries: number;
+  rpm: number;
+  concurrency: number;
+  tokenBudget: number;
+  excerptBudget: number;
+  offline: boolean;
+  privacyMode: "local-only" | "metadata" | "source-ok";
+  allowSourceInModel: boolean;
+}
+
 function printHelp(): void {
   console.log(`deepclean: local cleanup reports and agent-ready plans
 
@@ -152,7 +169,18 @@ Commands:
   scan                         Collect local evidence and generate candidates
     --synthesize               Run local Codex synthesis over evidence
     --allow-source-in-model    Include source samples in Codex prompt
+    --offline                  Skip provider calls and network-style analyzers
+    --local-only               Alias for --offline
+    --provider <provider>      Provider adapter, currently codex
     --model <model>            Override Codex model for synthesis
+    --effort <effort>          Record provider reasoning effort
+    --timeout <seconds>        Provider timeout in seconds
+    --retries <n>              Provider retry attempts
+    --rpm <n>                  Provider request-per-minute budget
+    --concurrency <n>          Provider concurrency budget
+    --token-budget <n>         Provider token budget metadata
+    --excerpt-budget <n>       Source excerpt budget; 0 keeps prompts metadata-only
+    --privacy-mode <mode>      local-only, metadata, or source-ok
     --since <ref>              Scan files changed since a git ref
     --merge-base <ref>         Use merge-base with ref for changed-file scope
     --include-dirty            Include uncommitted and untracked files in scope
@@ -684,7 +712,17 @@ async function executeScan(
     flagBoolean(context.parsed.flags, "synthesize")
     || config.reviewSynthesis.enabled
   );
-  const synthesisResult = synthesisRequested
+  const runtime = providerRuntimeControls(context, config);
+  if (synthesisRequested && runtime.offline) {
+    adapterResult.diagnostics.push({
+      level: "info",
+      code: "synthesis_skipped_by_policy",
+      message: "Provider synthesis was skipped because offline/local-only mode is active.",
+      adapter: "codex-synthesis",
+    });
+  }
+  const shouldSynthesize = synthesisRequested && !runtime.offline;
+  const synthesisResult = shouldSynthesize
     ? await synthesizeWithCodex({
       root: context.paths.root,
       runId,
@@ -692,9 +730,8 @@ async function executeScan(
       evidence,
       config,
       existingCandidates: localCandidates,
-      includeSource: flagBoolean(context.parsed.flags, "allow-source-in-model")
-        || config.privacy.allowSourceInModel,
-      model: flagString(context.parsed.flags, "model"),
+      includeSource: runtime.allowSourceInModel,
+      runtime,
       verificationProfile,
     })
     : { candidates: [], diagnostics: [] };
@@ -731,9 +768,10 @@ async function executeScan(
     candidateCount: candidates.length,
     clusterCount: clusters.length,
     synthesis: {
-      requested: synthesisRequested,
-      provider: synthesisRequested ? "codex" : undefined,
+      requested: shouldSynthesize,
+      provider: shouldSynthesize ? runtime.provider : undefined,
       candidateCount: synthesisResult.candidates.length,
+      runtime: providerRuntimeSummary(runtime),
     },
     scope,
     diagnostics,
@@ -747,8 +785,9 @@ async function executeScan(
     candidateCount: candidates.length,
     clusterCount: clusters.length,
     synthesis: {
-      requested: synthesisRequested,
+      requested: shouldSynthesize,
       candidateCount: synthesisResult.candidates.length,
+      runtime: providerRuntimeSummary(runtime),
     },
     candidates,
     clusters,
@@ -1997,6 +2036,75 @@ function csvFlag(context: CommandContext, key: string): string[] {
 
 function staleLockMsFromFlags(context: CommandContext): number | undefined {
   return numberFlag(context, "stale-lock-ms");
+}
+
+function providerRuntimeControls(context: CommandContext, config: DeepcleanConfig): ProviderRuntimeControls {
+  const provider = flagString(context.parsed.flags, "provider");
+  if (provider && provider !== "codex") {
+    throw new Error(`Unsupported provider: ${provider}. Only codex is currently supported.`);
+  }
+  const timeoutSeconds = numberFlag(context, "timeout");
+  const timeoutMs = numberFlag(context, "timeout-ms") ?? (
+    timeoutSeconds !== undefined ? timeoutSeconds * 1000 : config.reviewSynthesis.timeoutMs
+  );
+  const privacyMode = privacyModeFromFlag(flagString(context.parsed.flags, "privacy-mode"))
+    ?? config.reviewSynthesis.privacyMode;
+  const offline = flagBoolean(context.parsed.flags, "offline")
+    || flagBoolean(context.parsed.flags, "local-only")
+    || config.reviewSynthesis.offline
+    || privacyMode === "local-only";
+  const excerptBudget = numberFlag(context, "excerpt-budget") ?? config.reviewSynthesis.excerptBudget;
+  const allowSourceInModel = !offline && (
+    flagBoolean(context.parsed.flags, "allow-source-in-model")
+    || config.privacy.allowSourceInModel
+    || privacyMode === "source-ok"
+  ) && excerptBudget > 0;
+  const runtime: ProviderRuntimeControls = {
+    provider: "codex",
+    command: config.reviewSynthesis.command,
+    timeoutMs,
+    retries: numberFlag(context, "retries") ?? config.reviewSynthesis.retries,
+    rpm: numberFlag(context, "rpm") ?? config.reviewSynthesis.rpm,
+    concurrency: numberFlag(context, "concurrency") ?? config.reviewSynthesis.concurrency,
+    tokenBudget: numberFlag(context, "token-budget") ?? config.reviewSynthesis.tokenBudget,
+    excerptBudget,
+    offline,
+    privacyMode,
+    allowSourceInModel,
+  };
+  const model = flagString(context.parsed.flags, "model") ?? config.reviewSynthesis.model;
+  if (model) {
+    runtime.model = model;
+  }
+  const effort = flagString(context.parsed.flags, "effort") ?? config.reviewSynthesis.effort;
+  if (effort) {
+    runtime.effort = effort;
+  }
+  return runtime;
+}
+
+function providerRuntimeSummary(runtime: ProviderRuntimeControls): Record<string, unknown> {
+  return {
+    provider: runtime.provider,
+    model: runtime.model,
+    effort: runtime.effort,
+    timeoutMs: runtime.timeoutMs,
+    retries: runtime.retries,
+    rpm: runtime.rpm,
+    concurrency: runtime.concurrency,
+    tokenBudget: runtime.tokenBudget,
+    excerptBudget: runtime.excerptBudget,
+    offline: runtime.offline,
+    privacyMode: runtime.privacyMode,
+    allowSourceInModel: runtime.allowSourceInModel,
+  };
+}
+
+function privacyModeFromFlag(value: string | undefined): ProviderRuntimeControls["privacyMode"] | undefined {
+  if (value === "local-only" || value === "metadata" || value === "source-ok") {
+    return value;
+  }
+  return undefined;
 }
 
 function numberFlag(context: CommandContext, key: string): number | undefined {
