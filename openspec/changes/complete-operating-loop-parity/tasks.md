@@ -112,8 +112,8 @@ Each slice below MUST land through its own pull request unless an adjacent slice
 
 ## 12. Verification and Dogfood
 
-- [ ] 12.1 Run typecheck, tests, build, package smoke, release check, and OpenSpec validation.
-- [ ] 12.2 Dogfood full scan, synthesized report, revalidation, prune dry-run, and CI mode on Deepclean.
-- [ ] 12.3 Dogfood on one larger private repo and save only a source-safe scorecard.
-- [ ] 12.4 Update public docs, changelog, troubleshooting, and release notes.
-- [ ] 12.5 PR checkpoint: merge only after PR-12 records final dogfood evidence and leaves the full OpenSpec change ready to archive.
+- [x] 12.1 Run typecheck, tests, build, package smoke, release check, and OpenSpec validation.
+- [x] 12.2 Dogfood full scan, synthesized report, revalidation, prune dry-run, and CI mode on Deepclean.
+- [x] 12.3 Dogfood on one larger private repo and save only a source-safe scorecard.
+- [x] 12.4 Update public docs, changelog, troubleshooting, and release notes.
+- [x] 12.5 PR checkpoint: merge only after PR-12 records final dogfood evidence and leaves the full OpenSpec change ready to archive.
