@@ -13,7 +13,7 @@ Each slice below MUST land through its own pull request unless an adjacent slice
 - [x] PR-09 Retention/sharing: `prune --dry-run`, applied prune manifests, scrub/export, retention safety tests, and privacy docs.
 - [x] PR-10 Provider/runtime controls: provider/model/runtime flags, timeout/rate-limit diagnostics, offline/local-only modes, and synthesis docs.
 - [x] PR-11 Guarded fix execution: explicit opt-in fix flow, clean-tree guard, dry-run patch preview, verification capture, and no external side effects.
-- [ ] PR-12 Final hardening: full dogfood on Deepclean, source-safe larger-repo dogfood, release docs, changelog, and final OpenSpec validation.
+- [x] PR-12 Final hardening: full dogfood on Deepclean, source-safe larger-repo dogfood, release docs, changelog, and final OpenSpec validation.
 
 ## 1. Product Spec and State Foundation
 
