@@ -7,7 +7,7 @@ Each slice below MUST land through its own pull request unless an adjacent slice
 - [x] PR-03 Stable identity: signatures, durable finding IDs, observation linking, lifecycle event persistence, and `history`.
 - [x] PR-04 Revalidation: `revalidate`, outcome classification, freshness metadata, report badges, and lifecycle updates.
 - [x] PR-05 Incremental scans: git/ref/path/reviewer scoped scanning, baseline metadata, dirty-tree provenance, and tests.
-- [ ] PR-06 CI mode: `deepclean ci`, policy gates, baseline-aware failures, CI artifacts, and GitHub Actions docs.
+- [x] PR-06 CI mode: `deepclean ci`, policy gates, baseline-aware failures, CI artifacts, and GitHub Actions docs.
 - [ ] PR-07 Query/report filters: `list` or `findings`, shared filter model, baseline comparison, queue exports, and handoff freshness checks.
 - [ ] PR-08 Locks/concurrency: writer locks, stale lock reporting, recovery guidance, and contention tests.
 - [ ] PR-09 Retention/sharing: `prune --dry-run`, applied prune manifests, scrub/export, retention safety tests, and privacy docs.
@@ -59,12 +59,12 @@ Each slice below MUST land through its own pull request unless an adjacent slice
 
 ## 6. CI Mode and Policy Gates
 
-- [ ] 6.1 Add `deepclean ci --json` as a non-interactive command.
-- [ ] 6.2 Support policy flags for max priority counts, new finding counts, category gates, stale finding gates, and minimum confidence.
-- [ ] 6.3 Emit JSON, Markdown summary, and optional SARIF output.
-- [ ] 6.4 Implement baseline-aware failures so old accepted debt can be reported without failing the build.
-- [ ] 6.5 Add CI examples for GitHub Actions.
-- [ ] 6.6 PR checkpoint: merge only after PR-06 proves success, policy failure, and provider-required failure exit paths.
+- [x] 6.1 Add `deepclean ci --json` as a non-interactive command.
+- [x] 6.2 Support policy flags for max priority counts, new finding counts, category gates, stale finding gates, and minimum confidence.
+- [x] 6.3 Emit JSON, Markdown summary, and optional SARIF output.
+- [x] 6.4 Implement baseline-aware failures so old accepted debt can be reported without failing the build.
+- [x] 6.5 Add CI examples for GitHub Actions.
+- [x] 6.6 PR checkpoint: merge only after PR-06 proves success, policy failure, and provider-required failure exit paths.
 
 ## 7. Reporting, Query, and Filters
 
