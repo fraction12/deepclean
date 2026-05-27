@@ -12,7 +12,7 @@ Each slice below MUST land through its own pull request unless an adjacent slice
 - [x] PR-08 Locks/concurrency: writer locks, stale lock reporting, recovery guidance, and contention tests.
 - [x] PR-09 Retention/sharing: `prune --dry-run`, applied prune manifests, scrub/export, retention safety tests, and privacy docs.
 - [x] PR-10 Provider/runtime controls: provider/model/runtime flags, timeout/rate-limit diagnostics, offline/local-only modes, and synthesis docs.
-- [ ] PR-11 Guarded fix execution: explicit opt-in fix flow, clean-tree guard, dry-run patch preview, verification capture, and no external side effects.
+- [x] PR-11 Guarded fix execution: explicit opt-in fix flow, clean-tree guard, dry-run patch preview, verification capture, and no external side effects.
 - [ ] PR-12 Final hardening: full dogfood on Deepclean, source-safe larger-repo dogfood, release docs, changelog, and final OpenSpec validation.
 
 ## 1. Product Spec and State Foundation
@@ -102,13 +102,13 @@ Each slice below MUST land through its own pull request unless an adjacent slice
 
 ## 11. Guarded Fix Execution
 
-- [ ] 11.1 Add a design-gated `deepclean fix <finding-id>` flow behind explicit opt-in.
-- [ ] 11.2 Require a current plan and current revalidation before applying a fix.
-- [ ] 11.3 Refuse broad, stale, ambiguous, or low-confidence findings.
-- [ ] 11.4 Capture patch preview, changed files, verification commands, and fix attempt state.
-- [ ] 11.5 Persist verification results and lifecycle transitions.
-- [ ] 11.6 Ensure fix never pushes, opens PRs, publishes, or performs external actions.
-- [ ] 11.7 PR checkpoint: merge only after PR-11 proves dry-run preview, applied local patch, verification pass/fail capture, dirty-tree refusal, and no external side effects.
+- [x] 11.1 Add a design-gated `deepclean fix <finding-id>` flow behind explicit opt-in.
+- [x] 11.2 Require a current plan and current revalidation before applying a fix.
+- [x] 11.3 Refuse broad, stale, ambiguous, or low-confidence findings.
+- [x] 11.4 Capture patch preview, changed files, verification commands, and fix attempt state.
+- [x] 11.5 Persist verification results and lifecycle transitions.
+- [x] 11.6 Ensure fix never pushes, opens PRs, publishes, or performs external actions.
+- [x] 11.7 PR checkpoint: merge only after PR-11 proves dry-run preview, applied local patch, verification pass/fail capture, dirty-tree refusal, and no external side effects.
 
 ## 12. Verification and Dogfood
 

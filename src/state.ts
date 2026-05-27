@@ -491,5 +491,9 @@ function mergeConfig(defaults: DeepcleanConfig, value: Partial<DeepcleanConfig>)
       ...defaults.privacy,
       ...value.privacy,
     },
+    fixExecution: {
+      ...defaults.fixExecution,
+      ...value.fixExecution,
+    },
   };
 }

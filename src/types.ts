@@ -151,6 +151,10 @@ export const configSchema = z.object({
     allowSourceInModel: z.boolean(),
     allowWebResearch: z.boolean(),
   }),
+  fixExecution: z.object({
+    enabled: z.boolean(),
+    verificationCommands: z.array(z.string()),
+  }),
 });
 
 export type DeepcleanConfig = z.infer<typeof configSchema>;
