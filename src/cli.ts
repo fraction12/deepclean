@@ -72,6 +72,8 @@ const commands = [
   "scan",
   "report",
   "next",
+  "list",
+  "findings",
   "show",
   "history",
   "revalidate",
@@ -149,6 +151,8 @@ Commands:
     --new-only                 Keep only newly discovered findings
   report                       Write and print a ranked report
   next                         Show the highest-priority open candidate
+  list                         List findings with shared filters
+  findings                     Alias for list
   show <candidate-or-theme>    Show one candidate or cleanup theme with evidence
   history <finding-or-candidate-id>
                                Show lifecycle history for a finding
@@ -225,6 +229,9 @@ export async function main(argv: string[], cwd = process.cwd()): Promise<number>
         return await reportCommand(context);
       case "next":
         return await nextCommand(context);
+      case "list":
+      case "findings":
+        return await listCommand(context);
       case "show":
         return await showCommand(context);
       case "history":
@@ -550,7 +557,10 @@ async function executeScan(
 async function reportCommand(context: CommandContext): Promise<number> {
   const { candidates, evidence, runId } = await latestState(context.paths);
   const config = await ensureState(context.paths);
-  const ranked = rankCandidates(candidates);
+  const latestClusters = await readLatestClusters(context.paths);
+  const filter = queryFilterFromFlags(context);
+  const filtered = filterCandidatesForQuery(candidates, latestClusters, filter);
+  const ranked = rankCandidates(filtered);
   const clusters = buildClusters(runId, ranked, evidence, new Date().toISOString(), config.clusters);
   await writeClusters(context.paths, runId, clusters);
   const report = buildReportRecord(runId, ranked, clusters);
@@ -567,6 +577,7 @@ async function reportCommand(context: CommandContext): Promise<number> {
     jsonPath: paths.jsonPath,
     candidates: ranked,
     clusters,
+    filters: filter,
     evidenceCount: evidence.length,
   }));
   if (!context.json && !context.quiet) {
@@ -578,14 +589,42 @@ async function reportCommand(context: CommandContext): Promise<number> {
 }
 
 async function nextCommand(context: CommandContext): Promise<number> {
-  const candidates = rankCandidates(await readLatestCandidates(context.paths));
-  const candidate = candidates.find((item) => item.status === "open");
+  const [candidates, clusters] = await Promise.all([
+    readLatestCandidates(context.paths),
+    readLatestClusters(context.paths),
+  ]);
+  const filtered = filterCandidatesForQuery(candidates, clusters, queryFilterFromFlags(context));
+  const ranked = rankCandidates(filtered);
+  const candidate = ranked.find((item) => item.status === "open");
   emit(context.json, ok("next", { candidate: candidate ?? null }));
   if (!context.json && !context.quiet) {
     if (!candidate) {
       console.log("No open candidates.");
     } else {
       printCandidate(candidate);
+    }
+  }
+  return 0;
+}
+
+async function listCommand(context: CommandContext): Promise<number> {
+  const [candidates, clusters] = await Promise.all([
+    readLatestCandidates(context.paths),
+    readLatestClusters(context.paths),
+  ]);
+  const filter = queryFilterFromFlags(context);
+  const filtered = rankCandidates(filterCandidatesForQuery(candidates, clusters, filter));
+  const format = flagString(context.parsed.flags, "format");
+  const queue = format === "codex" ? filtered.map(candidateQueueItem) : undefined;
+  emit(context.json, ok("list", {
+    filters: filter,
+    count: filtered.length,
+    candidates: filtered,
+    ...(queue ? { queue } : {}),
+  }));
+  if (!context.json && !context.quiet) {
+    for (const candidate of filtered) {
+      console.log(`${candidate.findingId ?? candidate.id} ${candidate.priority} ${candidate.title}`);
     }
   }
   return 0;
@@ -905,9 +944,13 @@ async function handoffCommand(context: CommandContext): Promise<number> {
   const supportingEvidence = evidenceForIds(evidence, candidate.evidenceIds);
   const handoff = buildHandoff(candidate, supportingEvidence, format);
   const handoffPath = await writeHandoff(context.paths, handoff);
+  const warnings = handoffFreshnessWarnings(candidate);
 
-  emit(context.json, ok("handoff", { handoff, path: handoffPath }));
+  emit(context.json, ok("handoff", { handoff, path: handoffPath, warnings }));
   if (!context.json && !context.quiet) {
+    for (const warning of warnings) {
+      console.log(`warning: ${warning}`);
+    }
     console.log(handoff.content);
     console.log("");
     console.log(`Handoff written to ${path.relative(context.paths.root, handoffPath)}`);
@@ -1222,6 +1265,119 @@ function markDirtyTreeEvidence(evidence: EvidenceRecord[], scope: ScanScope): Ev
       }
       : record;
   });
+}
+
+interface QueryFilter {
+  status?: string;
+  priority?: string;
+  category?: string;
+  risk?: string;
+  source?: string;
+  theme?: string;
+  path?: string;
+  lifecycleState?: string;
+  revalidationState?: string;
+  baselineStatus?: string;
+}
+
+function queryFilterFromFlags(context: CommandContext): QueryFilter {
+  const filter: QueryFilter = {};
+  const entries: Array<[keyof QueryFilter, string]> = [
+    ["status", "status"],
+    ["priority", "priority"],
+    ["category", "category"],
+    ["risk", "risk"],
+    ["source", "source"],
+    ["theme", "theme"],
+    ["path", "path"],
+    ["lifecycleState", "lifecycle-state"],
+    ["revalidationState", "revalidation-state"],
+    ["baselineStatus", "baseline-status"],
+  ];
+  for (const [property, flag] of entries) {
+    const value = flagString(context.parsed.flags, flag);
+    if (value) {
+      filter[property] = value;
+    }
+  }
+  return filter;
+}
+
+function filterCandidatesForQuery(
+  candidates: CandidateRecord[],
+  clusters: ClusterRecord[],
+  filter: QueryFilter,
+): CandidateRecord[] {
+  const themeCandidateIds = filter.theme
+    ? new Set(clusters.find((cluster) => cluster.id === filter.theme)?.candidateIds ?? [])
+    : undefined;
+  return candidates.filter((candidate) => {
+    if (filter.status && candidate.status !== filter.status) {
+      return false;
+    }
+    if (filter.priority && candidate.priority !== filter.priority.toUpperCase()) {
+      return false;
+    }
+    if (filter.category && candidate.category !== filter.category) {
+      return false;
+    }
+    if (filter.risk && candidate.risk !== filter.risk) {
+      return false;
+    }
+    if (filter.source && candidate.provenance.source !== filter.source) {
+      return false;
+    }
+    if (themeCandidateIds && !themeCandidateIds.has(candidate.id)) {
+      return false;
+    }
+    if (filter.path && !candidate.files.some((file) => file.path === filter.path || file.path.startsWith(`${filter.path}/`))) {
+      return false;
+    }
+    if (filter.lifecycleState && (candidate.lifecycleState ?? "open") !== filter.lifecycleState) {
+      return false;
+    }
+    if (filter.revalidationState && (candidate.lifecycleState ?? "open") !== filter.revalidationState) {
+      return false;
+    }
+    if (filter.baselineStatus && (candidate.baselineStatus ?? "unknown") !== filter.baselineStatus) {
+      return false;
+    }
+    return true;
+  });
+}
+
+function candidateQueueItem(candidate: CandidateRecord): Record<string, unknown> {
+  return {
+    findingId: candidate.findingId ?? candidate.id,
+    candidateId: candidate.id,
+    title: candidate.title,
+    priority: candidate.priority,
+    category: candidate.category,
+    risk: candidate.risk,
+    status: candidate.status,
+    lifecycleState: candidate.lifecycleState ?? "open",
+    baselineStatus: candidate.baselineStatus ?? "unknown",
+    problem: candidate.whyItMatters,
+    evidenceIds: candidate.evidenceIds,
+    files: candidate.files,
+    constraints: [
+      "Keep changes scoped to this finding.",
+      "Preserve behavior unless verification proves current behavior is wrong.",
+    ],
+    verification: candidate.verification,
+  };
+}
+
+function handoffFreshnessWarnings(candidate: CandidateRecord): string[] {
+  const warnings: string[] = [];
+  const lifecycleState = candidate.lifecycleState ?? "open";
+  if (["stale", "fixed", "superseded", "inconclusive"].includes(lifecycleState)) {
+    warnings.push(`Finding lifecycle state is ${lifecycleState}; revalidate before assigning implementation work.`);
+  }
+  if (candidate.confidence === "low") {
+    warnings.push("Finding confidence is low; confirm evidence before implementation.");
+  }
+  return warnings;
 }
 
 function ciPolicyFromFlags(context: CommandContext): Record<string, unknown> {

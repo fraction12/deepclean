@@ -717,6 +717,61 @@ ${Array.from({ length: 120 }, (_, index) => `  const dirtyValue${index} = ${inde
     });
   });
 
+  test("shared filters apply to report, list, next, and queue export", async () => {
+    await withTempRepo(async (repo) => {
+      await writeFixtureSource(repo);
+      await runCli(["scan", "--json"], repo);
+      const filters = ["--status", "open", "--category", "complexity", "--path", "src/checkout.ts"];
+
+      const list = await runCli(["list", ...filters, "--format", "codex", "--json"], repo);
+      expect(list.code).toBe(0);
+      const listPayload = JSON.parse(list.stdout) as {
+        data: {
+          count: number;
+          candidates: Array<{ id: string; category: string; files: Array<{ path: string }> }>;
+          queue: Array<{ findingId: string; verification: string[] }>;
+        };
+      };
+      expect(listPayload.data.count).toBeGreaterThan(0);
+      expect(listPayload.data.queue[0]?.findingId).toMatch(/^finding-/);
+      expect(listPayload.data.queue[0]?.verification.length).toBeGreaterThan(0);
+      expect(listPayload.data.candidates.every((candidate) => candidate.category === "complexity")).toBe(true);
+      expect(listPayload.data.candidates.every((candidate) => (
+        candidate.files.some((file) => file.path === "src/checkout.ts")
+      ))).toBe(true);
+
+      const report = await runCli(["report", ...filters, "--json"], repo);
+      const reportPayload = JSON.parse(report.stdout) as {
+        data: { filters: { category?: string; path?: string }; candidates: Array<{ id: string }> };
+      };
+      expect(reportPayload.data.filters.category).toBe("complexity");
+      expect(reportPayload.data.filters.path).toBe("src/checkout.ts");
+      expect(reportPayload.data.candidates.map((candidate) => candidate.id)).toEqual(
+        listPayload.data.candidates.map((candidate) => candidate.id),
+      );
+
+      const next = await runCli(["next", ...filters, "--json"], repo);
+      const nextPayload = JSON.parse(next.stdout) as { data: { candidate: { id: string } | null } };
+      expect(nextPayload.data.candidate?.id).toBe(listPayload.data.candidates[0]?.id);
+    });
+  });
+
+  test("handoff warns for stale findings", async () => {
+    await withTempRepo(async (repo) => {
+      await writeFixtureSource(repo);
+      await runCli(["scan", "--json"], repo);
+      const candidatesPath = path.join(repo, ".deepclean", "candidates", await latestRunFile(repo));
+      const candidates = JSON.parse(await readFile(candidatesPath, "utf8")) as Array<{ id: string; lifecycleState?: string; status?: string }>;
+      candidates[0] = { ...candidates[0]!, lifecycleState: "stale", status: "stale" };
+      await writeFile(candidatesPath, `${JSON.stringify(candidates, null, 2)}\n`, "utf8");
+
+      const handoff = await runCli(["handoff", candidates[0]?.id ?? "candidate-001", "--json"], repo);
+      expect(handoff.code).toBe(0);
+      const payload = JSON.parse(handoff.stdout) as { data: { warnings: string[] } };
+      expect(payload.data.warnings.some((warning) => warning.includes("stale"))).toBe(true);
+    });
+  });
+
   test("scan infers repo-specific verification commands", async () => {
     await withTempRepo(async (repo) => {
       await mkdir(path.join(repo, "backend"), { recursive: true });
