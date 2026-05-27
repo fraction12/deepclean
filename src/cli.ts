@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import { parseArgs, flagBoolean, flagString, type ParsedArgs } from "./args.js";
 import { candidatesFromEvidence, rankCandidates, reassignCandidateIds } from "./candidates.js";
 import { buildClusters, unclusteredCandidateIds } from "./clusters.js";
-import { discoverSourceFiles } from "./discovery.js";
+import { discoverSourceFiles, type SourceFile } from "./discovery.js";
 import { runEvidenceAdapters } from "./evidence.js";
 import { attachStableIdentity } from "./identity.js";
 import { fail, ok } from "./json.js";
@@ -104,7 +104,22 @@ interface ScanExecutionResult {
     };
     candidates: CandidateRecord[];
     clusters: ClusterRecord[];
+    scope: ScanScope;
   };
+}
+
+interface ScanScope {
+  incremental: boolean;
+  since?: string;
+  mergeBase?: string;
+  includeDirty: boolean;
+  paths: string[];
+  changedPaths: string[];
+  categories: string[];
+  reviewers: string[];
+  onlyExisting: boolean;
+  newOnly: boolean;
+  dirtyPaths: string[];
 }
 
 function printHelp(): void {
@@ -121,6 +136,14 @@ Commands:
     --synthesize               Run local Codex synthesis over evidence
     --allow-source-in-model    Include source samples in Codex prompt
     --model <model>            Override Codex model for synthesis
+    --since <ref>              Scan files changed since a git ref
+    --merge-base <ref>         Use merge-base with ref for changed-file scope
+    --include-dirty            Include uncommitted and untracked files in scope
+    --paths <a,b>              Restrict scan to paths or path prefixes
+    --categories <a,b>         Restrict emitted candidates to categories
+    --reviewers <a,b>          Record reviewer-surface scope for synthesis/metadata
+    --only-existing            Keep only findings previously known to Deepclean
+    --new-only                 Keep only newly discovered findings
   report                       Write and print a ranked report
   next                         Show the highest-priority open candidate
   show <candidate-or-theme>    Show one candidate or cleanup theme with evidence
@@ -378,7 +401,9 @@ async function executeScan(
   const runId = timestampId("run");
   const config = await ensureState(context.paths);
   const verificationProfile = await inferVerificationProfile(context.paths.root);
-  const files = await discoverSourceFiles(context.paths.root, config.exclude);
+  const discoveredFiles = await discoverSourceFiles(context.paths.root, config.exclude);
+  const scope = await resolveScanScope(context, discoveredFiles);
+  const files = discoveredFiles.filter((file) => fileInScope(file, scope));
   const adapterResult = await runEvidenceAdapters(config.enabledAdapters, {
     root: context.paths.root,
     runId,
@@ -386,10 +411,11 @@ async function executeScan(
     files,
     config,
   });
+  const evidence = markDirtyTreeEvidence(adapterResult.evidence, scope);
   const completedAt = new Date().toISOString();
   const localCandidates = candidatesFromEvidence(
     runId,
-    adapterResult.evidence,
+    evidence,
     completedAt,
     config.candidateCaps,
     verificationProfile,
@@ -403,7 +429,7 @@ async function executeScan(
       root: context.paths.root,
       runId,
       createdAt: completedAt,
-      evidence: adapterResult.evidence,
+      evidence,
       config,
       existingCandidates: localCandidates,
       includeSource: flagBoolean(context.parsed.flags, "allow-source-in-model")
@@ -420,14 +446,14 @@ async function executeScan(
   const identity = attachStableIdentity({
     runId,
     candidates: rankedCandidates,
-    evidence: adapterResult.evidence,
+    evidence,
     existingFindings: await readFindings(context.paths),
     observedAt: completedAt,
   });
-  const candidates = identity.candidates;
-  const clusters = buildClusters(runId, candidates, adapterResult.evidence, completedAt, config.clusters);
+  const candidates = filterCandidatesByScanScope(identity.candidates, scope);
+  const clusters = buildClusters(runId, candidates, evidence, completedAt, config.clusters);
 
-  await writeEvidence(context.paths, runId, adapterResult.evidence);
+  await writeEvidence(context.paths, runId, evidence);
   await writeCandidates(context.paths, runId, candidates);
   await writeFindings(context.paths, identity.findings);
   await writeCandidateObservations(context.paths, runId, identity.observations);
@@ -441,7 +467,7 @@ async function executeScan(
     root: context.paths.root,
     startedAt,
     completedAt,
-    evidenceCount: adapterResult.evidence.length,
+    evidenceCount: evidence.length,
     candidateCount: candidates.length,
     clusterCount: clusters.length,
     synthesis: {
@@ -449,6 +475,7 @@ async function executeScan(
       provider: synthesisRequested ? "codex" : undefined,
       candidateCount: synthesisResult.candidates.length,
     },
+    scope,
     diagnostics,
   });
 
@@ -456,7 +483,7 @@ async function executeScan(
     runId,
     root: context.paths.root,
     sourceFileCount: files.length,
-    evidenceCount: adapterResult.evidence.length,
+    evidenceCount: evidence.length,
     candidateCount: candidates.length,
     clusterCount: clusters.length,
     synthesis: {
@@ -465,6 +492,7 @@ async function executeScan(
     },
     candidates,
     clusters,
+    scope,
   };
 
   return { runId, diagnostics, data };
@@ -1064,6 +1092,118 @@ async function providerDoctor(root: string, command: string): Promise<{
       error: error instanceof Error ? error.message : String(error),
     };
   }
+}
+
+async function resolveScanScope(context: CommandContext, files: SourceFile[]): Promise<ScanScope> {
+  const since = flagString(context.parsed.flags, "since");
+  const mergeBaseRef = flagString(context.parsed.flags, "merge-base");
+  const includeDirty = flagBoolean(context.parsed.flags, "include-dirty");
+  const paths = csvFlag(context, "paths");
+  const categories = csvFlag(context, "categories");
+  const reviewers = csvFlag(context, "reviewers");
+  const dirtyPaths = includeDirty ? await gitChangedPaths(context.paths.root, ["diff", "--name-only"]) : [];
+  const untrackedPaths = includeDirty ? await gitChangedPaths(context.paths.root, ["ls-files", "--others", "--exclude-standard"]) : [];
+  const committedChangedPaths = mergeBaseRef
+    ? await gitMergeBaseChangedPaths(context.paths.root, mergeBaseRef)
+    : since
+      ? await gitChangedPaths(context.paths.root, ["diff", "--name-only", `${since}...HEAD`])
+      : [];
+  const changedPaths = uniqueNormalized([
+    ...committedChangedPaths,
+    ...dirtyPaths,
+    ...untrackedPaths,
+  ]).filter((filePath) => files.some((file) => file.path === filePath));
+  return {
+    incremental: Boolean(since || mergeBaseRef || includeDirty || paths.length > 0),
+    ...(since ? { since } : {}),
+    ...(mergeBaseRef ? { mergeBase: mergeBaseRef } : {}),
+    includeDirty,
+    paths,
+    changedPaths,
+    categories,
+    reviewers,
+    onlyExisting: flagBoolean(context.parsed.flags, "only-existing"),
+    newOnly: flagBoolean(context.parsed.flags, "new-only"),
+    dirtyPaths: uniqueNormalized([...dirtyPaths, ...untrackedPaths]),
+  };
+}
+
+function fileInScope(file: SourceFile, scope: ScanScope): boolean {
+  const pathMatched = scope.paths.length === 0
+    || scope.paths.some((prefix) => file.path === prefix || file.path.startsWith(`${prefix.replace(/\/$/, "")}/`));
+  if (!pathMatched) {
+    return false;
+  }
+  if (scope.changedPaths.length === 0) {
+    return true;
+  }
+  return scope.changedPaths.includes(file.path);
+}
+
+function filterCandidatesByScanScope(candidates: CandidateRecord[], scope: ScanScope): CandidateRecord[] {
+  return candidates.filter((candidate) => {
+    if (scope.categories.length > 0 && !scope.categories.includes(candidate.category)) {
+      return false;
+    }
+    if (scope.onlyExisting && candidate.baselineStatus !== "existing") {
+      return false;
+    }
+    if (scope.newOnly && candidate.baselineStatus !== "new") {
+      return false;
+    }
+    return true;
+  });
+}
+
+function markDirtyTreeEvidence(evidence: EvidenceRecord[], scope: ScanScope): EvidenceRecord[] {
+  if (scope.dirtyPaths.length === 0) {
+    return evidence;
+  }
+  const dirty = new Set(scope.dirtyPaths);
+  return evidence.map((record) => {
+    const dirtyTree = record.files.some((file) => dirty.has(file.path));
+    return dirtyTree
+      ? {
+        ...record,
+        data: {
+          ...record.data,
+          dirtyTree: true,
+          freshness: "dirty",
+        },
+      }
+      : record;
+  });
+}
+
+async function gitMergeBaseChangedPaths(root: string, ref: string): Promise<string[]> {
+  try {
+    const { stdout } = await execFileAsync("git", ["merge-base", ref, "HEAD"], { cwd: root, timeout: 5000 });
+    const mergeBase = stdout.trim();
+    return mergeBase ? gitChangedPaths(root, ["diff", "--name-only", `${mergeBase}...HEAD`]) : [];
+  } catch {
+    return [];
+  }
+}
+
+async function gitChangedPaths(root: string, args: string[]): Promise<string[]> {
+  try {
+    const { stdout } = await execFileAsync("git", args, { cwd: root, timeout: 5000 });
+    return stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+function csvFlag(context: CommandContext, key: string): string[] {
+  const value = flagString(context.parsed.flags, key);
+  if (!value) {
+    return [];
+  }
+  return value.split(",").map((item) => item.trim()).filter(Boolean);
+}
+
+function uniqueNormalized(values: string[]): string[] {
+  return [...new Set(values.map((value) => value.split(path.sep).join("/")))].sort();
 }
 
 async function supportedSurfaces(root: string): Promise<string[]> {

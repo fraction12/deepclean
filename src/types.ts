@@ -423,6 +423,19 @@ export const runRecordSchema = z.object({
     provider: z.string().optional(),
     candidateCount: z.number().int().nonnegative(),
   }),
+  scope: z.object({
+    incremental: z.boolean(),
+    since: z.string().optional(),
+    mergeBase: z.string().optional(),
+    includeDirty: z.boolean(),
+    paths: z.array(z.string()),
+    changedPaths: z.array(z.string()),
+    categories: z.array(z.string()),
+    reviewers: z.array(z.string()),
+    onlyExisting: z.boolean(),
+    newOnly: z.boolean(),
+    dirtyPaths: z.array(z.string()),
+  }).optional(),
   diagnostics: z.array(diagnosticSchema),
 });
 

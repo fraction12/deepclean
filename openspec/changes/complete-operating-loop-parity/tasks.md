@@ -6,7 +6,7 @@ Each slice below MUST land through its own pull request unless an adjacent slice
 - [x] PR-02 Health/status: `doctor`, `status`, structured diagnostics, and user docs.
 - [x] PR-03 Stable identity: signatures, durable finding IDs, observation linking, lifecycle event persistence, and `history`.
 - [x] PR-04 Revalidation: `revalidate`, outcome classification, freshness metadata, report badges, and lifecycle updates.
-- [ ] PR-05 Incremental scans: git/ref/path/reviewer scoped scanning, baseline metadata, dirty-tree provenance, and tests.
+- [x] PR-05 Incremental scans: git/ref/path/reviewer scoped scanning, baseline metadata, dirty-tree provenance, and tests.
 - [ ] PR-06 CI mode: `deepclean ci`, policy gates, baseline-aware failures, CI artifacts, and GitHub Actions docs.
 - [ ] PR-07 Query/report filters: `list` or `findings`, shared filter model, baseline comparison, queue exports, and handoff freshness checks.
 - [ ] PR-08 Locks/concurrency: writer locks, stale lock reporting, recovery guidance, and contention tests.
@@ -51,11 +51,11 @@ Each slice below MUST land through its own pull request unless an adjacent slice
 
 ## 5. Incremental Scans
 
-- [ ] 5.1 Add `scan --since <ref>`, `--merge-base <ref>`, `--include-dirty`, `--paths`, `--categories`, `--reviewers`, `--only-existing`, and `--new-only`.
-- [ ] 5.2 Restrict evidence collection to changed scopes while preserving enough context for ranking.
-- [ ] 5.3 Record incremental scope and baseline in run metadata.
-- [ ] 5.4 Add tests for clean branch, dirty working tree, path-filtered, and baseline-missing scenarios.
-- [ ] 5.5 PR checkpoint: merge only after PR-05 dogfoods an incremental scan against a branch with committed and dirty changes.
+- [x] 5.1 Add `scan --since <ref>`, `--merge-base <ref>`, `--include-dirty`, `--paths`, `--categories`, `--reviewers`, `--only-existing`, and `--new-only`.
+- [x] 5.2 Restrict evidence collection to changed scopes while preserving enough context for ranking.
+- [x] 5.3 Record incremental scope and baseline in run metadata.
+- [x] 5.4 Add tests for clean branch, dirty working tree, path-filtered, and baseline-missing scenarios.
+- [x] 5.5 PR checkpoint: merge only after PR-05 dogfoods an incremental scan against a branch with committed and dirty changes.
 
 ## 6. CI Mode and Policy Gates
 

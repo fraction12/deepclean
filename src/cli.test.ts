@@ -423,6 +423,94 @@ ${Array.from({ length: 96 }, (_, index) => `  const value${index} = ${index};`).
     });
   });
 
+  test("scan supports incremental git and dirty-tree scope", async () => {
+    await withTempRepo(async (repo) => {
+      await writeFixtureSource(repo);
+      await execFileAsync("git", ["init"], { cwd: repo });
+      await execFileAsync("git", ["config", "user.email", "deepclean@example.com"], { cwd: repo });
+      await execFileAsync("git", ["config", "user.name", "Deepclean Test"], { cwd: repo });
+      await execFileAsync("git", ["add", "."], { cwd: repo });
+      await execFileAsync("git", ["commit", "-m", "initial"], { cwd: repo });
+
+      await writeFile(path.join(repo, "src", "invoice.ts"), `
+export function calculateInvoice(items: Array<{ price: number }>, coupon: boolean) {
+  const adjustment = 1;
+  const subtotal = items.reduce((sum, item) => sum + item.price, 0);
+  const discount = coupon ? subtotal * 0.1 : 0;
+  const tax = (subtotal - discount) * 0.07;
+  const total = subtotal - discount + tax;
+  if (total < 0) throw new Error('invalid total');
+  return { subtotal, discount, tax, total, adjustment };
+}
+`, "utf8");
+      await execFileAsync("git", ["add", "src/invoice.ts"], { cwd: repo });
+      await execFileAsync("git", ["commit", "-m", "change invoice"], { cwd: repo });
+
+      await writeFile(path.join(repo, "src", "checkout.ts"), `
+export function calculateCheckout(items: Array<{ price: number }>, coupon: boolean) {
+${Array.from({ length: 120 }, (_, index) => `  const dirtyValue${index} = ${index};`).join("\n")}
+  return { total: items.length + Number(coupon) };
+}
+`, "utf8");
+
+      const result = await runCli(["scan", "--since", "HEAD~1", "--include-dirty", "--json"], repo);
+      expect(result.code).toBe(0);
+      const payload = JSON.parse(result.stdout) as {
+        data: {
+          sourceFileCount: number;
+          scope: { incremental: boolean; changedPaths: string[]; dirtyPaths: string[]; includeDirty: boolean };
+          runId: string;
+        };
+      };
+      expect(payload.data.scope.incremental).toBe(true);
+      expect(payload.data.scope.includeDirty).toBe(true);
+      expect(payload.data.scope.changedPaths).toEqual(expect.arrayContaining(["src/invoice.ts", "src/checkout.ts"]));
+      expect(payload.data.scope.dirtyPaths).toContain("src/checkout.ts");
+      expect(payload.data.sourceFileCount).toBe(2);
+
+      const evidence = JSON.parse(
+        await readFile(path.join(repo, ".deepclean", "evidence", `${payload.data.runId}.json`), "utf8"),
+      ) as Array<{ files: Array<{ path: string }>; data: { dirtyTree?: boolean } }>;
+      expect(evidence.some((record) => (
+        record.data.dirtyTree === true
+        && record.files.some((file) => file.path === "src/checkout.ts")
+      ))).toBe(true);
+    });
+  });
+
+  test("scan supports path, category, and new-only filters", async () => {
+    await withTempRepo(async (repo) => {
+      await writeFixtureSource(repo);
+      const result = await runCli([
+        "scan",
+        "--paths",
+        "src/checkout.ts",
+        "--categories",
+        "complexity",
+        "--new-only",
+        "--json",
+      ], repo);
+      expect(result.code).toBe(0);
+      const payload = JSON.parse(result.stdout) as {
+        data: {
+          sourceFileCount: number;
+          candidates: Array<{ category: string; baselineStatus?: string; files: Array<{ path: string }> }>;
+          scope: { paths: string[]; categories: string[]; newOnly: boolean };
+        };
+      };
+      expect(payload.data.sourceFileCount).toBe(1);
+      expect(payload.data.scope.paths).toEqual(["src/checkout.ts"]);
+      expect(payload.data.scope.categories).toEqual(["complexity"]);
+      expect(payload.data.scope.newOnly).toBe(true);
+      expect(payload.data.candidates.length).toBeGreaterThan(0);
+      expect(payload.data.candidates.every((candidate) => candidate.category === "complexity")).toBe(true);
+      expect(payload.data.candidates.every((candidate) => candidate.baselineStatus === "new")).toBe(true);
+      expect(payload.data.candidates.every((candidate) => (
+        candidate.files.some((file) => file.path === "src/checkout.ts")
+      ))).toBe(true);
+    });
+  });
+
   test("classifies revalidation outcomes", async () => {
     await withTempRepo(async (repo) => {
       await mkdir(path.join(repo, "src"), { recursive: true });
