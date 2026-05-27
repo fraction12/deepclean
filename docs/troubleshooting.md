@@ -1,5 +1,19 @@
 # Troubleshooting
 
+## Health And Status
+
+Use `deepclean doctor --json` when checking whether Deepclean is ready to run in a repository. It reports package version, state initialization, config validity, missing state directories, git availability, dirty working tree state, provider availability, privacy settings, and detected project surfaces.
+
+Use `deepclean status --json` when checking what Deepclean already knows about a repository. It reports the latest run, open/total queue counts, evidence/theme counts, artifact counts, active locks, pending revalidation count, and git dirty state.
+
+Important diagnostic codes:
+
+- `config_missing`: `.deepclean/config.json` does not exist. Run `deepclean init` when the repository should use Deepclean state.
+- `config_invalid`: config exists but does not match the current schema. Inspect `.deepclean/config.json` before running scans.
+- `state_dirs_missing`: `.deepclean/` exists but one or more expected state directories are missing. Run `deepclean init` to recreate the directory skeleton.
+- `git_unavailable`: the target directory is not a git repository or git could not run there.
+- `provider_unavailable`: synthesis is configured but the provider command could not be executed.
+
 ## Codex Is Missing
 
 Run:

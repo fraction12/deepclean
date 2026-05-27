@@ -3,7 +3,7 @@
 Each slice below MUST land through its own pull request unless an adjacent slice is explicitly marked as a no-code documentation-only follow-up. Every PR MUST include local verification evidence, GitHub CI, and a short dogfood note when the slice changes runtime behavior.
 
 - [x] PR-01 State foundation: schemas, lazy migration, compatibility fixtures, and privacy notes for generated records.
-- [ ] PR-02 Health/status: `doctor`, `status`, structured diagnostics, and user docs.
+- [x] PR-02 Health/status: `doctor`, `status`, structured diagnostics, and user docs.
 - [ ] PR-03 Stable identity: signatures, durable finding IDs, observation linking, lifecycle event persistence, and `history`.
 - [ ] PR-04 Revalidation: `revalidate`, outcome classification, freshness metadata, report badges, and lifecycle updates.
 - [ ] PR-05 Incremental scans: git/ref/path/reviewer scoped scanning, baseline metadata, dirty-tree provenance, and tests.
@@ -25,11 +25,11 @@ Each slice below MUST land through its own pull request unless an adjacent slice
 
 ## 2. Health, Status, and Diagnostics
 
-- [ ] 2.1 Add `deepclean doctor --json` with environment, config, state, git, analyzer, provider, and privacy diagnostics.
-- [ ] 2.2 Add `deepclean status --json` with latest run, queue counts, artifact counts, stale locks, and pending revalidation.
-- [ ] 2.3 Add structured diagnostic codes and predictable exit behavior for health and status commands.
-- [ ] 2.4 Add docs for interpreting health/status output.
-- [ ] 2.5 PR checkpoint: merge only after PR-02 demonstrates `doctor --json` and `status --json` on a clean repo, dirty repo, and repo with existing `.deepclean/` state.
+- [x] 2.1 Add `deepclean doctor --json` with environment, config, state, git, analyzer, provider, and privacy diagnostics.
+- [x] 2.2 Add `deepclean status --json` with latest run, queue counts, artifact counts, stale locks, and pending revalidation.
+- [x] 2.3 Add structured diagnostic codes and predictable exit behavior for health and status commands.
+- [x] 2.4 Add docs for interpreting health/status output.
+- [x] 2.5 PR checkpoint: merge only after PR-02 demonstrates `doctor --json` and `status --json` on a clean repo, dirty repo, and repo with existing `.deepclean/` state.
 
 ## 3. Stable Identity and Lifecycle
 

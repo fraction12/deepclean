@@ -1,6 +1,8 @@
 import { chmod, mkdtemp, readFile, rm, writeFile, mkdir, stat } from "node:fs/promises";
+import { execFile } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
 import { describe, expect, test } from "vitest";
 import { main } from "./cli.js";
 import { buildCandidatePlan } from "./plans.js";
@@ -18,6 +20,8 @@ import {
   schemaVersion,
   type CandidateRecord,
 } from "./types.js";
+
+const execFileAsync = promisify(execFile);
 
 describe("deepclean cli", () => {
   test("initializes state and emits JSON", async () => {
@@ -66,6 +70,76 @@ describe("deepclean cli", () => {
       const packageJson = JSON.parse(await readFile(path.resolve("package.json"), "utf8")) as { version: string };
       expect(result.code).toBe(0);
       expect(result.stdout).toBe(packageJson.version);
+    });
+  });
+
+  test("doctor reports an uninitialized clean directory without mutating state", async () => {
+    await withTempRepo(async (repo) => {
+      const result = await runCli(["doctor", "--json"], repo);
+      expect(result.code).toBe(0);
+      const payload = JSON.parse(result.stdout) as {
+        data: { initialized: boolean; config: { valid: boolean }; state: { valid: boolean } };
+        diagnostics: Array<{ code: string }>;
+      };
+      expect(payload.data.initialized).toBe(false);
+      expect(payload.data.config.valid).toBe(false);
+      expect(payload.data.state.valid).toBe(false);
+      expect(payload.diagnostics.some((diagnostic) => diagnostic.code === "config_missing")).toBe(true);
+      await expect(stat(path.join(repo, ".deepclean"))).rejects.toThrow();
+    });
+  });
+
+  test("doctor reports initialized state and provider readiness", async () => {
+    await withTempRepo(async (repo) => {
+      await runCli(["init", "--json"], repo);
+      const result = await runCli(["doctor", "--json"], repo);
+      expect(result.code).toBe(0);
+      const payload = JSON.parse(result.stdout) as {
+        data: {
+          initialized: boolean;
+          config: { valid: boolean };
+          state: { valid: boolean; missingDirs: string[] };
+          provider: { command?: string; available: boolean };
+          privacy?: { allowSourceInModel: boolean };
+        };
+      };
+      expect(payload.data.initialized).toBe(true);
+      expect(payload.data.config.valid).toBe(true);
+      expect(payload.data.state.valid).toBe(true);
+      expect(payload.data.state.missingDirs).toEqual([]);
+      expect(payload.data.provider.command).toBeTruthy();
+      expect(typeof payload.data.provider.available).toBe("boolean");
+      expect(payload.data.privacy?.allowSourceInModel).toBe(false);
+    });
+  });
+
+  test("status summarizes latest state and dirty git state", async () => {
+    await withTempRepo(async (repo) => {
+      await writeFixtureSource(repo);
+      await execFileAsync("git", ["init"], { cwd: repo });
+      await runCli(["scan", "--json"], repo);
+      await writeFile(path.join(repo, "dirty.ts"), "export const dirty = true;\n", "utf8");
+      const result = await runCli(["status", "--json"], repo);
+      expect(result.code).toBe(0);
+      const payload = JSON.parse(result.stdout) as {
+        data: {
+          initialized: boolean;
+          latestRunId?: string;
+          git: { available: boolean; dirty: boolean };
+          queue: { open: number; total: number; evidence: number; themes: number };
+          artifacts: Record<string, number>;
+        };
+      };
+      expect(payload.data.initialized).toBe(true);
+      expect(payload.data.latestRunId).toMatch(/^run-/);
+      expect(payload.data.git.available).toBe(true);
+      expect(payload.data.git.dirty).toBe(true);
+      expect(payload.data.queue.open).toBeGreaterThan(0);
+      expect(payload.data.queue.total).toBeGreaterThan(0);
+      expect(payload.data.queue.evidence).toBeGreaterThan(0);
+      expect(payload.data.queue.themes).toBeGreaterThan(0);
+      expect(payload.data.artifacts["runs"]).toBeGreaterThan(0);
+      expect(payload.data.artifacts["candidates"]).toBeGreaterThan(0);
     });
   });
 
