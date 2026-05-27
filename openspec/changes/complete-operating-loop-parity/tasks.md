@@ -9,7 +9,7 @@ Each slice below MUST land through its own pull request unless an adjacent slice
 - [x] PR-05 Incremental scans: git/ref/path/reviewer scoped scanning, baseline metadata, dirty-tree provenance, and tests.
 - [x] PR-06 CI mode: `deepclean ci`, policy gates, baseline-aware failures, CI artifacts, and GitHub Actions docs.
 - [x] PR-07 Query/report filters: `list` or `findings`, shared filter model, baseline comparison, queue exports, and handoff freshness checks.
-- [ ] PR-08 Locks/concurrency: writer locks, stale lock reporting, recovery guidance, and contention tests.
+- [x] PR-08 Locks/concurrency: writer locks, stale lock reporting, recovery guidance, and contention tests.
 - [ ] PR-09 Retention/sharing: `prune --dry-run`, applied prune manifests, scrub/export, retention safety tests, and privacy docs.
 - [ ] PR-10 Provider/runtime controls: provider/model/runtime flags, timeout/rate-limit diagnostics, offline/local-only modes, and synthesis docs.
 - [ ] PR-11 Guarded fix execution: explicit opt-in fix flow, clean-tree guard, dry-run patch preview, verification capture, and no external side effects.
@@ -77,11 +77,11 @@ Each slice below MUST land through its own pull request unless an adjacent slice
 
 ## 8. Locks and Concurrency
 
-- [ ] 8.1 Add writer locks around scan, report, plan, handoff, prune, revalidate, and fix operations.
-- [ ] 8.2 Include owner, PID, command, state path, and timestamp in lock records.
-- [ ] 8.3 Detect stale locks and provide explicit recovery.
-- [ ] 8.4 Add contention tests and interrupted-run tests.
-- [ ] 8.5 PR checkpoint: merge only after PR-08 proves two concurrent writers cannot corrupt `.deepclean/` state.
+- [x] 8.1 Add writer locks around scan, report, plan, handoff, prune, revalidate, and fix operations.
+- [x] 8.2 Include owner, PID, command, state path, and timestamp in lock records.
+- [x] 8.3 Detect stale locks and provide explicit recovery.
+- [x] 8.4 Add contention tests and interrupted-run tests.
+- [x] 8.5 PR checkpoint: merge only after PR-08 proves two concurrent writers cannot corrupt `.deepclean/` state.
 
 ## 9. Retention, Prune, Scrub, and Export
 

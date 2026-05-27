@@ -13,6 +13,13 @@ import { discoverSourceFiles, type SourceFile } from "./discovery.js";
 import { runEvidenceAdapters } from "./evidence.js";
 import { attachStableIdentity } from "./identity.js";
 import { fail, ok } from "./json.js";
+import {
+  LockContentionError,
+  lockRecoveryCommand,
+  readLockStatuses,
+  recoverStaleLocks,
+  withStateWriteLock,
+} from "./locks.js";
 import { buildCandidatePlan, buildClusterPlan } from "./plans.js";
 import { classifyRevalidation } from "./revalidation.js";
 import {
@@ -77,6 +84,7 @@ const commands = [
   "show",
   "history",
   "revalidate",
+  "unlock",
   "cluster",
   "plan",
   "triage",
@@ -158,6 +166,7 @@ Commands:
                                Show lifecycle history for a finding
   revalidate <finding-id|candidate-id|all>
                                Freshly recheck whether findings still hold
+  unlock --stale               Remove stale project-local writer locks
   cluster [theme-id]           Group related candidates into cleanup themes
   plan <candidate-or-theme>    Generate an agent-ready cleanup plan
   triage <candidate-id>        Update candidate status with --status and --note
@@ -173,6 +182,8 @@ Global flags:
   --config <path>              Config file, defaults to .deepclean/config.json
   --quiet                      Suppress human success output
   --debug                      Include stack traces for unexpected errors
+  --wait-lock                  Wait for an active writer lock instead of failing immediately
+  --lock-timeout-ms <ms>       Maximum time to wait for --wait-lock
   -h, --help                   Show help
   --version                    Show version`);
 }
@@ -222,11 +233,11 @@ export async function main(argv: string[], cwd = process.cwd()): Promise<number>
       case "status":
         return await statusCommand(context);
       case "ci":
-        return await ciCommand(context);
+        return await withWriteLock(context, () => ciCommand(context));
       case "scan":
-        return await scanCommand(context);
+        return await withWriteLock(context, () => scanCommand(context));
       case "report":
-        return await reportCommand(context);
+        return await withWriteLock(context, () => reportCommand(context));
       case "next":
         return await nextCommand(context);
       case "list":
@@ -237,20 +248,29 @@ export async function main(argv: string[], cwd = process.cwd()): Promise<number>
       case "history":
         return await historyCommand(context);
       case "revalidate":
-        return await revalidateCommand(context);
+        return await withWriteLock(context, () => revalidateCommand(context));
+      case "unlock":
+        return await unlockCommand(context);
       case "cluster":
-        return await clusterCommand(context);
+        return await withWriteLock(context, () => clusterCommand(context));
       case "plan":
-        return await planCommand(context);
+        return await withWriteLock(context, () => planCommand(context));
       case "triage":
-        return await triageCommand(context);
+        return await withWriteLock(context, () => triageCommand(context));
       case "handoff":
       case "export":
-        return await handoffCommand(context);
+        return await withWriteLock(context, () => handoffCommand(context));
     }
     emit(json, fail(command, "unknown_command", `Unknown command: ${command}`));
     return 2;
   } catch (error) {
+    if (error instanceof LockContentionError) {
+      emit(json, fail(command, "lock_contention", error.message, [error.diagnostic]));
+      if (!json && !quiet) {
+        console.error(error.message);
+      }
+      return 4;
+    }
     const message = error instanceof Error ? error.message : String(error);
     emit(json, fail(command, "command_failed", debug && error instanceof Error && error.stack ? error.stack : message));
     return 1;
@@ -276,6 +296,10 @@ async function doctorCommand(context: CommandContext): Promise<number> {
   const diagnostics: Diagnostic[] = [];
   const initialized = await pathExists(context.paths.stateDir);
   const missingDirs = initialized ? await missingStateDirectories(context.paths) : [];
+  const locks = initialized ? await readLockStatuses(context.paths, {
+    staleAfterMs: staleLockMsFromFlags(context),
+  }) : [];
+  const staleLocks = locks.filter((lock) => lock.stale);
   const configResult = await readConfigForDoctor(context.paths);
   diagnostics.push(...configResult.diagnostics);
   if (missingDirs.length > 0) {
@@ -283,6 +307,13 @@ async function doctorCommand(context: CommandContext): Promise<number> {
       level: "warning",
       code: "state_dirs_missing",
       message: `Missing state directories: ${missingDirs.join(", ")}`,
+    });
+  }
+  if (staleLocks.length > 0) {
+    diagnostics.push({
+      level: "warning",
+      code: "stale_locks",
+      message: `Found ${staleLocks.length} stale writer lock${staleLocks.length === 1 ? "" : "s"}. Run \`${lockRecoveryCommand(context.paths)}\` before the next write command.`,
     });
   }
 
@@ -319,6 +350,21 @@ async function doctorCommand(context: CommandContext): Promise<number> {
       valid: initialized && missingDirs.length === 0,
       missingDirs,
     },
+    locks: {
+      active: locks.filter((lock) => !lock.stale).length,
+      stale: staleLocks.length,
+      records: locks.map((lock) => ({
+        id: lock.record?.id,
+        owner: lock.record?.owner,
+        pid: lock.record?.pid,
+        command: lock.record?.command,
+        statePath: lock.record?.statePath,
+        createdAt: lock.record?.createdAt,
+        stale: lock.stale,
+        reason: lock.reason,
+        recoveryCommand: lock.recoveryCommand,
+      })),
+    },
     git,
     provider,
     privacy: configResult.config?.privacy,
@@ -333,6 +379,7 @@ async function doctorCommand(context: CommandContext): Promise<number> {
     console.log(`config: ${data.config.valid ? "ok" : "invalid"}`);
     console.log(`git: ${git.available ? git.dirty ? "dirty" : "clean" : "unavailable"}`);
     console.log(`provider: ${provider.available ? "ok" : "unavailable"}`);
+    console.log(`locks: ${data.locks.active} active / ${data.locks.stale} stale`);
     printDiagnostics(diagnostics);
   }
   return 0;
@@ -354,6 +401,9 @@ async function statusCommand(context: CommandContext): Promise<number> {
     });
   }
   const artifactCounts = await stateArtifactCounts(context.paths);
+  const locks = initialized ? await readLockStatuses(context.paths, {
+    staleAfterMs: staleLockMsFromFlags(context),
+  }) : [];
   const statusCounts = countBy(candidates, (candidate) => candidate.status);
   const data = {
     root: context.paths.root,
@@ -373,8 +423,19 @@ async function statusCommand(context: CommandContext): Promise<number> {
       evidence: evidence.length,
     },
     locks: {
-      active: artifactCounts["locks"] ?? 0,
-      stale: 0,
+      active: locks.filter((lock) => !lock.stale).length,
+      stale: locks.filter((lock) => lock.stale).length,
+      records: locks.map((lock) => ({
+        id: lock.record?.id,
+        owner: lock.record?.owner,
+        pid: lock.record?.pid,
+        command: lock.record?.command,
+        statePath: lock.record?.statePath,
+        createdAt: lock.record?.createdAt,
+        stale: lock.stale,
+        reason: lock.reason,
+        recoveryCommand: lock.recoveryCommand,
+      })),
     },
     pendingRevalidation: candidates.filter((candidate) => candidate.lifecycleState === "stale").length,
     artifacts: artifactCounts,
@@ -387,9 +448,32 @@ async function statusCommand(context: CommandContext): Promise<number> {
     console.log(`latest run: ${latest ?? "none"}`);
     console.log(`queue: ${data.queue.open} open / ${data.queue.total} total`);
     console.log(`git: ${git.available ? git.dirty ? "dirty" : "clean" : "unavailable"}`);
+    console.log(`locks: ${data.locks.active} active / ${data.locks.stale} stale`);
     printDiagnostics(diagnostics);
   }
   return 0;
+}
+
+async function unlockCommand(context: CommandContext): Promise<number> {
+  if (!flagBoolean(context.parsed.flags, "stale")) {
+    emit(context.json, fail("unlock", "stale_required", "Only stale lock recovery is supported. Rerun with --stale."));
+    return 2;
+  }
+  const result = await recoverStaleLocks(context.paths, {
+    staleAfterMs: staleLockMsFromFlags(context),
+  });
+  emit(context.json, ok("unlock", {
+    removed: result.removed.map(lockStatusPayload),
+    active: result.active.map(lockStatusPayload),
+    recoveryCommand: lockRecoveryCommand(context.paths),
+  }));
+  if (!context.json && !context.quiet) {
+    console.log(`Removed ${result.removed.length} stale lock${result.removed.length === 1 ? "" : "s"}.`);
+    if (result.active.length > 0) {
+      console.log(`${result.active.length} active lock${result.active.length === 1 ? "" : "s"} left in place.`);
+    }
+  }
+  return result.active.length > 0 ? 4 : 0;
 }
 
 async function ciCommand(context: CommandContext): Promise<number> {
@@ -1004,12 +1088,35 @@ async function resolveRevalidationTargets(
   return findings.filter((finding) => finding.id === target);
 }
 
+async function withWriteLock(context: CommandContext, fn: () => Promise<number>): Promise<number> {
+  return withStateWriteLock(context.paths, {
+    command: context.parsed.command ?? "unknown",
+    wait: flagBoolean(context.parsed.flags, "wait-lock"),
+    timeoutMs: numberFlag(context, "lock-timeout-ms") ?? 0,
+    staleAfterMs: staleLockMsFromFlags(context),
+  }, fn);
+}
+
 function requireCandidateId(context: CommandContext): string {
   const id = context.parsed.positional[0];
   if (!id) {
     throw new Error("Candidate ID is required");
   }
   return id;
+}
+
+function lockStatusPayload(lock: Awaited<ReturnType<typeof readLockStatuses>>[number]): Record<string, unknown> {
+  return {
+    id: lock.record?.id,
+    owner: lock.record?.owner,
+    pid: lock.record?.pid,
+    command: lock.record?.command,
+    statePath: lock.record?.statePath,
+    createdAt: lock.record?.createdAt,
+    stale: lock.stale,
+    reason: lock.reason,
+    recoveryCommand: lock.recoveryCommand,
+  };
 }
 
 function emit<T>(json: boolean, value: T): void {
@@ -1569,6 +1676,19 @@ function csvFlag(context: CommandContext, key: string): string[] {
     return [];
   }
   return value.split(",").map((item) => item.trim()).filter(Boolean);
+}
+
+function staleLockMsFromFlags(context: CommandContext): number | undefined {
+  return numberFlag(context, "stale-lock-ms");
+}
+
+function numberFlag(context: CommandContext, key: string): number | undefined {
+  const value = flagString(context.parsed.flags, key);
+  if (value === undefined || value === "") {
+    return undefined;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
 }
 
 function uniqueNormalized(values: string[]): string[] {

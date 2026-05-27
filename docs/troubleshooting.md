@@ -13,6 +13,26 @@ Important diagnostic codes:
 - `state_dirs_missing`: `.deepclean/` exists but one or more expected state directories are missing. Run `deepclean init` to recreate the directory skeleton.
 - `git_unavailable`: the target directory is not a git repository or git could not run there.
 - `provider_unavailable`: synthesis is configured but the provider command could not be executed.
+- `lock_contention`: another write command owns `.deepclean/locks/state-writer.json`. Retry after it exits, or use `--wait-lock --lock-timeout-ms <ms>` for queued local commands.
+- `stale_locks`: a lock file points to a dead process or has exceeded the stale threshold. Run `deepclean unlock --stale` before the next write command.
+
+## Writer Locks
+
+Deepclean serializes state-writing commands so concurrent runs cannot interleave writes under `.deepclean/`. `scan`, `ci`, `report`, `cluster`, `plan`, `triage`, `handoff`, and `revalidate` acquire a project-local writer lock.
+
+For automation that may overlap, prefer:
+
+```bash
+deepclean scan --wait-lock --lock-timeout-ms 30000 --json
+```
+
+If a machine was interrupted and `doctor` or `status` reports a stale lock, recover explicitly:
+
+```bash
+deepclean unlock --stale --json
+```
+
+Active locks are never removed by `unlock --stale`; only stale records are deleted.
 
 ## CI Mode
 
