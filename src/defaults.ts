@@ -56,7 +56,7 @@ export function defaultConfig(): DeepcleanConfig {
     ],
     exclude: defaultExcludeDirs,
     reviewSynthesis: {
-      enabled: false,
+      enabled: true,
       provider: "codex",
       command: "codex",
       timeoutMs: 120_000,

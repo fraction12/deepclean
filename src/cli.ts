@@ -175,7 +175,8 @@ Commands:
   ci                           Run non-interactive scan and policy gates for CI
   map                          Write semantic feature records without producing candidates
   scan                         Collect local evidence and generate candidates
-    --synthesize               Run local Codex synthesis over evidence
+    --synthesize               Run local Codex synthesis over evidence (default)
+    --evidence-only            Skip synthesis and produce local evidence candidates only
     --allow-source-in-model    Include source samples in Codex prompt
     --offline                  Skip provider calls and network-style analyzers
     --local-only               Alias for --offline
@@ -848,17 +849,19 @@ async function executeFeatureMap(context: CommandContext): Promise<{
 
 async function ciCommand(context: CommandContext): Promise<number> {
   const requireSynthesis = flagBoolean(context.parsed.flags, "require-synthesis");
-  if (requireSynthesis && !flagBoolean(context.parsed.flags, "synthesize")) {
+  const config = await ensureState(context.paths);
+  const synthesisRequested = flagBoolean(context.parsed.flags, "synthesize") || config.reviewSynthesis.enabled;
+  if (requireSynthesis && (!synthesisRequested || synthesisDisabledByPolicy(context, config))) {
     const diagnostic: Diagnostic = {
       level: "error",
       code: "ci_synthesis_required",
-      message: "CI policy requires synthesis; rerun with --synthesize and a configured provider.",
+      message: "CI policy requires synthesis; rerun without evidence-only/local-only flags and with a configured provider.",
     };
     emit(context.json, fail("ci", "ci_synthesis_required", diagnostic.message, [diagnostic]));
     return 2;
   }
 
-  const scan = await executeScan(context, { synthesize: flagBoolean(context.parsed.flags, "synthesize") });
+  const scan = await executeScan(context, {});
   const policy = ciPolicyFromFlags(context);
   const gate = evaluateCiPolicy(scan.data.candidates, policy);
   const createdAt = new Date().toISOString();
@@ -2423,6 +2426,7 @@ function providerRuntimeControls(context: CommandContext, config: DeepcleanConfi
     ?? config.reviewSynthesis.privacyMode;
   const offline = flagBoolean(context.parsed.flags, "offline")
     || flagBoolean(context.parsed.flags, "local-only")
+    || flagBoolean(context.parsed.flags, "evidence-only")
     || config.reviewSynthesis.offline
     || privacyMode === "local-only";
   const excerptBudget = numberFlag(context, "excerpt-budget") ?? config.reviewSynthesis.excerptBudget;
@@ -2453,6 +2457,16 @@ function providerRuntimeControls(context: CommandContext, config: DeepcleanConfi
     runtime.effort = effort;
   }
   return runtime;
+}
+
+function synthesisDisabledByPolicy(context: CommandContext, config: DeepcleanConfig): boolean {
+  const privacyMode = privacyModeFromFlag(flagString(context.parsed.flags, "privacy-mode"))
+    ?? config.reviewSynthesis.privacyMode;
+  return flagBoolean(context.parsed.flags, "offline")
+    || flagBoolean(context.parsed.flags, "local-only")
+    || flagBoolean(context.parsed.flags, "evidence-only")
+    || config.reviewSynthesis.offline
+    || privacyMode === "local-only";
 }
 
 function providerRuntimeSummary(runtime: ProviderRuntimeControls): Record<string, unknown> {

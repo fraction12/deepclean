@@ -53,7 +53,7 @@ Example GitHub Actions step:
       --json
 ```
 
-Use `--require-synthesis --synthesize` only in CI environments where the configured provider is installed and authenticated. Without `--synthesize`, `--require-synthesis` fails fast rather than silently running a weaker local-only gate.
+Use `--require-synthesis` only in CI environments where the configured provider is installed and authenticated. Pair it with `--evidence-only`, `--offline`, or `--local-only` only when you want Deepclean to fail fast instead of silently running a weaker local-only gate.
 
 ## Query Recipes
 
@@ -125,25 +125,24 @@ Run:
 codex --version
 ```
 
-If that fails, install or configure the Codex CLI before using `deepclean scan --synthesize`. Plain `deepclean scan` still works without Codex.
+If that fails, install or configure the Codex CLI before using the default synthesized `deepclean scan`. Use `deepclean scan --evidence-only` when you need deterministic local analysis without Codex.
 
 ## Codex Auth Fails
 
 If synthesis reports an auth or login warning, re-authenticate Codex in the local environment and rerun:
 
 ```bash
-deepclean scan --synthesize --json
+deepclean scan --json
 ```
 
 Deepclean preserves local evidence and local candidates when synthesis fails.
 
 ## Provider Runtime Controls
 
-For serious cleanup prioritization, run model-backed synthesis explicitly:
+For serious cleanup prioritization, `deepclean scan` runs model-backed synthesis by default. Pass runtime controls when you want to tune that provider call:
 
 ```bash
 deepclean scan \
-  --synthesize \
   --model gpt-5.4 \
   --timeout 120 \
   --retries 1 \
@@ -154,7 +153,7 @@ deepclean scan \
 
 Runtime controls can also live in `.deepclean/config.json` under `reviewSynthesis`: `model`, `effort`, `timeoutMs`, `retries`, `rpm`, `concurrency`, `tokenBudget`, `excerptBudget`, `offline`, and `privacyMode`.
 
-Use `--offline` or `--local-only` when no provider should run. Deepclean will keep local evidence/candidates, mark synthesis as skipped by policy, and emit `synthesis_skipped_by_policy`.
+Use `--evidence-only`, `--offline`, or `--local-only` when no provider should run. Deepclean will keep local evidence/candidates, mark synthesis as skipped by policy, and emit `synthesis_skipped_by_policy` when synthesis would otherwise be requested.
 
 `--privacy-mode metadata` keeps provider prompts metadata-only unless `--allow-source-in-model` is used with a positive `--excerpt-budget`. `--privacy-mode local-only` disables provider execution. `--privacy-mode source-ok` allows source excerpts when the excerpt budget is positive.
 

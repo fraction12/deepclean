@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Changed new Deepclean configs so `scan` and CI-style scans request Codex synthesis by default after local evidence collection, with `--evidence-only` as the deterministic-only escape hatch.
+
 ## 0.1.0-alpha.1 - 2026-05-27
 
 - Added semantic feature mapping with `.deepclean/features/` artifacts, `deepclean map`, scan feature counts, and first-pass package script, TS/JS, Python, test-suite, route/component/module, and config feature records.
