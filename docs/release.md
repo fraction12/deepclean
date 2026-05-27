@@ -8,7 +8,7 @@ Configure npm trusted publishing for `@fraction12/deepclean`:
 
 - Publisher: GitHub Actions
 - Repository: `fraction12/deepclean`
-- Workflow: `.github/workflows/release.yaml`
+- Workflow: `.github/workflows/release.yml`
 - Environment: `npm`
 
 The release workflow uses GitHub OIDC and does not require a long-lived npm token.
