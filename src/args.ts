@@ -65,6 +65,11 @@ const valueFlags = new Set([
   "status",
   "note",
   "format",
+  "since",
+  "merge-base",
+  "paths",
+  "categories",
+  "reviewers",
 ]);
 
 export function legacyParseArgs(argv: string[]): ParsedArgs {
