@@ -46,6 +46,7 @@ import {
   writeClusters,
   writeEvidence,
   writeFindings,
+  writeFixAttempt,
   writeHandoff,
   writeLifecycleEvents,
   writePlan,
@@ -64,6 +65,7 @@ import {
   type DeepcleanConfig,
   type Diagnostic,
   type EvidenceRecord,
+  type FixAttemptRecord,
   type RetentionManifestRecord,
   type RevalidationRecord,
 } from "./types.js";
@@ -89,6 +91,7 @@ const commands = [
   "unlock",
   "prune",
   "scrub",
+  "fix",
   "cluster",
   "plan",
   "triage",
@@ -204,6 +207,13 @@ Commands:
     --keep-runs <n>            Keep latest n runs, defaults to 5
     --keep-days <n>            Also keep runs newer than n days
   scrub                        Emit source-safe generated-state export
+  fix <finding-or-candidate>   Preview or apply a guarded local patch
+    --patch <file>             Patch file to preview/apply
+    --dry-run                  Persist preview without changing source
+    --apply                    Apply the patch locally
+    --allow-source-mutation    Required with --apply
+    --allow-dirty              Allow dirty files inside target scope
+    --verification-command <c> Override verification command
   cluster [theme-id]           Group related candidates into cleanup themes
   plan <candidate-or-theme>    Generate an agent-ready cleanup plan
   triage <candidate-id>        Update candidate status with --status and --note
@@ -293,6 +303,8 @@ export async function main(argv: string[], cwd = process.cwd()): Promise<number>
         return await withWriteLock(context, () => pruneCommand(context));
       case "scrub":
         return await scrubCommand(context);
+      case "fix":
+        return await withWriteLock(context, () => fixCommand(context));
       case "cluster":
         return await withWriteLock(context, () => clusterCommand(context));
       case "plan":
@@ -622,6 +634,149 @@ async function scrubCommand(context: CommandContext): Promise<number> {
     }
   }
   return 0;
+}
+
+async function fixCommand(context: CommandContext): Promise<number> {
+  const target = requireCandidateId(context);
+  if (target.startsWith("theme-")) {
+    emit(context.json, fail("fix", "fix_target_too_broad", "Fix execution requires one stable finding or candidate, not a broad theme."));
+    return 2;
+  }
+  const patch = flagString(context.parsed.flags, "patch");
+  if (!patch) {
+    emit(context.json, fail("fix", "patch_required", "--patch is required so Deepclean can preview/apply an explicit local patch."));
+    return 2;
+  }
+  const dryRun = flagBoolean(context.parsed.flags, "dry-run") || !flagBoolean(context.parsed.flags, "apply");
+  const config = await ensureState(context.paths);
+  if (!dryRun && (!config.fixExecution.enabled || !flagBoolean(context.parsed.flags, "allow-source-mutation"))) {
+    emit(context.json, fail("fix", "fix_opt_in_required", "Applying fixes requires fixExecution.enabled=true and --allow-source-mutation."));
+    return 2;
+  }
+
+  const resolved = await resolveFixTarget(context.paths, target);
+  if (!resolved) {
+    emit(context.json, fail("fix", "finding_not_found", `Finding or candidate not found: ${target}`));
+    return 1;
+  }
+  const blocked = fixReadinessBlocker(resolved.candidate);
+  if (blocked) {
+    emit(context.json, fail("fix", blocked.code, blocked.message));
+    return 2;
+  }
+  const plan = await latestPlanForTarget(context.paths, resolved.candidate.id);
+  if (!plan) {
+    emit(context.json, fail("fix", "fix_plan_required", "Generate a current plan before fixing this finding."));
+    return 2;
+  }
+  const revalidation = await latestRevalidationForFinding(context.paths, resolved.findingId);
+  if (!revalidation || !["unchanged", "changed"].includes(revalidation.outcome)) {
+    emit(context.json, fail("fix", "fix_revalidation_required", "Run revalidation before applying or previewing this fix."));
+    return 2;
+  }
+
+  const patchPath = path.resolve(context.paths.root, patch);
+  const patchContent = await readFile(patchPath, "utf8");
+  const changedFiles = changedFilesFromPatch(patchContent);
+  if (changedFiles.length === 0) {
+    emit(context.json, fail("fix", "patch_empty", "Patch preview did not contain changed files."));
+    return 2;
+  }
+  const dirty = await dirtyFiles(context.paths.root);
+  const targetPaths = new Set(resolved.candidate.files.map((file) => file.path));
+  const statePrefix = `${relativeStatePath(context.paths, context.paths.stateDir).replace(/\/$/, "")}/`;
+  const patchRelativePath = relativeStatePath(context.paths, patchPath);
+  const dirtyOutsideTarget = dirty.filter((file) => (
+    !targetPaths.has(file)
+    && file !== patchRelativePath
+    && !file.startsWith(statePrefix)
+  ));
+  if (!dryRun && dirtyOutsideTarget.length > 0 && !flagBoolean(context.parsed.flags, "allow-dirty")) {
+    emit(context.json, fail("fix", "dirty_tree", `Dirty files outside target scope: ${dirtyOutsideTarget.join(", ")}`));
+    return 2;
+  }
+
+  const attemptId = timestampId("fix");
+  const patchPreviewPath = path.join(context.paths.fixesDir, `${attemptId}.patch`);
+  await mkdir(context.paths.fixesDir, { recursive: true });
+  await writeFile(patchPreviewPath, patchContent, "utf8");
+
+  const verificationCommands = verificationCommandsForFix(context, config, resolved.candidate);
+  let status: FixAttemptRecord["status"] = dryRun ? "previewed" : "unverified";
+  let verificationResults: FixAttemptRecord["verificationResults"] = [];
+  const diagnostics: Diagnostic[] = [];
+  if (!dryRun) {
+    const apply = await execFileAsync("git", ["apply", patchPath], { cwd: context.paths.root, timeout: 30_000 })
+      .then(() => ({ ok: true, error: undefined as string | undefined }))
+      .catch((error) => ({ ok: false, error: error instanceof Error ? error.message : String(error) }));
+    if (!apply.ok) {
+      diagnostics.push({ level: "error", code: "patch_apply_failed", message: apply.error ?? "Patch failed to apply." });
+      status = "failed";
+    } else if (verificationCommands.length > 0) {
+      verificationResults = await runFixVerification(context.paths, attemptId, verificationCommands);
+      status = verificationResults.every((result) => result.passed) ? "passed" : "failed";
+    }
+  }
+
+  const now = new Date().toISOString();
+  const attempt: FixAttemptRecord = {
+    schemaVersion,
+    recordType: "fix_attempt",
+    id: attemptId,
+    findingId: resolved.findingId,
+    planId: plan.id,
+    status,
+    dryRun,
+    changedFiles,
+    patchPreviewPath,
+    verificationCommands,
+    verificationResults,
+    diagnostics,
+    createdAt: now,
+    updatedAt: now,
+  };
+  const attemptPath = await writeFixAttempt(context.paths, attempt);
+  await writeLifecycleEvents(context.paths, [
+    {
+      schemaVersion,
+      recordType: "lifecycle_event",
+      id: timestampId("event"),
+      targetType: "fix_attempt",
+      targetId: attempt.id,
+      findingId: resolved.findingId,
+      kind: "fix-attempted",
+      command: "fix",
+      createdAt: now,
+      data: { dryRun, status, changedFiles },
+    },
+    ...(status === "passed" || status === "failed"
+      ? [{
+        schemaVersion,
+        recordType: "lifecycle_event" as const,
+        id: timestampId("event"),
+        targetType: "fix_attempt" as const,
+        targetId: attempt.id,
+        findingId: resolved.findingId,
+        kind: status === "passed" ? "verification-passed" as const : "verification-failed" as const,
+        command: "fix",
+        createdAt: now,
+        data: { verificationResults },
+      }]
+      : []),
+  ]);
+
+  emit(context.json, ok("fix", {
+    attempt,
+    attemptPath,
+    patchPreviewPath,
+    changedFiles,
+    externalSideEffects: [],
+    next: status === "passed" ? "Review local changes and open a PR manually if desired." : "Inspect the fix attempt artifact before continuing.",
+  }, diagnostics));
+  if (!context.json && !context.quiet) {
+    console.log(`${dryRun ? "Previewed" : "Applied"} fix ${attempt.id}: ${status}`);
+  }
+  return status === "failed" ? 3 : 0;
 }
 
 async function ciCommand(context: CommandContext): Promise<number> {
@@ -1217,6 +1372,142 @@ async function latestState(paths: StatePaths): Promise<{
     readLatestEvidence(paths),
   ]);
   return { runId, candidates, clusters, evidence };
+}
+
+async function resolveFixTarget(paths: StatePaths, target: string): Promise<{
+  findingId: string;
+  candidate: CandidateRecord;
+} | undefined> {
+  const candidates = await readLatestCandidates(paths);
+  const candidate = candidates.find((item) => item.id === target || item.findingId === target);
+  if (!candidate) {
+    return undefined;
+  }
+  return { findingId: candidate.findingId ?? candidate.id, candidate };
+}
+
+function fixReadinessBlocker(candidate: CandidateRecord): { code: string; message: string } | undefined {
+  if (candidate.confidence === "low") {
+    return { code: "fix_low_confidence", message: "Low-confidence findings must be confirmed before fix execution." };
+  }
+  const lifecycleState = candidate.lifecycleState ?? "open";
+  if (["stale", "fixed", "superseded", "inconclusive", "suppressed"].includes(lifecycleState)) {
+    return { code: "fix_not_current", message: `Finding lifecycle state is ${lifecycleState}; revalidate or choose another finding.` };
+  }
+  if (candidate.risk === "design-needed") {
+    return { code: "fix_ambiguous", message: "Design-needed findings are too ambiguous for guarded fix execution." };
+  }
+  return undefined;
+}
+
+async function latestPlanForTarget(paths: StatePaths, candidateId: string): Promise<{ id: string } | undefined> {
+  const files = await filesWithExtension(paths.plansDir, "json");
+  const plans: Array<{ id: string; targetId: string; createdAt: string }> = [];
+  for (const file of files) {
+    try {
+      const parsed = JSON.parse(await readFile(file, "utf8")) as { id?: unknown; targetId?: unknown; createdAt?: unknown };
+      if (typeof parsed.id === "string" && typeof parsed.targetId === "string") {
+        plans.push({
+          id: parsed.id,
+          targetId: parsed.targetId,
+          createdAt: typeof parsed.createdAt === "string" ? parsed.createdAt : "",
+        });
+      }
+    } catch {
+      // Ignore malformed historical plan records here; schema validation handles them elsewhere.
+    }
+  }
+  return plans
+    .filter((plan) => plan.targetId === candidateId)
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+    .at(-1);
+}
+
+async function latestRevalidationForFinding(
+  paths: StatePaths,
+  findingId: string,
+): Promise<{ outcome: string; createdAt: string } | undefined> {
+  const files = await filesWithExtension(paths.revalidationsDir, "json");
+  const records: Array<{ targetId: string; outcome: string; createdAt: string }> = [];
+  for (const file of files) {
+    try {
+      const parsed = JSON.parse(await readFile(file, "utf8")) as { targetId?: unknown; outcome?: unknown; createdAt?: unknown };
+      if (parsed.targetId === findingId && typeof parsed.outcome === "string") {
+        records.push({
+          targetId: findingId,
+          outcome: parsed.outcome,
+          createdAt: typeof parsed.createdAt === "string" ? parsed.createdAt : "",
+        });
+      }
+    } catch {
+      // Ignore malformed historical revalidation records.
+    }
+  }
+  return records.sort((a, b) => a.createdAt.localeCompare(b.createdAt)).at(-1);
+}
+
+function changedFilesFromPatch(patchContent: string): string[] {
+  const files = new Set<string>();
+  for (const line of patchContent.split(/\r?\n/)) {
+    const match = line.match(/^\+\+\+ b\/(.+)$/);
+    if (match?.[1] && match[1] !== "/dev/null") {
+      files.add(match[1]);
+    }
+  }
+  return [...files].sort();
+}
+
+async function dirtyFiles(root: string): Promise<string[]> {
+  try {
+    const { stdout } = await execFileAsync("git", ["status", "--short"], { cwd: root, timeout: 5000 });
+    return stdout.split(/\r?\n/)
+      .map((line) => line.slice(3).trim())
+      .filter(Boolean)
+      .map((line) => line.split(" -> ").at(-1) ?? line)
+      .sort();
+  } catch {
+    return [];
+  }
+}
+
+function verificationCommandsForFix(
+  context: CommandContext,
+  config: DeepcleanConfig,
+  candidate: CandidateRecord,
+): string[] {
+  const override = flagString(context.parsed.flags, "verification-command");
+  if (override) {
+    return [override];
+  }
+  if (config.fixExecution.verificationCommands.length > 0) {
+    return config.fixExecution.verificationCommands;
+  }
+  return candidate.verification;
+}
+
+async function runFixVerification(
+  paths: StatePaths,
+  attemptId: string,
+  commandsToRun: string[],
+): Promise<FixAttemptRecord["verificationResults"]> {
+  const results: FixAttemptRecord["verificationResults"] = [];
+  for (const [index, command] of commandsToRun.entries()) {
+    const outputPath = path.join(paths.fixesDir, `${attemptId}-verification-${String(index + 1).padStart(2, "0")}.txt`);
+    const result = await execFileAsync("sh", ["-lc", command], { cwd: paths.root, timeout: 120_000 })
+      .then((output) => ({ exitCode: 0, output: `${output.stdout}${output.stderr}` }))
+      .catch((error) => ({
+        exitCode: typeof error === "object" && error && "code" in error && typeof error.code === "number" ? error.code : 1,
+        output: error instanceof Error ? error.message : String(error),
+      }));
+    await writeFile(outputPath, result.output, "utf8");
+    results.push({
+      command,
+      exitCode: result.exitCode,
+      passed: result.exitCode === 0,
+      outputPath,
+    });
+  }
+  return results;
 }
 
 async function candidateForHistoryLookup(

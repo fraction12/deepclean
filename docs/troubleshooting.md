@@ -86,6 +86,37 @@ deepclean export --source-safe --output .deepclean/source-safe.json --json
 
 `scrub --json` is the same source-safe export path. It keeps actionable IDs, priorities, categories, evidence IDs, verification commands, and repository-relative paths, but omits source excerpts, provider prompts, absolute state paths, generated handoff prose, and generated plan prose.
 
+## Guarded Fix Execution
+
+`deepclean fix` is intentionally gated. It only works on one stable finding or candidate at a time, requires an explicit patch file, requires a current plan, and requires current revalidation.
+
+Preview without modifying source:
+
+```bash
+deepclean fix finding-abc123 --patch ./fix.patch --dry-run --json
+```
+
+Apply locally only after enabling fix execution in `.deepclean/config.json` and passing the explicit source-mutation flag:
+
+```json
+{
+  "fixExecution": {
+    "enabled": true,
+    "verificationCommands": ["npm test", "npm run typecheck"]
+  }
+}
+```
+
+```bash
+deepclean fix finding-abc123 \
+  --patch ./fix.patch \
+  --apply \
+  --allow-source-mutation \
+  --json
+```
+
+Fix execution never pushes, opens pull requests, publishes packages, or performs external actions. It writes local fix attempt records, patch previews, verification outputs, and lifecycle events under `.deepclean/`.
+
 ## Codex Is Missing
 
 Run:

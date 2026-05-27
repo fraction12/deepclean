@@ -136,5 +136,9 @@ export function defaultConfig(): DeepcleanConfig {
       allowSourceInModel: false,
       allowWebResearch: false,
     },
+    fixExecution: {
+      enabled: false,
+      verificationCommands: [],
+    },
   };
 }

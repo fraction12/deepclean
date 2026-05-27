@@ -1093,6 +1093,77 @@ process.exit(0);
     });
   });
 
+  test("fix dry-run previews a patch without changing source", async () => {
+    await withTempRepo(async (repo) => {
+      const prepared = await prepareFixableRepo(repo);
+      const before = await readFile(path.join(repo, "src", "invoice.ts"), "utf8");
+      const result = await runCli(["fix", prepared.candidateId, "--patch", prepared.patchPath, "--dry-run", "--json"], repo);
+      expect(result.code).toBe(0);
+      const payload = JSON.parse(result.stdout) as {
+        data: { attempt: { status: string; dryRun: boolean; changedFiles: string[] }; patchPreviewPath: string; externalSideEffects: unknown[] };
+      };
+      expect(payload.data.attempt.status).toBe("previewed");
+      expect(payload.data.attempt.dryRun).toBe(true);
+      expect(payload.data.attempt.changedFiles).toEqual(["src/invoice.ts"]);
+      expect(payload.data.externalSideEffects).toEqual([]);
+      await expect(stat(payload.data.patchPreviewPath)).resolves.toBeTruthy();
+      expect(await readFile(path.join(repo, "src", "invoice.ts"), "utf8")).toBe(before);
+    });
+  });
+
+  test("fix applies a local patch and captures verification results without external side effects", async () => {
+    await withTempRepo(async (repo) => {
+      const prepared = await prepareFixableRepo(repo);
+      await enableFixExecution(repo);
+      const result = await runCli([
+        "fix",
+        prepared.candidateId,
+        "--patch",
+        prepared.patchPath,
+        "--apply",
+        "--allow-source-mutation",
+        "--verification-command",
+        "test -f src/invoice.ts",
+        "--json",
+      ], repo);
+      expect(result.code).toBe(0);
+      const payload = JSON.parse(result.stdout) as {
+        data: {
+          attempt: { status: string; dryRun: boolean; verificationResults: Array<{ passed: boolean; outputPath?: string }> };
+          externalSideEffects: unknown[];
+        };
+      };
+      expect(payload.data.attempt.status).toBe("passed");
+      expect(payload.data.attempt.dryRun).toBe(false);
+      expect(payload.data.attempt.verificationResults[0]?.passed).toBe(true);
+      expect(payload.data.externalSideEffects).toEqual([]);
+      expect(await readFile(path.join(repo, "src", "invoice.ts"), "utf8")).toContain("deepclean fix applied");
+      await expect(stat(payload.data.attempt.verificationResults[0]?.outputPath ?? "")).resolves.toBeTruthy();
+    });
+  });
+
+  test("fix refuses dirty files outside target scope", async () => {
+    await withTempRepo(async (repo) => {
+      const prepared = await prepareFixableRepo(repo);
+      await enableFixExecution(repo);
+      await writeFile(path.join(repo, "outside.ts"), "export const outside = true;\n", "utf8");
+      const result = await runCli([
+        "fix",
+        prepared.candidateId,
+        "--patch",
+        prepared.patchPath,
+        "--apply",
+        "--allow-source-mutation",
+        "--verification-command",
+        "true",
+        "--json",
+      ], repo);
+      expect(result.code).toBe(2);
+      const payload = JSON.parse(result.stdout) as { error: { code: string } };
+      expect(payload.error.code).toBe("dirty_tree");
+    });
+  });
+
   test("respects configurable local candidate caps", async () => {
     await withTempRepo(async (repo) => {
       await writeFixtureSource(repo);
@@ -1462,6 +1533,46 @@ async function writeOldRunArtifacts(repo: string): Promise<void> {
     createdAt: "2000-01-01T00:00:00.000Z",
     content: "Old handoff",
   }, null, 2)}\n`, "utf8");
+}
+
+async function prepareFixableRepo(repo: string): Promise<{ candidateId: string; findingId: string; patchPath: string }> {
+  await writeFixtureSource(repo);
+  await execFileAsync("git", ["init"], { cwd: repo });
+  await execFileAsync("git", ["config", "user.email", "deepclean@example.com"], { cwd: repo });
+  await execFileAsync("git", ["config", "user.name", "Deepclean Test"], { cwd: repo });
+  await execFileAsync("git", ["add", "."], { cwd: repo });
+  await execFileAsync("git", ["commit", "-m", "initial"], { cwd: repo });
+  const scan = await runCli(["scan", "--json"], repo);
+  const scanPayload = JSON.parse(scan.stdout) as {
+    data: { candidates: Array<{ id: string; findingId?: string; confidence: string; risk: string }> };
+  };
+  const candidate = scanPayload.data.candidates.find((item) => item.findingId && item.confidence !== "low" && item.risk !== "design-needed");
+  if (!candidate?.findingId) {
+    throw new Error("No fixable candidate in fixture");
+  }
+  await runCli(["plan", candidate.id, "--json"], repo);
+  await runCli(["revalidate", candidate.findingId, "--json"], repo);
+  const invoicePath = path.join(repo, "src", "invoice.ts");
+  const original = await readFile(invoicePath, "utf8");
+  await writeFile(invoicePath, original.replace("export function", "// deepclean fix applied\nexport function"), "utf8");
+  const diff = await execFileAsync("git", ["diff", "--", "src/invoice.ts"], { cwd: repo });
+  await writeFile(invoicePath, original, "utf8");
+  const patchPath = path.join(repo, "fix.patch");
+  await writeFile(patchPath, diff.stdout, "utf8");
+  return { candidateId: candidate.id, findingId: candidate.findingId, patchPath };
+}
+
+async function enableFixExecution(repo: string): Promise<void> {
+  const configPath = path.join(repo, ".deepclean", "config.json");
+  const config = JSON.parse(await readFile(configPath, "utf8")) as {
+    fixExecution?: { enabled?: boolean; verificationCommands?: string[] };
+  };
+  config.fixExecution = {
+    ...config.fixExecution,
+    enabled: true,
+    verificationCommands: config.fixExecution?.verificationCommands ?? [],
+  };
+  await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
 }
 
 async function latestRunFile(repo: string): Promise<string> {
