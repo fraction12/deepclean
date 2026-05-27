@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.1.0-alpha.1 - 2026-05-27
+
 - Added semantic feature mapping with `.deepclean/features/` artifacts, `deepclean map`, scan feature counts, and first-pass package script, TS/JS, Python, test-suite, route/component/module, and config feature records.
 - Softened the public site, README, and package copy to frame Deepclean around clearer structure and focused improvements instead of criticizing the user's code.
 - Set the GitHub Pages site as the public project homepage and documented it in the README.
