@@ -2,7 +2,7 @@
 
 Each slice below MUST land through its own pull request unless an adjacent slice is explicitly marked as a no-code documentation-only follow-up. Every PR MUST include local verification evidence, GitHub CI, and a short dogfood note when the slice changes runtime behavior.
 
-- [ ] PR-01 State foundation: schemas, lazy migration, compatibility fixtures, and privacy notes for generated records.
+- [x] PR-01 State foundation: schemas, lazy migration, compatibility fixtures, and privacy notes for generated records.
 - [ ] PR-02 Health/status: `doctor`, `status`, structured diagnostics, and user docs.
 - [ ] PR-03 Stable identity: signatures, durable finding IDs, observation linking, lifecycle event persistence, and `history`.
 - [ ] PR-04 Revalidation: `revalidate`, outcome classification, freshness metadata, report badges, and lifecycle updates.
@@ -17,11 +17,11 @@ Each slice below MUST land through its own pull request unless an adjacent slice
 
 ## 1. Product Spec and State Foundation
 
-- [ ] 1.1 Define stable finding, observation, lifecycle event, revalidation, CI run, lock, retention manifest, and fix attempt schemas.
-- [ ] 1.2 Add migration rules for existing alpha candidate, report, plan, handoff, and triage records.
-- [ ] 1.3 Add schema validation fixtures for current state and migrated state.
-- [ ] 1.4 Document privacy implications for every generated record type.
-- [ ] 1.5 PR checkpoint: merge only after PR-01 has passing CI and migration fixtures proving current alpha records still load.
+- [x] 1.1 Define stable finding, observation, lifecycle event, revalidation, CI run, lock, retention manifest, and fix attempt schemas.
+- [x] 1.2 Add migration rules for existing alpha candidate, report, plan, handoff, and triage records.
+- [x] 1.3 Add schema validation fixtures for current state and migrated state.
+- [x] 1.4 Document privacy implications for every generated record type.
+- [x] 1.5 PR checkpoint: merge only after PR-01 has passing CI and migration fixtures proving current alpha records still load.
 
 ## 2. Health, Status, and Diagnostics
 

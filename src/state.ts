@@ -5,19 +5,35 @@ import {
   candidateRecordSchema,
   clusterRecordSchema,
   configSchema,
+  candidateObservationRecordSchema,
+  ciRunRecordSchema,
   evidenceRecordSchema,
+  findingRecordSchema,
+  fixAttemptRecordSchema,
   handoffRecordSchema,
+  lifecycleEventRecordSchema,
+  lockRecordSchema,
   planRecordSchema,
   reportRecordSchema,
+  retentionManifestRecordSchema,
+  revalidationRecordSchema,
   runRecordSchema,
   triageRecordSchema,
+  type CandidateObservationRecord,
   type CandidateRecord,
+  type CiRunRecord,
   type ClusterRecord,
   type DeepcleanConfig,
   type EvidenceRecord,
+  type FindingRecord,
+  type FixAttemptRecord,
   type HandoffRecord,
+  type LifecycleEventRecord,
+  type LockRecord,
   type PlanRecord,
   type ReportRecord,
+  type RetentionManifestRecord,
+  type RevalidationRecord,
   type RunRecord,
   type TriageRecord,
 } from "./types.js";
@@ -27,6 +43,8 @@ export interface StatePaths {
   stateDir: string;
   configPath: string;
   runsDir: string;
+  findingsDir: string;
+  observationsDir: string;
   evidenceDir: string;
   candidatesDir: string;
   clustersDir: string;
@@ -34,6 +52,12 @@ export interface StatePaths {
   triageDir: string;
   handoffsDir: string;
   plansDir: string;
+  lifecycleDir: string;
+  revalidationsDir: string;
+  ciDir: string;
+  locksDir: string;
+  retentionDir: string;
+  fixesDir: string;
 }
 
 export function resolveStatePaths(options: {
@@ -49,6 +73,8 @@ export function resolveStatePaths(options: {
     stateDir,
     configPath: path.resolve(root, options.config ?? path.join(stateDir, "config.json")),
     runsDir: path.join(stateDir, "runs"),
+    findingsDir: path.join(stateDir, "findings"),
+    observationsDir: path.join(stateDir, "observations"),
     evidenceDir: path.join(stateDir, "evidence"),
     candidatesDir: path.join(stateDir, "candidates"),
     clustersDir: path.join(stateDir, "clusters"),
@@ -56,12 +82,20 @@ export function resolveStatePaths(options: {
     triageDir: path.join(stateDir, "triage"),
     handoffsDir: path.join(stateDir, "handoffs"),
     plansDir: path.join(stateDir, "plans"),
+    lifecycleDir: path.join(stateDir, "lifecycle"),
+    revalidationsDir: path.join(stateDir, "revalidations"),
+    ciDir: path.join(stateDir, "ci"),
+    locksDir: path.join(stateDir, "locks"),
+    retentionDir: path.join(stateDir, "retention"),
+    fixesDir: path.join(stateDir, "fixes"),
   };
 }
 
 export async function ensureState(paths: StatePaths): Promise<DeepcleanConfig> {
   await Promise.all([
     mkdir(paths.runsDir, { recursive: true }),
+    mkdir(paths.findingsDir, { recursive: true }),
+    mkdir(paths.observationsDir, { recursive: true }),
     mkdir(paths.evidenceDir, { recursive: true }),
     mkdir(paths.candidatesDir, { recursive: true }),
     mkdir(paths.clustersDir, { recursive: true }),
@@ -69,6 +103,12 @@ export async function ensureState(paths: StatePaths): Promise<DeepcleanConfig> {
     mkdir(paths.triageDir, { recursive: true }),
     mkdir(paths.handoffsDir, { recursive: true }),
     mkdir(paths.plansDir, { recursive: true }),
+    mkdir(paths.lifecycleDir, { recursive: true }),
+    mkdir(paths.revalidationsDir, { recursive: true }),
+    mkdir(paths.ciDir, { recursive: true }),
+    mkdir(paths.locksDir, { recursive: true }),
+    mkdir(paths.retentionDir, { recursive: true }),
+    mkdir(paths.fixesDir, { recursive: true }),
   ]);
 
   try {
@@ -116,6 +156,89 @@ export async function writeCandidates(
   }
   const filePath = path.join(paths.candidatesDir, `${runId}.json`);
   await writeJson(filePath, records);
+  return filePath;
+}
+
+export async function writeFinding(
+  paths: StatePaths,
+  record: FindingRecord,
+): Promise<string> {
+  findingRecordSchema.parse(record);
+  const filePath = path.join(paths.findingsDir, `${record.id}.json`);
+  await writeJson(filePath, record);
+  return filePath;
+}
+
+export async function writeCandidateObservations(
+  paths: StatePaths,
+  runId: string,
+  records: CandidateObservationRecord[],
+): Promise<string> {
+  for (const record of records) {
+    candidateObservationRecordSchema.parse(record);
+  }
+  const filePath = path.join(paths.observationsDir, `${runId}.json`);
+  await writeJson(filePath, records);
+  return filePath;
+}
+
+export async function writeLifecycleEvent(
+  paths: StatePaths,
+  record: LifecycleEventRecord,
+): Promise<string> {
+  lifecycleEventRecordSchema.parse(record);
+  const filePath = path.join(paths.lifecycleDir, `${record.id}.json`);
+  await writeJson(filePath, record);
+  return filePath;
+}
+
+export async function writeRevalidation(
+  paths: StatePaths,
+  record: RevalidationRecord,
+): Promise<string> {
+  revalidationRecordSchema.parse(record);
+  const filePath = path.join(paths.revalidationsDir, `${record.id}.json`);
+  await writeJson(filePath, record);
+  return filePath;
+}
+
+export async function writeCiRun(
+  paths: StatePaths,
+  record: CiRunRecord,
+): Promise<string> {
+  ciRunRecordSchema.parse(record);
+  const filePath = path.join(paths.ciDir, `${record.id}.json`);
+  await writeJson(filePath, record);
+  return filePath;
+}
+
+export async function writeLock(
+  paths: StatePaths,
+  record: LockRecord,
+): Promise<string> {
+  lockRecordSchema.parse(record);
+  const filePath = path.join(paths.locksDir, `${record.id}.json`);
+  await writeJson(filePath, record);
+  return filePath;
+}
+
+export async function writeRetentionManifest(
+  paths: StatePaths,
+  record: RetentionManifestRecord,
+): Promise<string> {
+  retentionManifestRecordSchema.parse(record);
+  const filePath = path.join(paths.retentionDir, `${record.id}.json`);
+  await writeJson(filePath, record);
+  return filePath;
+}
+
+export async function writeFixAttempt(
+  paths: StatePaths,
+  record: FixAttemptRecord,
+): Promise<string> {
+  fixAttemptRecordSchema.parse(record);
+  const filePath = path.join(paths.fixesDir, `${record.id}.json`);
+  await writeJson(filePath, record);
   return filePath;
 }
 
