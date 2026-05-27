@@ -34,7 +34,6 @@ jobs:
         with:
           node-version: 22.x
           cache: npm
-          registry-url: https://registry.npmjs.org
 
       - run: npm ci
 
@@ -62,6 +61,8 @@ jobs:
           NODE
 
       - name: Publish to npm
+        env:
+          NODE_AUTH_TOKEN: ""
         run: npm publish --access public --tag "${{ steps.meta.outputs.npm_tag }}" --provenance
 
       - name: Published package
