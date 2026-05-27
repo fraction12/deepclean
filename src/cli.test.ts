@@ -1,11 +1,23 @@
-import { chmod, mkdtemp, readFile, rm, writeFile, mkdir } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, writeFile, mkdir, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, test } from "vitest";
 import { main } from "./cli.js";
 import { buildCandidatePlan } from "./plans.js";
 import { buildReportRecord } from "./reporting.js";
-import { schemaVersion, type CandidateRecord } from "./types.js";
+import {
+  candidateObservationRecordSchema,
+  candidateRecordSchema,
+  ciRunRecordSchema,
+  findingRecordSchema,
+  fixAttemptRecordSchema,
+  lifecycleEventRecordSchema,
+  lockRecordSchema,
+  retentionManifestRecordSchema,
+  revalidationRecordSchema,
+  schemaVersion,
+  type CandidateRecord,
+} from "./types.js";
 
 describe("deepclean cli", () => {
   test("initializes state and emits JSON", async () => {
@@ -15,6 +27,26 @@ describe("deepclean cli", () => {
       const payload = JSON.parse(result.stdout) as { ok: boolean; data: { stateDir: string } };
       expect(payload.ok).toBe(true);
       expect(payload.data.stateDir.endsWith(".deepclean")).toBe(true);
+    });
+  });
+
+  test("initializes operating-loop state directories", async () => {
+    await withTempRepo(async (repo) => {
+      const result = await runCli(["init", "--json"], repo);
+      expect(result.code).toBe(0);
+      const dirs = [
+        "findings",
+        "observations",
+        "lifecycle",
+        "revalidations",
+        "ci",
+        "locks",
+        "retention",
+        "fixes",
+      ];
+      for (const dir of dirs) {
+        expect((await stat(path.join(repo, ".deepclean", dir))).isDirectory()).toBe(true);
+      }
     });
   });
 
@@ -34,6 +66,172 @@ describe("deepclean cli", () => {
       const packageJson = JSON.parse(await readFile(path.resolve("package.json"), "utf8")) as { version: string };
       expect(result.code).toBe(0);
       expect(result.stdout).toBe(packageJson.version);
+    });
+  });
+
+  test("parses current alpha candidates without stable identity fields", () => {
+    const now = "2026-05-24T00:00:00.000Z";
+    const alphaCandidate = {
+      schemaVersion,
+      recordType: "candidate",
+      id: "candidate-001",
+      runId: "run-test",
+      title: "Fixture candidate",
+      category: "architecture",
+      status: "open",
+      priority: "P2",
+      confidence: "medium",
+      impact: "feature",
+      effort: "medium",
+      risk: "moderate",
+      files: [{ path: "src/example.ts", startLine: 1, endLine: 20 }],
+      evidenceIds: ["ev-test"],
+      whyItMatters: "Fixture why.",
+      likelyRootCause: "Fixture cause.",
+      suggestedDirection: "Fixture direction.",
+      verification: ["npm test"],
+      provenance: { source: "local-evidence" },
+      createdAt: now,
+      updatedAt: now,
+    };
+    const parsed = candidateRecordSchema.parse(alphaCandidate);
+    expect(parsed.findingId).toBeUndefined();
+    expect(parsed.signature).toBeUndefined();
+  });
+
+  test("validates operating-loop foundation record schemas", () => {
+    const now = "2026-05-24T00:00:00.000Z";
+    const signature = {
+      version: "1" as const,
+      value: "sig-fixture",
+      components: {
+        category: "architecture",
+        normalizedTitle: "fixture candidate",
+        evidenceKinds: ["dependency-hotspot"],
+        primaryAnchors: [{ path: "src/example.ts", startLine: 1, endLine: 20 }],
+        graphNeighborhood: ["src/example.ts->src/other.ts"],
+        analyzerRuleIds: ["rule.fixture"],
+      },
+    };
+
+    findingRecordSchema.parse({
+      schemaVersion,
+      recordType: "finding",
+      id: "finding-fixture",
+      signature,
+      identityConfidence: "medium",
+      title: "Fixture candidate",
+      category: "architecture",
+      status: "open",
+      lifecycleState: "open",
+      priority: "P2",
+      confidence: "medium",
+      impact: "feature",
+      effort: "medium",
+      risk: "moderate",
+      files: [{ path: "src/example.ts", startLine: 1, endLine: 20 }],
+      evidenceIds: ["ev-test"],
+      observationIds: ["observation-fixture"],
+      currentObservationId: "observation-fixture",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    candidateObservationRecordSchema.parse({
+      schemaVersion,
+      recordType: "candidate_observation",
+      id: "observation-fixture",
+      findingId: "finding-fixture",
+      candidateId: "candidate-001",
+      runId: "run-test",
+      signature,
+      identityConfidence: "medium",
+      baselineStatus: "new",
+      evidenceFreshness: "fresh",
+      observedAt: now,
+    });
+
+    lifecycleEventRecordSchema.parse({
+      schemaVersion,
+      recordType: "lifecycle_event",
+      id: "event-fixture",
+      targetType: "finding",
+      targetId: "finding-fixture",
+      findingId: "finding-fixture",
+      runId: "run-test",
+      kind: "created",
+      toState: "open",
+      command: "scan",
+      createdAt: now,
+    });
+
+    revalidationRecordSchema.parse({
+      schemaVersion,
+      recordType: "revalidation",
+      id: "revalidation-fixture",
+      targetType: "finding",
+      targetId: "finding-fixture",
+      runId: "run-test",
+      outcome: "unchanged",
+      evidenceIds: ["ev-test"],
+      previousObservationId: "observation-fixture",
+      diagnostics: [],
+      createdAt: now,
+    });
+
+    ciRunRecordSchema.parse({
+      schemaVersion,
+      recordType: "ci_run",
+      id: "ci-fixture",
+      runId: "run-test",
+      baselineRef: "main",
+      status: "passed",
+      policy: { "max-new-p0": 0 },
+      blockingFindingIds: [],
+      artifactPaths: { json: ".deepclean/ci/ci-fixture.json" },
+      diagnostics: [],
+      createdAt: now,
+    });
+
+    lockRecordSchema.parse({
+      schemaVersion,
+      recordType: "lock",
+      id: "lock-fixture",
+      owner: "deepclean",
+      pid: 1,
+      command: "scan",
+      statePath: ".deepclean",
+      createdAt: now,
+    });
+
+    retentionManifestRecordSchema.parse({
+      schemaVersion,
+      recordType: "retention_manifest",
+      id: "retention-fixture",
+      dryRun: true,
+      keepRuns: 5,
+      deletePaths: [".deepclean/runs/old.json"],
+      retainedPaths: [".deepclean/config.json"],
+      blockedPaths: [{ path: ".deepclean/config.json", reason: "config is never pruned" }],
+      privacyNotes: ["May contain source paths."],
+      createdAt: now,
+    });
+
+    fixAttemptRecordSchema.parse({
+      schemaVersion,
+      recordType: "fix_attempt",
+      id: "fix-fixture",
+      findingId: "finding-fixture",
+      planId: "plan-fixture",
+      status: "previewed",
+      dryRun: true,
+      changedFiles: ["src/example.ts"],
+      patchPreviewPath: ".deepclean/fixes/fix-fixture.patch",
+      verificationCommands: ["npm test"],
+      verificationResults: [{ command: "npm test", passed: true, exitCode: 0 }],
+      diagnostics: [],
+      createdAt: now,
+      updatedAt: now,
     });
   });
 

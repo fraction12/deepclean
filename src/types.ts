@@ -28,6 +28,65 @@ export const effortLevels = ["small", "medium", "large"] as const;
 export const impactLevels = ["local", "feature", "cross-cutting"] as const;
 export const riskLevels = ["safe", "moderate", "design-needed"] as const;
 export const clusterActionability = ["bounded", "too-broad"] as const;
+export const identityConfidenceLevels = ["low", "medium", "high"] as const;
+export const lifecycleEventKinds = [
+  "created",
+  "observed",
+  "triaged",
+  "suppressed",
+  "revalidated",
+  "changed",
+  "fixed",
+  "stale",
+  "superseded",
+  "fix-attempted",
+  "verification-passed",
+  "verification-failed",
+] as const;
+export const lifecycleStates = [
+  "open",
+  "suppressed",
+  "stale",
+  "fixed",
+  "superseded",
+  "inconclusive",
+] as const;
+export const revalidationOutcomes = [
+  "unchanged",
+  "changed",
+  "fixed",
+  "stale",
+  "superseded",
+  "inconclusive",
+] as const;
+export const baselineStatuses = [
+  "new",
+  "existing",
+  "worsened",
+  "improved",
+  "fixed",
+  "unknown",
+] as const;
+export const evidenceFreshnessStates = [
+  "fresh",
+  "baseline",
+  "reused",
+  "stale",
+] as const;
+export const fixAttemptStatuses = [
+  "planned",
+  "previewed",
+  "applied",
+  "passed",
+  "failed",
+  "unverified",
+] as const;
+export const ciRunStatuses = [
+  "passed",
+  "failed",
+  "policy-failed",
+  "error",
+] as const;
 
 export const diagnosticSchema = z.object({
   level: z.enum(["info", "warning", "error"]),
@@ -94,6 +153,21 @@ export const fileReferenceSchema = z.object({
 
 export type FileReference = z.infer<typeof fileReferenceSchema>;
 
+export const findingSignatureSchema = z.object({
+  version: z.literal("1"),
+  value: z.string(),
+  components: z.object({
+    category: z.string(),
+    normalizedTitle: z.string(),
+    evidenceKinds: z.array(z.string()),
+    primaryAnchors: z.array(fileReferenceSchema),
+    graphNeighborhood: z.array(z.string()).optional(),
+    analyzerRuleIds: z.array(z.string()).optional(),
+  }),
+});
+
+export type FindingSignature = z.infer<typeof findingSignatureSchema>;
+
 export const evidenceRecordSchema = z.object({
   schemaVersion: z.literal(schemaVersion),
   recordType: z.literal("evidence"),
@@ -116,6 +190,11 @@ export const candidateRecordSchema = z.object({
   recordType: z.literal("candidate"),
   id: z.string(),
   runId: z.string(),
+  findingId: z.string().optional(),
+  signature: findingSignatureSchema.optional(),
+  identityConfidence: z.enum(identityConfidenceLevels).optional(),
+  lifecycleState: z.enum(lifecycleStates).optional(),
+  baselineStatus: z.enum(baselineStatuses).optional(),
   title: z.string(),
   category: z.enum(candidateCategories),
   status: z.enum(candidateStatuses),
@@ -142,6 +221,161 @@ export const candidateRecordSchema = z.object({
 });
 
 export type CandidateRecord = z.infer<typeof candidateRecordSchema>;
+
+export const findingRecordSchema = z.object({
+  schemaVersion: z.literal(schemaVersion),
+  recordType: z.literal("finding"),
+  id: z.string(),
+  signature: findingSignatureSchema,
+  identityConfidence: z.enum(identityConfidenceLevels),
+  title: z.string(),
+  category: z.enum(candidateCategories),
+  status: z.enum(candidateStatuses),
+  lifecycleState: z.enum(lifecycleStates),
+  priority: z.enum(priorities),
+  confidence: z.enum(confidenceLevels),
+  impact: z.enum(impactLevels),
+  effort: z.enum(effortLevels),
+  risk: z.enum(riskLevels),
+  files: z.array(fileReferenceSchema),
+  evidenceIds: z.array(z.string()),
+  observationIds: z.array(z.string()),
+  currentObservationId: z.string().optional(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
+export type FindingRecord = z.infer<typeof findingRecordSchema>;
+
+export const candidateObservationRecordSchema = z.object({
+  schemaVersion: z.literal(schemaVersion),
+  recordType: z.literal("candidate_observation"),
+  id: z.string(),
+  findingId: z.string(),
+  candidateId: z.string(),
+  runId: z.string(),
+  signature: findingSignatureSchema,
+  identityConfidence: z.enum(identityConfidenceLevels),
+  baselineStatus: z.enum(baselineStatuses).optional(),
+  evidenceFreshness: z.enum(evidenceFreshnessStates),
+  observedAt: z.string(),
+});
+
+export type CandidateObservationRecord = z.infer<typeof candidateObservationRecordSchema>;
+
+export const lifecycleEventRecordSchema = z.object({
+  schemaVersion: z.literal(schemaVersion),
+  recordType: z.literal("lifecycle_event"),
+  id: z.string(),
+  targetType: z.enum(["finding", "theme", "report", "plan", "handoff", "revalidation", "fix_attempt"]),
+  targetId: z.string(),
+  findingId: z.string().optional(),
+  runId: z.string().optional(),
+  kind: z.enum(lifecycleEventKinds),
+  fromState: z.string().optional(),
+  toState: z.string().optional(),
+  note: z.string().optional(),
+  actor: z.string().optional(),
+  command: z.string().optional(),
+  createdAt: z.string(),
+  data: z.record(z.string(), z.unknown()).optional(),
+});
+
+export type LifecycleEventRecord = z.infer<typeof lifecycleEventRecordSchema>;
+
+export const revalidationRecordSchema = z.object({
+  schemaVersion: z.literal(schemaVersion),
+  recordType: z.literal("revalidation"),
+  id: z.string(),
+  targetType: z.enum(["finding", "theme", "all"]),
+  targetId: z.string().optional(),
+  runId: z.string(),
+  outcome: z.enum(revalidationOutcomes),
+  evidenceIds: z.array(z.string()),
+  previousObservationId: z.string().optional(),
+  newObservationId: z.string().optional(),
+  supersededByFindingId: z.string().optional(),
+  diagnostics: z.array(diagnosticSchema),
+  createdAt: z.string(),
+});
+
+export type RevalidationRecord = z.infer<typeof revalidationRecordSchema>;
+
+export const ciRunRecordSchema = z.object({
+  schemaVersion: z.literal(schemaVersion),
+  recordType: z.literal("ci_run"),
+  id: z.string(),
+  runId: z.string().optional(),
+  baselineRef: z.string().optional(),
+  status: z.enum(ciRunStatuses),
+  policy: z.record(z.string(), z.unknown()),
+  blockingFindingIds: z.array(z.string()),
+  artifactPaths: z.object({
+    json: z.string().optional(),
+    markdown: z.string().optional(),
+    sarif: z.string().optional(),
+  }),
+  diagnostics: z.array(diagnosticSchema),
+  createdAt: z.string(),
+});
+
+export type CiRunRecord = z.infer<typeof ciRunRecordSchema>;
+
+export const lockRecordSchema = z.object({
+  schemaVersion: z.literal(schemaVersion),
+  recordType: z.literal("lock"),
+  id: z.string(),
+  owner: z.string(),
+  pid: z.number().int().nonnegative(),
+  command: z.string(),
+  statePath: z.string(),
+  createdAt: z.string(),
+  expiresAt: z.string().optional(),
+});
+
+export type LockRecord = z.infer<typeof lockRecordSchema>;
+
+export const retentionManifestRecordSchema = z.object({
+  schemaVersion: z.literal(schemaVersion),
+  recordType: z.literal("retention_manifest"),
+  id: z.string(),
+  dryRun: z.boolean(),
+  keepRuns: z.number().int().nonnegative().optional(),
+  deletePaths: z.array(z.string()),
+  retainedPaths: z.array(z.string()),
+  blockedPaths: z.array(z.object({
+    path: z.string(),
+    reason: z.string(),
+  })),
+  privacyNotes: z.array(z.string()),
+  createdAt: z.string(),
+});
+
+export type RetentionManifestRecord = z.infer<typeof retentionManifestRecordSchema>;
+
+export const fixAttemptRecordSchema = z.object({
+  schemaVersion: z.literal(schemaVersion),
+  recordType: z.literal("fix_attempt"),
+  id: z.string(),
+  findingId: z.string(),
+  planId: z.string().optional(),
+  status: z.enum(fixAttemptStatuses),
+  dryRun: z.boolean(),
+  changedFiles: z.array(z.string()),
+  patchPreviewPath: z.string().optional(),
+  verificationCommands: z.array(z.string()),
+  verificationResults: z.array(z.object({
+    command: z.string(),
+    exitCode: z.number().int().optional(),
+    passed: z.boolean(),
+    outputPath: z.string().optional(),
+  })),
+  diagnostics: z.array(diagnosticSchema),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
+export type FixAttemptRecord = z.infer<typeof fixAttemptRecordSchema>;
 
 export const clusterRecordSchema = z.object({
   schemaVersion: z.literal(schemaVersion),
