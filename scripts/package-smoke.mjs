@@ -1,10 +1,8 @@
-import { execFile } from "node:child_process";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { promisify } from "node:util";
+import { execFileAsync } from "./shared/exec-file.mjs";
 
-const execFileAsync = promisify(execFile);
 const root = process.cwd();
 const temp = await mkdtemp(path.join(os.tmpdir(), "deepclean-package-smoke-"));
 

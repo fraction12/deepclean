@@ -169,3 +169,5 @@ npm run release:check
 ```
 
 The release check builds the package, runs tests, validates OpenSpec locally when available, packs the tarball, and rejects private/local artifacts such as `.deepclean/`, `.codex/`, `node_modules/`, source files, and local reports.
+
+Publishing is handled by GitHub Actions. See [Release](docs/release.md).

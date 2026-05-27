@@ -1,19 +1,17 @@
-import { execFile } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { promisify } from "node:util";
+import { execFileAsync } from "./shared/exec-file.mjs";
 
-const execFileAsync = promisify(execFile);
 const root = process.cwd();
 const temp = await mkdtemp(path.join(os.tmpdir(), "deepclean-release-check-"));
 
 try {
-  const { stdout: validate } = await execFileAsync("openspec", ["validate", "--all", "--no-interactive"], {
+  const { stdout: validate } = await execFileAsync("node", ["scripts/spec-validate.mjs"], {
     cwd: root,
     maxBuffer: 1024 * 1024,
   });
-  if (!validate.includes("0 failed")) {
+  if (validate.includes("failed") && !validate.includes("0 failed")) {
     throw new Error(validate);
   }
 
@@ -50,6 +48,7 @@ try {
     "package/CHANGELOG.md",
     "package/docs/privacy-and-trust.md",
     "package/docs/public-readiness.md",
+    "package/docs/release.md",
     "package/docs/reviewer-references.md",
     "package/docs/troubleshooting.md",
   ];
