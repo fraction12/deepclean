@@ -42,6 +42,9 @@
     "release:check": "npm run ci && node scripts/prepare-release-smoke.mjs && node scripts/release-check.mjs",
     "release:prepare": "node scripts/prepare-release.mjs",
     "spec:validate": "node scripts/spec-validate.mjs",
+    "site:build": "node scripts/build-site.mjs",
+    "site:preview": "node scripts/preview-site.mjs",
+    "site:render": "remotion render site/remotion/index.ts HeroTerminal site/assets/hero-terminal-loop.webm --codec=vp8 --overwrite && remotion still site/remotion/index.ts HeroTerminal site/assets/hero-terminal-poster.png --frame=88 --overwrite",
     "sync:matt-skills": "node scripts/sync-matt-pocock-skills.mjs",
     "smoke:build-clean": "node scripts/build-clean-smoke.mjs",
     "test": "vitest run --exclude \"dist/**\"",
@@ -55,7 +58,13 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@remotion/cli": "^4.0.467",
     "@types/node": "^25.8.0",
+    "@types/react": "^19.2.15",
+    "@types/react-dom": "^19.2.3",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6",
+    "remotion": "^4.0.467",
     "tsx": "^4.22.3",
     "vitest": "^4.1.6"
   }
