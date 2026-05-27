@@ -19,6 +19,7 @@ import {
   retentionManifestRecordSchema,
   revalidationRecordSchema,
   runRecordSchema,
+  synthesisAttemptRecordSchema,
   triageRecordSchema,
   type CandidateObservationRecord,
   type CandidateRecord,
@@ -37,6 +38,7 @@ import {
   type RetentionManifestRecord,
   type RevalidationRecord,
   type RunRecord,
+  type SynthesisAttemptRecord,
   type TriageRecord,
 } from "./types.js";
 
@@ -61,6 +63,7 @@ export interface StatePaths {
   locksDir: string;
   retentionDir: string;
   fixesDir: string;
+  synthesisDir: string;
 }
 
 export function resolveStatePaths(options: {
@@ -92,6 +95,7 @@ export function resolveStatePaths(options: {
     locksDir: path.join(stateDir, "locks"),
     retentionDir: path.join(stateDir, "retention"),
     fixesDir: path.join(stateDir, "fixes"),
+    synthesisDir: path.join(stateDir, "synthesis"),
   };
 }
 
@@ -114,6 +118,7 @@ export async function ensureState(paths: StatePaths): Promise<DeepcleanConfig> {
     mkdir(paths.locksDir, { recursive: true }),
     mkdir(paths.retentionDir, { recursive: true }),
     mkdir(paths.fixesDir, { recursive: true }),
+    mkdir(paths.synthesisDir, { recursive: true }),
   ]);
 
   try {
@@ -282,6 +287,16 @@ export async function writeFixAttempt(
   return filePath;
 }
 
+export async function writeSynthesisAttempt(
+  paths: StatePaths,
+  record: SynthesisAttemptRecord,
+): Promise<string> {
+  synthesisAttemptRecordSchema.parse(record);
+  const filePath = path.join(paths.synthesisDir, `${record.runId}.json`);
+  await writeJson(filePath, record);
+  return filePath;
+}
+
 export async function writeReport(
   paths: StatePaths,
   report: ReportRecord,
@@ -369,6 +384,14 @@ export async function readLatestEvidence(paths: StatePaths): Promise<EvidenceRec
   return readEvidence(paths, runId);
 }
 
+export async function readLatestSynthesisAttempt(paths: StatePaths): Promise<SynthesisAttemptRecord | undefined> {
+  const runId = await latestRunId(paths);
+  if (!runId) {
+    return undefined;
+  }
+  return readSynthesisAttempt(paths, runId);
+}
+
 export async function readLatestFeatures(paths: StatePaths): Promise<FeatureRecord[]> {
   const runId = await latestFeatureRunId(paths);
   if (!runId) {
@@ -449,6 +472,18 @@ export async function readEvidence(
   const raw = await readFile(path.join(paths.evidenceDir, `${runId}.json`), "utf8");
   const parsed = JSON.parse(raw) as unknown[];
   return parsed.map((item) => evidenceRecordSchema.parse(item));
+}
+
+export async function readSynthesisAttempt(
+  paths: StatePaths,
+  runId: string,
+): Promise<SynthesisAttemptRecord | undefined> {
+  try {
+    const raw = await readFile(path.join(paths.synthesisDir, `${runId}.json`), "utf8");
+    return synthesisAttemptRecordSchema.parse(JSON.parse(raw));
+  } catch {
+    return undefined;
+  }
 }
 
 export async function readFeatures(

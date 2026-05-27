@@ -39,6 +39,7 @@ import {
   readLatestClusters,
   readLatestEvidence,
   readLatestFeatures,
+  readLatestSynthesisAttempt,
   readLifecycleEvents,
   resolveStatePaths,
   updateLatestCandidates,
@@ -57,6 +58,7 @@ import {
   writeRetentionManifest,
   writeRevalidation,
   writeRun,
+  writeSynthesisAttempt,
   writeTriage,
   type StatePaths,
 } from "./state.js";
@@ -71,6 +73,7 @@ import {
   type FixAttemptRecord,
   type RetentionManifestRecord,
   type RevalidationRecord,
+  type SynthesisAttemptRecord,
 } from "./types.js";
 import { timestampId } from "./ids.js";
 import { synthesizeWithCodex } from "./synthesis.js";
@@ -90,6 +93,7 @@ const commands = [
   "list",
   "findings",
   "show",
+  "explain",
   "history",
   "revalidate",
   "unlock",
@@ -124,6 +128,9 @@ interface ScanExecutionResult {
     synthesis: {
       requested: boolean;
       candidateCount: number;
+      acceptedCandidateCount?: number | undefined;
+      rejectedCandidateCount?: number | undefined;
+      attemptId?: string | undefined;
       runtime?: Record<string, unknown>;
     };
     candidates: CandidateRecord[];
@@ -203,6 +210,8 @@ Commands:
   list                         List findings with shared filters
   findings                     Alias for list
   show <candidate-or-theme>    Show one candidate or cleanup theme with evidence
+  explain <candidate-or-finding>
+                               Explain evidence, validation, and fix-readiness for a finding
   history <finding-or-candidate-id>
                                Show lifecycle history for a finding
   revalidate <finding-id|candidate-id|all>
@@ -301,6 +310,8 @@ export async function main(argv: string[], cwd = process.cwd()): Promise<number>
         return await listCommand(context);
       case "show":
         return await showCommand(context);
+      case "explain":
+        return await explainCommand(context);
       case "history":
         return await historyCommand(context);
       case "revalidate":
@@ -991,6 +1002,9 @@ async function executeScan(
 
   await writeFeatures(context.paths, runId, features);
   await writeEvidence(context.paths, runId, evidence);
+  if (synthesisResult.attempt) {
+    await writeSynthesisAttempt(context.paths, remapSynthesisAttemptCandidateIds(synthesisResult.attempt, candidates));
+  }
   await writeCandidates(context.paths, runId, candidates);
   await writeFindings(context.paths, identity.findings);
   await writeCandidateObservations(context.paths, runId, identity.observations);
@@ -1012,6 +1026,9 @@ async function executeScan(
       requested: shouldSynthesize,
       provider: shouldSynthesize ? runtime.provider : undefined,
       candidateCount: synthesisResult.candidates.length,
+      attemptId: synthesisResult.attempt?.id,
+      acceptedCandidateCount: synthesisResult.attempt?.acceptedCandidateCount,
+      rejectedCandidateCount: synthesisResult.attempt?.rejectedCandidateCount,
       runtime: providerRuntimeSummary(runtime),
     },
     scope,
@@ -1029,6 +1046,9 @@ async function executeScan(
     synthesis: {
       requested: shouldSynthesize,
       candidateCount: synthesisResult.candidates.length,
+      attemptId: synthesisResult.attempt?.id,
+      acceptedCandidateCount: synthesisResult.attempt?.acceptedCandidateCount,
+      rejectedCandidateCount: synthesisResult.attempt?.rejectedCandidateCount,
       runtime: providerRuntimeSummary(runtime),
     },
     candidates,
@@ -1038,6 +1058,26 @@ async function executeScan(
   };
 
   return { runId, diagnostics, data };
+}
+
+function remapSynthesisAttemptCandidateIds(
+  attempt: SynthesisAttemptRecord,
+  candidates: CandidateRecord[],
+): SynthesisAttemptRecord {
+  const candidateIdByValidationId = new Map(
+    candidates
+      .filter((candidate) => candidate.provenance.source === "model-synthesis")
+      .flatMap((candidate) => candidate.provenance.validationId
+        ? [[candidate.provenance.validationId, candidate.id] as const]
+        : []),
+  );
+  return {
+    ...attempt,
+    validations: attempt.validations.map((validation) => ({
+      ...validation,
+      candidateId: candidateIdByValidationId.get(validation.id),
+    })),
+  };
 }
 
 async function reportCommand(context: CommandContext): Promise<number> {
@@ -1146,6 +1186,81 @@ async function showCommand(context: CommandContext): Promise<number> {
     for (const record of supportingEvidence) {
       console.log(`  evidence ${record.id}: ${record.summary}`);
     }
+  }
+  return 0;
+}
+
+async function explainCommand(context: CommandContext): Promise<number> {
+  const id = requireCandidateId(context);
+  const { candidates, evidence } = await latestState(context.paths);
+  const attempt = await readLatestSynthesisAttempt(context.paths);
+  const candidate = candidates.find((item) => item.id === id || item.findingId === id);
+  if (!candidate) {
+    emit(context.json, fail("explain", "candidate_not_found", `Candidate or finding not found: ${id}`));
+    return 1;
+  }
+
+  const supportingEvidence = evidenceForIds(evidence, candidate.evidenceIds);
+  const validation = validationForCandidate(candidate, attempt);
+  const diagnostics = validation?.diagnostics ?? [];
+  const explanation = {
+    candidate,
+    evidence: supportingEvidence,
+    synthesisAttempt: attempt ? {
+      id: attempt.id,
+      runId: attempt.runId,
+      provider: attempt.provider,
+      model: attempt.model,
+      promptVersion: attempt.promptVersion,
+      promptBytes: attempt.promptBytes,
+      rawCandidateCount: attempt.rawCandidateCount,
+      acceptedCandidateCount: attempt.acceptedCandidateCount,
+      rejectedCandidateCount: attempt.rejectedCandidateCount,
+      evidenceManifest: attempt.evidenceManifest,
+    } : undefined,
+    validation,
+    fixReadiness: candidate.fixReadiness,
+    verification: candidate.verification,
+    diagnostics,
+  };
+
+  emit(context.json, ok("explain", explanation, diagnostics));
+  if (!context.json && !context.quiet) {
+    printCandidate(candidate);
+    console.log("");
+    console.log("Why this exists:");
+    console.log(`  ${candidate.whyItMatters}`);
+    console.log("");
+    console.log("Evidence:");
+    for (const record of supportingEvidence) {
+      console.log(`  ${record.id} ${record.kind}: ${record.summary}`);
+      for (const file of record.files) {
+        console.log(`    ${formatFileRef(file)}`);
+      }
+    }
+    if (validation) {
+      console.log("");
+      console.log(`Validation: ${validation.status} (${validation.id})`);
+      if (validation.diagnostics.length === 0) {
+        console.log("  All cited evidence IDs, file paths, line ranges, and quotes passed validation.");
+      } else {
+        for (const diagnostic of validation.diagnostics) {
+          console.log(`  ${diagnostic.code}: ${diagnostic.message}`);
+        }
+      }
+    }
+    if (candidate.fixReadiness) {
+      console.log("");
+      console.log("Fix readiness:");
+      console.log(`  scope: ${candidate.fixReadiness.minimumFixScope}`);
+      console.log(`  regression: ${candidate.fixReadiness.suggestedRegressionTest}`);
+      console.log(`  test gap: ${candidate.fixReadiness.whyCurrentTestsMissIt}`);
+      for (const reason of candidate.fixReadiness.confidenceDowngradeReasons) {
+        console.log(`  confidence note: ${reason}`);
+      }
+    }
+    console.log("");
+    console.log(`Verification: ${candidate.verification.join("; ") || "n/a"}`);
   }
   return 0;
 }
@@ -1703,6 +1818,27 @@ function evidenceForIds(evidence: EvidenceRecord[], ids: string[]): EvidenceReco
   return evidence.filter((item) => wanted.has(item.id));
 }
 
+function validationForCandidate(
+  candidate: CandidateRecord,
+  attempt: SynthesisAttemptRecord | undefined,
+): SynthesisAttemptRecord["validations"][number] | undefined {
+  const validationId = candidate.provenance.validationId;
+  if (!attempt || !validationId) {
+    return undefined;
+  }
+  return attempt.validations.find((validation) => validation.id === validationId);
+}
+
+function formatFileRef(file: CandidateRecord["files"][number]): string {
+  if (file.startLine !== undefined && file.endLine !== undefined) {
+    return `${file.path}:${file.startLine}-${file.endLine}`;
+  }
+  if (file.startLine !== undefined) {
+    return `${file.path}:${file.startLine}`;
+  }
+  return file.path;
+}
+
 function printDiagnostics(diagnostics: Diagnostic[]): void {
   for (const diagnostic of diagnostics) {
     console.log(`${diagnostic.level}: ${diagnostic.code}: ${diagnostic.message}`);
@@ -1737,6 +1873,7 @@ async function missingStateDirectories(paths: StatePaths): Promise<string[]> {
     ["locks", paths.locksDir],
     ["retention", paths.retentionDir],
     ["fixes", paths.fixesDir],
+    ["synthesis", paths.synthesisDir],
   ];
   const missing: string[] = [];
   for (const [name, dir] of expected) {
@@ -2100,6 +2237,7 @@ async function buildRetentionManifest(context: CommandContext): Promise<Retentio
     [context.paths.candidatesDir, "json"],
     [context.paths.clustersDir, "json"],
     [context.paths.observationsDir, "json"],
+    [context.paths.synthesisDir, "json"],
   ] as const) {
     const files = await filesWithExtension(dir, extension);
     for (const file of files) {
@@ -2586,6 +2724,7 @@ async function stateArtifactCounts(paths: StatePaths): Promise<Record<string, nu
     ["locks", paths.locksDir],
     ["retention", paths.retentionDir],
     ["fixes", paths.fixesDir],
+    ["synthesis", paths.synthesisDir],
   ];
   const counts: Record<string, number> = {};
   for (const [name, dir] of dirs) {

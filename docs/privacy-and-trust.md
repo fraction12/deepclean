@@ -9,6 +9,7 @@ Deepclean writes state and artifacts under `.deepclean/` in the target repositor
 - `.deepclean/config.json`
 - `.deepclean/runs/`
 - `.deepclean/evidence/`
+- `.deepclean/synthesis/`
 - `.deepclean/candidates/`
 - `.deepclean/clusters/`
 - `.deepclean/reports/`
@@ -36,6 +37,10 @@ Add `.deepclean/` to `.gitignore` unless a repo deliberately wants to share repo
 ## Codex Synthesis
 
 `deepclean scan` invokes the local `codex` command in read-only mode by default after local evidence collection. By default the prompt includes structured evidence and redacts source samples. It does not dynamically load OpenClaw skills or arbitrary local agent instructions; the built-in reviewer pack is recorded in candidate provenance.
+
+Each provider call writes a synthesis attempt ledger under `.deepclean/synthesis/`. The ledger records the prompt version, provider/runtime settings, reviewer IDs, evidence manifest, prompt size, accepted/rejected candidate counts, validation diagnostics, and rejected draft metadata. It does not store the full prompt text.
+
+Model-generated candidates are validated before persistence. Deepclean rejects drafts that cite missing evidence IDs, reference files outside the cited evidence, use invalid or out-of-bounds line ranges, or include optional quotes that do not match local source.
 
 Use `--allow-source-in-model` only when the target repo and configured provider are allowed to receive source excerpts. This may include snippets from files that triggered local evidence.
 

@@ -83,6 +83,7 @@ export const fixAttemptStatuses = [
   "failed",
   "unverified",
 ] as const;
+export const synthesisValidationStatuses = ["accepted", "rejected"] as const;
 export const ciRunStatuses = [
   "passed",
   "failed",
@@ -254,11 +255,19 @@ export const candidateRecordSchema = z.object({
   likelyRootCause: z.string(),
   suggestedDirection: z.string(),
   verification: z.array(z.string()),
+  fixReadiness: z.object({
+    minimumFixScope: z.string(),
+    suggestedRegressionTest: z.string(),
+    whyCurrentTestsMissIt: z.string(),
+    confidenceDowngradeReasons: z.array(z.string()),
+  }).optional(),
   provenance: z.object({
     source: z.enum(["local-evidence", "model-synthesis"]),
     provider: z.string().optional(),
     model: z.string().optional(),
     promptVersion: z.string().optional(),
+    synthesisAttemptId: z.string().optional(),
+    validationId: z.string().optional(),
     reviewers: z.array(z.string()).optional(),
     runtime: z.record(z.string(), z.unknown()).optional(),
   }),
@@ -267,6 +276,52 @@ export const candidateRecordSchema = z.object({
 });
 
 export type CandidateRecord = z.infer<typeof candidateRecordSchema>;
+
+export const synthesisAttemptRecordSchema = z.object({
+  schemaVersion: z.literal(schemaVersion),
+  recordType: z.literal("synthesis_attempt"),
+  id: z.string(),
+  runId: z.string(),
+  provider: z.string(),
+  model: z.string().optional(),
+  promptVersion: z.string(),
+  promptBytes: z.number().int().nonnegative(),
+  runtime: z.record(z.string(), z.unknown()),
+  reviewerIds: z.array(z.string()),
+  evidenceManifest: z.object({
+    evidenceCount: z.number().int().nonnegative(),
+    includedEvidenceIds: z.array(z.string()),
+    includedFileRefs: z.array(fileReferenceSchema),
+    omittedEvidenceIds: z.array(z.string()),
+    includeSource: z.boolean(),
+    tokenBudget: z.number().int().positive(),
+    excerptBudget: z.number().int().nonnegative(),
+  }),
+  rawCandidateCount: z.number().int().nonnegative(),
+  acceptedCandidateCount: z.number().int().nonnegative(),
+  rejectedCandidateCount: z.number().int().nonnegative(),
+  rejectedEvidenceIds: z.array(z.string()),
+  notes: z.array(z.string()),
+  validations: z.array(z.object({
+    id: z.string(),
+    status: z.enum(synthesisValidationStatuses),
+    draftTitle: z.string(),
+    candidateId: z.string().optional(),
+    evidenceIds: z.array(z.string()),
+    fileRefs: z.array(fileReferenceSchema),
+    diagnostics: z.array(diagnosticSchema),
+    fixReadiness: z.object({
+      minimumFixScope: z.string(),
+      suggestedRegressionTest: z.string(),
+      whyCurrentTestsMissIt: z.string(),
+      confidenceDowngradeReasons: z.array(z.string()),
+    }).optional(),
+  })),
+  diagnostics: z.array(diagnosticSchema),
+  createdAt: z.string(),
+});
+
+export type SynthesisAttemptRecord = z.infer<typeof synthesisAttemptRecordSchema>;
 
 export const findingRecordSchema = z.object({
   schemaVersion: z.literal(schemaVersion),
@@ -468,6 +523,9 @@ export const runRecordSchema = z.object({
     requested: z.boolean(),
     provider: z.string().optional(),
     candidateCount: z.number().int().nonnegative(),
+    attemptId: z.string().optional(),
+    acceptedCandidateCount: z.number().int().nonnegative().optional(),
+    rejectedCandidateCount: z.number().int().nonnegative().optional(),
     runtime: z.record(z.string(), z.unknown()).optional(),
   }),
   scope: z.object({

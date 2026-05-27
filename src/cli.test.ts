@@ -22,6 +22,7 @@ import {
   retentionManifestRecordSchema,
   revalidationRecordSchema,
   schemaVersion,
+  synthesisAttemptRecordSchema,
   type CandidateRecord,
   type FindingRecord,
   type LockRecord,
@@ -54,6 +55,7 @@ describe("deepclean cli", () => {
         "retention",
         "fixes",
         "features",
+        "synthesis",
       ];
       for (const dir of dirs) {
         expect((await stat(path.join(repo, ".deepclean", dir))).isDirectory()).toBe(true);
@@ -336,6 +338,50 @@ describe("deepclean cli", () => {
       createdAt: now,
       updatedAt: now,
     });
+
+    synthesisAttemptRecordSchema.parse({
+      schemaVersion,
+      recordType: "synthesis_attempt",
+      id: "synthesis-run-test",
+      runId: "run-test",
+      provider: "codex",
+      model: "gpt-test",
+      promptVersion: "codex-synthesis-v3-matt-pocock-reviewers",
+      promptBytes: 1200,
+      runtime: { timeoutMs: 1000 },
+      reviewerIds: ["architecture-deepening"],
+      evidenceManifest: {
+        evidenceCount: 1,
+        includedEvidenceIds: ["ev-test"],
+        includedFileRefs: [{ path: "src/example.ts", startLine: 1, endLine: 20 }],
+        omittedEvidenceIds: [],
+        includeSource: false,
+        tokenBudget: 8000,
+        excerptBudget: 0,
+      },
+      rawCandidateCount: 1,
+      acceptedCandidateCount: 1,
+      rejectedCandidateCount: 0,
+      rejectedEvidenceIds: [],
+      notes: [],
+      validations: [{
+        id: "validation-001",
+        status: "accepted",
+        draftTitle: "Fixture candidate",
+        candidateId: "candidate-001",
+        evidenceIds: ["ev-test"],
+        fileRefs: [{ path: "src/example.ts", startLine: 1, endLine: 20 }],
+        diagnostics: [],
+        fixReadiness: {
+          minimumFixScope: "One bounded module.",
+          suggestedRegressionTest: "Add a focused behavior test.",
+          whyCurrentTestsMissIt: "Current tests only cover the happy path.",
+          confidenceDowngradeReasons: [],
+        },
+      }],
+      diagnostics: [],
+      createdAt: now,
+    });
   });
 
   test("reports and explicitly recovers stale writer locks", async () => {
@@ -439,6 +485,7 @@ describe("deepclean cli", () => {
         ".deepclean/runs/run-20000101000000-old.json",
         ".deepclean/features/run-20000101000000-old.json",
         ".deepclean/evidence/run-20000101000000-old.json",
+        ".deepclean/synthesis/run-20000101000000-old.json",
         ".deepclean/reports/report-old.json",
         ".deepclean/reports/report-old.md",
       ]));
@@ -457,6 +504,7 @@ describe("deepclean cli", () => {
       await expect(stat(path.join(repo, ".deepclean", "config.json"))).resolves.toBeTruthy();
       await expect(stat(path.join(repo, ".deepclean", "evidence", `${latestRun}.json`))).resolves.toBeTruthy();
       await expect(stat(path.join(repo, ".deepclean", "features", `${latestRun}.json`))).resolves.toBeTruthy();
+      await expect(stat(path.join(repo, ".deepclean", "synthesis", "run-20000101000000-old.json"))).rejects.toThrow();
       expect(await readLockStatuses(resolveStatePaths({ cwd: repo }))).toEqual([]);
     });
   });
@@ -811,8 +859,8 @@ ${Array.from({ length: 120 }, (_, index) => `  const dirtyValue${index} = ${inde
       await installFakeCodex(repo, `#!/usr/bin/env node
 const fs = require("node:fs");
 const stdin = fs.readFileSync(0, "utf8");
-const evidenceId = stdin.match(/"id": "(ev-[^"]+)"/)?.[1];
-if (!evidenceId) process.exit(2);
+const evidenceIds = [...stdin.matchAll(/"id": "(ev-[^"]+)"/g)].map((match) => match[1]);
+if (evidenceIds.length === 0) process.exit(2);
 const outputPath = process.argv[process.argv.indexOf("-o") + 1];
 fs.writeFileSync(outputPath, JSON.stringify({
   candidates: [{
@@ -824,11 +872,18 @@ fs.writeFileSync(outputPath, JSON.stringify({
     effort: "medium",
     risk: "moderate",
     files: [{ path: "src/checkout.ts", startLine: 1, endLine: 1 }],
-    evidenceIds: [evidenceId],
+    evidenceIds,
     whyItMatters: "The cleanup should be prioritized from evidence.",
     likelyRootCause: "The same responsibility is spread across files.",
     suggestedDirection: "Create one focused module for the shared behavior.",
-    verification: ["npm test"]
+    verification: ["npm test"],
+    fixReadiness: {
+      minimumFixScope: "One shared calculation module.",
+      suggestedRegressionTest: "Add a regression test around shared checkout calculation behavior.",
+      whyCurrentTestsMissIt: "The fixture has no behavior-level regression test for the shared boundary.",
+      confidenceDowngradeReasons: []
+    },
+    supportingQuotes: []
   }],
   rejectedEvidenceIds: [],
   notes: []
@@ -1153,7 +1208,8 @@ if (
   console.error("missing reviewer pack or cleanup surfaces");
   process.exit(2);
 }
-const evidenceId = stdin.match(/"id": "(ev-[^"]+)"/)?.[1] || "ev-bad-id";
+const evidenceIds = [...stdin.matchAll(/"id": "(ev-[^"]+)"/g)].map((match) => match[1]);
+if (evidenceIds.length === 0) process.exit(2);
 const outputIndex = process.argv.indexOf("-o");
 const outputPath = process.argv[outputIndex + 1];
 fs.writeFileSync(outputPath, JSON.stringify({
@@ -1166,11 +1222,18 @@ fs.writeFileSync(outputPath, JSON.stringify({
     effort: "medium",
     risk: "moderate",
     files: [{ path: "src/checkout.ts", startLine: 1, endLine: 1 }, { path: "src/invoice.ts", startLine: 1, endLine: 1 }],
-    evidenceIds: [evidenceId],
+    evidenceIds,
     whyItMatters: "Spread validation creates drift risk.",
     likelyRootCause: "Fast implementation duplicated the same pricing concept.",
     suggestedDirection: "Create one pricing calculation module and route both callers through it.",
-    verification: ["npm test", "npm run typecheck"]
+    verification: ["npm test", "npm run typecheck"],
+    fixReadiness: {
+      minimumFixScope: "One pricing calculation module plus its callers.",
+      suggestedRegressionTest: "Add checkout and invoice regression coverage around pricing calculations.",
+      whyCurrentTestsMissIt: "Existing evidence points at structure and duplication, not behavior-level coverage.",
+      confidenceDowngradeReasons: []
+    },
+    supportingQuotes: []
   }],
   rejectedEvidenceIds: [],
   notes: ["fake synthesis complete"]
@@ -1208,14 +1271,38 @@ fs.writeFileSync(outputPath, JSON.stringify({
       expect(result.code).toBe(0);
       const payload = JSON.parse(result.stdout) as {
         data: {
-          synthesis: { requested: boolean; candidateCount: number; runtime: Record<string, unknown> };
-          candidates: Array<{ provenance: { source: string; model?: string; runtime?: Record<string, unknown> } }>;
+          runId: string;
+          synthesis: {
+            requested: boolean;
+            candidateCount: number;
+            acceptedCandidateCount?: number;
+            rejectedCandidateCount?: number;
+            attemptId?: string;
+            runtime: Record<string, unknown>;
+          };
+          candidates: Array<{
+            id: string;
+            provenance: {
+              source: string;
+              model?: string;
+              runtime?: Record<string, unknown>;
+              synthesisAttemptId?: string;
+              validationId?: string;
+            };
+            fixReadiness?: { minimumFixScope: string };
+          }>;
         };
       };
       expect(payload.data.synthesis.requested).toBe(true);
       expect(payload.data.synthesis.candidateCount).toBe(1);
+      expect(payload.data.synthesis.acceptedCandidateCount).toBe(1);
+      expect(payload.data.synthesis.rejectedCandidateCount).toBe(0);
+      expect(payload.data.synthesis.attemptId).toMatch(/^synthesis-/);
       expect(payload.data.candidates[0]?.provenance.source).toBe("model-synthesis");
       expect(payload.data.candidates[0]?.provenance.model).toBe("gpt-test");
+      expect(payload.data.candidates[0]?.provenance.synthesisAttemptId).toBe(payload.data.synthesis.attemptId);
+      expect(payload.data.candidates[0]?.provenance.validationId).toBe("validation-001");
+      expect(payload.data.candidates[0]?.fixReadiness?.minimumFixScope).toContain("pricing");
       expect(payload.data.synthesis.runtime["timeoutMs"]).toBe(5000);
       expect(payload.data.synthesis.runtime["retries"]).toBe(1);
       expect(payload.data.synthesis.runtime["rpm"]).toBe(7);
@@ -1224,6 +1311,26 @@ fs.writeFileSync(outputPath, JSON.stringify({
       expect(payload.data.synthesis.runtime["excerptBudget"]).toBe(0);
       expect(payload.data.synthesis.runtime["privacyMode"]).toBe("metadata");
       expect(payload.data.candidates[0]?.provenance.runtime?.["timeoutMs"]).toBe(5000);
+      const attempt = JSON.parse(
+        await readFile(path.join(repo, ".deepclean", "synthesis", `${payload.data.runId}.json`), "utf8"),
+      ) as { rawCandidateCount: number; acceptedCandidateCount: number; validations: Array<{ status: string; candidateId?: string }> };
+      expect(attempt.rawCandidateCount).toBe(1);
+      expect(attempt.acceptedCandidateCount).toBe(1);
+      expect(attempt.validations[0]?.status).toBe("accepted");
+      expect(attempt.validations[0]?.candidateId).toBe(payload.data.candidates[0]?.id);
+
+      const explain = await runCli(["explain", payload.data.candidates[0]?.id ?? "", "--json"], repo);
+      expect(explain.code).toBe(0);
+      const explainPayload = JSON.parse(explain.stdout) as {
+        data: {
+          validation?: { status: string };
+          synthesisAttempt?: { acceptedCandidateCount: number };
+          fixReadiness?: { suggestedRegressionTest: string };
+        };
+      };
+      expect(explainPayload.data.validation?.status).toBe("accepted");
+      expect(explainPayload.data.synthesisAttempt?.acceptedCandidateCount).toBe(1);
+      expect(explainPayload.data.fixReadiness?.suggestedRegressionTest).toContain("checkout");
     });
   });
 
@@ -1557,7 +1664,14 @@ fs.writeFileSync(outputPath, JSON.stringify({
     whyItMatters: "This should not persist.",
     likelyRootCause: "Unsupported evidence.",
     suggestedDirection: "Reject it.",
-    verification: ["npm test"]
+    verification: ["npm test"],
+    fixReadiness: {
+      minimumFixScope: "No fix should run.",
+      suggestedRegressionTest: "No regression test.",
+      whyCurrentTestsMissIt: "Unsupported evidence.",
+      confidenceDowngradeReasons: ["No cited evidence is present."]
+    },
+    supportingQuotes: []
   }],
   rejectedEvidenceIds: [],
   notes: []
@@ -1567,11 +1681,18 @@ fs.writeFileSync(outputPath, JSON.stringify({
       const result = await runCli(["scan", "--synthesize", "--json"], repo);
       expect(result.code).toBe(0);
       const payload = JSON.parse(result.stdout) as {
-        data: { synthesis: { candidateCount: number } };
+        data: { runId: string; synthesis: { candidateCount: number; rejectedCandidateCount?: number } };
         diagnostics: Array<{ code: string }>;
       };
       expect(payload.data.synthesis.candidateCount).toBe(0);
+      expect(payload.data.synthesis.rejectedCandidateCount).toBe(1);
       expect(payload.diagnostics.some((item) => item.code === "synthesis_candidate_without_evidence")).toBe(true);
+      const attempt = JSON.parse(
+        await readFile(path.join(repo, ".deepclean", "synthesis", `${payload.data.runId}.json`), "utf8"),
+      ) as { rejectedCandidateCount: number; validations: Array<{ status: string; diagnostics: Array<{ code: string }> }> };
+      expect(attempt.rejectedCandidateCount).toBe(1);
+      expect(attempt.validations[0]?.status).toBe("rejected");
+      expect(attempt.validations[0]?.diagnostics[0]?.code).toBe("synthesis_candidate_without_evidence");
     });
   });
 
@@ -1587,12 +1708,19 @@ fs.writeFileSync(outputPath, "not json");
       const result = await runCli(["scan", "--synthesize", "--json"], repo);
       expect(result.code).toBe(0);
       const payload = JSON.parse(result.stdout) as {
-        data: { candidateCount: number; synthesis: { candidateCount: number } };
+        data: { runId: string; candidateCount: number; synthesis: { candidateCount: number } };
         diagnostics: Array<{ code: string }>;
       };
       expect(payload.data.candidateCount).toBeGreaterThan(0);
       expect(payload.data.synthesis.candidateCount).toBe(0);
       expect(payload.diagnostics.some((item) => item.code === "codex_synthesis_error")).toBe(true);
+      const attempt = JSON.parse(
+        await readFile(path.join(repo, ".deepclean", "synthesis", `${payload.data.runId}.json`), "utf8"),
+      ) as { rawCandidateCount: number; acceptedCandidateCount: number; rejectedCandidateCount: number; diagnostics: Array<{ code: string }> };
+      expect(attempt.rawCandidateCount).toBe(0);
+      expect(attempt.acceptedCandidateCount).toBe(0);
+      expect(attempt.rejectedCandidateCount).toBe(0);
+      expect(attempt.diagnostics.some((item) => item.code === "codex_synthesis_error")).toBe(true);
     });
   });
 
@@ -1688,6 +1816,7 @@ async function writeOldRunArtifacts(repo: string): Promise<void> {
   await mkdir(path.join(state, "candidates"), { recursive: true });
   await mkdir(path.join(state, "clusters"), { recursive: true });
   await mkdir(path.join(state, "observations"), { recursive: true });
+  await mkdir(path.join(state, "synthesis"), { recursive: true });
   await mkdir(path.join(state, "reports"), { recursive: true });
   await mkdir(path.join(state, "plans"), { recursive: true });
   await mkdir(path.join(state, "handoffs"), { recursive: true });
@@ -1708,6 +1837,34 @@ async function writeOldRunArtifacts(repo: string): Promise<void> {
   for (const dir of ["evidence", "features", "candidates", "clusters", "observations"]) {
     await writeFile(path.join(state, dir, `${oldRunId}.json`), "[]\n", "utf8");
   }
+  await writeFile(path.join(state, "synthesis", `${oldRunId}.json`), `${JSON.stringify({
+    schemaVersion,
+    recordType: "synthesis_attempt",
+    id: "synthesis-20000101000000-old",
+    runId: oldRunId,
+    provider: "codex",
+    promptVersion: "codex-synthesis-v3-matt-pocock-reviewers",
+    promptBytes: 100,
+    runtime: { timeoutMs: 1000 },
+    reviewerIds: [],
+    evidenceManifest: {
+      evidenceCount: 0,
+      includedEvidenceIds: [],
+      includedFileRefs: [],
+      omittedEvidenceIds: [],
+      includeSource: false,
+      tokenBudget: 8000,
+      excerptBudget: 0,
+    },
+    rawCandidateCount: 0,
+    acceptedCandidateCount: 0,
+    rejectedCandidateCount: 0,
+    rejectedEvidenceIds: [],
+    notes: [],
+    validations: [],
+    diagnostics: [],
+    createdAt: "2000-01-01T00:00:00.000Z",
+  }, null, 2)}\n`, "utf8");
   await writeFile(path.join(state, "reports", "report-old.json"), `${JSON.stringify({
     schemaVersion,
     recordType: "report",
