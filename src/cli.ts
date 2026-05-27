@@ -159,7 +159,7 @@ interface ProviderRuntimeControls {
 }
 
 function printHelp(): void {
-  console.log(`deepclean: local cleanup reports and agent-ready plans
+  console.log(`deepclean: local structure reports and agent-ready plans
 
 Usage:
   deepclean <command> [args] [flags]

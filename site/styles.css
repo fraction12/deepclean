@@ -138,6 +138,10 @@ h1 {
   line-height: 0.94;
 }
 
+.title-line {
+  display: block;
+}
+
 h2 {
   max-width: 640px;
   margin-bottom: 0;

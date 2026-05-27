@@ -1,8 +1,8 @@
 # deepclean
 
-Local repo cleanup reports for codebases that work, but need structural cleanup.
+Local repo structure reports for fast-moving codebases.
 
-`deepclean` scans a repository, gathers local evidence, and writes reports and agent-ready plans under `.deepclean/`. It is built for the point where a project is functional, but the code needs clearer boundaries, less duplication, safer refactors, stronger tests, and better cleanup sequencing.
+`deepclean` scans a repository, gathers local evidence, and writes reports and agent-ready plans under `.deepclean/`. It is built for the point where a project is already working and the next step is clearer boundaries, less duplication, safer refactors, stronger tests, and better sequencing.
 
 Deepclean does not edit your source code.
 
