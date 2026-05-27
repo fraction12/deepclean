@@ -1,24 +1,25 @@
 import {
   AbsoluteFill,
   Easing,
+  Sequence,
   interpolate,
   spring,
   useCurrentFrame,
   useVideoConfig,
 } from "remotion";
+import type { ReactNode } from "react";
 
 const colors = {
   ink: "#F3F7F8",
   panel: "#070809",
   panelSoft: "#0E1317",
   panelLift: "#141B20",
-  line: "#26343C",
-  lineSoft: "rgba(202,219,225,0.14)",
+  line: "rgba(202,219,225,0.16)",
+  lineStrong: "rgba(202,219,225,0.28)",
   aqua: "#18D8F5",
   amber: "#FFB020",
   green: "#57D68D",
   violet: "#8A7DFF",
-  red: "#FF5A67",
   muted: "#92A1AA",
 };
 
@@ -37,94 +38,370 @@ const display = {
   letterSpacing: 0,
 } as const;
 
-const featureCards = [
-  {
-    name: "auth session flow",
-    files: "12 files",
-    tone: colors.aqua,
-    x: 112,
-    y: 150,
-    width: 310,
-    delay: 14,
-  },
-  {
-    name: "job lifecycle",
-    files: "9 files",
-    tone: colors.amber,
-    x: 502,
-    y: 112,
-    width: 330,
-    delay: 26,
-  },
-  {
-    name: "admin workspace",
-    files: "18 files",
-    tone: colors.violet,
-    x: 236,
-    y: 338,
-    width: 360,
-    delay: 38,
-  },
-  {
-    name: "agent handoff queue",
-    files: "7 files",
-    tone: colors.green,
-    x: 678,
-    y: 330,
-    width: 336,
-    delay: 50,
-  },
-];
-
-const repoNodes = [
-  { x: 92, y: 86, tone: colors.aqua },
-  { x: 238, y: 62, tone: colors.amber },
-  { x: 392, y: 96, tone: colors.green },
-  { x: 556, y: 70, tone: colors.violet },
-  { x: 726, y: 108, tone: colors.red },
-  { x: 850, y: 78, tone: colors.aqua },
-  { x: 160, y: 240, tone: colors.green },
-  { x: 360, y: 224, tone: colors.aqua },
-  { x: 528, y: 252, tone: colors.amber },
-  { x: 750, y: 232, tone: colors.violet },
-  { x: 926, y: 256, tone: colors.green },
-  { x: 116, y: 418, tone: colors.red },
-  { x: 306, y: 438, tone: colors.violet },
-  { x: 512, y: 412, tone: colors.aqua },
-  { x: 704, y: 454, tone: colors.green },
-  { x: 914, y: 426, tone: colors.amber },
-];
-
-const findings = [
-  ["01", "Job lifecycle boundary", "high impact", colors.aqua],
-  ["02", "API/type boundary", "agent-ready", colors.green],
-  ["03", "Admin workflow split", "small blast radius", colors.amber],
-] as const;
-
-const codeRows = [
-  "deepclean map --json",
-  "38 semantic features",
-  "7 focused findings",
-  "next: handoff candidate-001",
-];
-
 const clamp = {
   extrapolateLeft: "clamp",
   extrapolateRight: "clamp",
 } as const;
 
+const ease = Easing.out(Easing.cubic);
+
 const fade = (frame: number, start: number, end: number) =>
-  interpolate(frame, [start, end], [0, 1], clamp);
+  interpolate(frame, [start, end], [0, 1], { ...clamp, easing: ease });
+
+const backgroundNodes = [
+  { x: 180, y: 210, tone: colors.aqua },
+  { x: 376, y: 154, tone: colors.green },
+  { x: 620, y: 226, tone: colors.amber },
+  { x: 862, y: 164, tone: colors.violet },
+  { x: 1068, y: 240, tone: colors.aqua },
+  { x: 258, y: 568, tone: colors.violet },
+  { x: 486, y: 628, tone: colors.aqua },
+  { x: 766, y: 590, tone: colors.green },
+  { x: 1046, y: 646, tone: colors.amber },
+];
+
+const stageLabels = ["map", "rank", "handoff"];
+
+const Shell = ({
+  children,
+  label,
+  accent,
+}: {
+  children: ReactNode;
+  label: string;
+  accent: string;
+}) => {
+  const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
+  const entrance = spring({
+    frame: frame + 12,
+    fps,
+    config: { damping: 18, stiffness: 70 },
+  });
+
+  return (
+    <div
+      style={{
+        position: "absolute",
+        inset: 84,
+        border: `2px solid ${colors.line}`,
+        borderRadius: 34,
+        background: "rgba(7,8,9,0.84)",
+        boxShadow: "0 34px 110px rgba(0,0,0,0.42)",
+        opacity: 0.82 + entrance * 0.18,
+        transform: `translateY(${Math.round((1 - entrance) * 10)}px)`,
+        overflow: "hidden",
+      }}
+    >
+      <div
+        style={{
+          position: "absolute",
+          top: 34,
+          left: 38,
+          right: 38,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          ...mono,
+          color: colors.muted,
+          fontSize: 22,
+        }}
+      >
+        <span style={{ color: accent }}>{label}</span>
+        <span>local evidence only</span>
+      </div>
+      {children}
+    </div>
+  );
+};
+
+const MapState = () => {
+  const frame = useCurrentFrame();
+  const draw = fade(frame, 0, 42);
+  const pulse = interpolate(frame % 60, [0, 30, 60], [0.65, 1, 0.65], clamp);
+  const nodes = [
+    { label: "routes", x: 220, y: 238, tone: colors.aqua },
+    { label: "services", x: 498, y: 356, tone: colors.green },
+    { label: "tests", x: 776, y: 238, tone: colors.amber },
+  ];
+
+  return (
+    <Shell label="deepclean map" accent={colors.aqua}>
+      <svg
+        width="100%"
+        height="100%"
+        viewBox="0 0 1272 732"
+        style={{ position: "absolute", inset: 0 }}
+      >
+        <path
+          d="M636 278 C510 214 394 214 286 278"
+          stroke={colors.lineStrong}
+          strokeWidth="3"
+          fill="none"
+          strokeDasharray="480"
+          strokeDashoffset={480 - draw * 480}
+        />
+        <path
+          d="M636 278 C724 218 840 218 986 278"
+          stroke={colors.lineStrong}
+          strokeWidth="3"
+          fill="none"
+          strokeDasharray="480"
+          strokeDashoffset={480 - draw * 480}
+        />
+        <path
+          d="M636 278 C620 344 604 418 636 490"
+          stroke={colors.lineStrong}
+          strokeWidth="3"
+          fill="none"
+          strokeDasharray="360"
+          strokeDashoffset={360 - draw * 360}
+        />
+      </svg>
+
+      <div
+        style={{
+          position: "absolute",
+          left: 492,
+          top: 232,
+          width: 288,
+          height: 108,
+          border: `2px solid ${colors.aqua}`,
+          borderRadius: 24,
+          background: colors.panelLift,
+          boxShadow: `0 0 ${24 + pulse * 26}px rgba(24,216,245,0.24)`,
+          display: "grid",
+          placeItems: "center",
+        }}
+      >
+        <div style={{ textAlign: "center" }}>
+          <div style={{ ...mono, color: colors.aqua, fontSize: 19 }}>source graph</div>
+          <div style={{ ...display, fontSize: 39, fontWeight: 700 }}>38 features</div>
+        </div>
+      </div>
+
+      {nodes.map((node, index) => {
+              const enter = fade(frame, 4 + index * 7, 18 + index * 7);
+        return (
+          <div
+            key={node.label}
+            style={{
+              position: "absolute",
+              left: node.x,
+              top: node.y,
+              width: 204,
+              height: 86,
+              border: `2px solid ${node.tone}`,
+              borderRadius: 20,
+              background: "rgba(14,19,23,0.92)",
+              opacity: enter,
+              transform: `translateY(${Math.round((1 - enter) * 22)}px)`,
+              display: "grid",
+              placeItems: "center",
+              ...sans,
+              fontSize: 27,
+              fontWeight: 800,
+            }}
+          >
+            {node.label}
+          </div>
+        );
+      })}
+    </Shell>
+  );
+};
+
+const RankState = () => {
+  const frame = useCurrentFrame();
+  const rows = [
+    ["01", "job lifecycle boundary", "high impact", colors.aqua],
+    ["02", "API/type boundary", "agent-ready", colors.green],
+    ["03", "admin workflow split", "small blast radius", colors.amber],
+  ] as const;
+
+  return (
+    <Shell label="deepclean report" accent={colors.green}>
+      <div
+        style={{
+          position: "absolute",
+          left: 132,
+          top: 162,
+          width: 438,
+        }}
+      >
+        <div style={{ ...display, fontSize: 74, lineHeight: 0.93, fontWeight: 700 }}>
+          Ranked work, not noise.
+        </div>
+        <p style={{ ...sans, color: colors.muted, fontSize: 25, lineHeight: 1.35 }}>
+          Evidence is grouped into the next few changes an agent can actually hold.
+        </p>
+      </div>
+      <div
+        style={{
+          position: "absolute",
+          right: 130,
+          top: 138,
+          width: 520,
+          display: "grid",
+          gap: 18,
+        }}
+      >
+        {rows.map(([rank, title, meta, tone], index) => {
+          const enter = fade(frame, 10 + index * 10, 32 + index * 10);
+          return (
+            <div
+              key={title}
+              style={{
+                minHeight: 104,
+                border: `2px solid ${colors.line}`,
+                borderRadius: 22,
+                background: colors.panelSoft,
+                display: "grid",
+                gridTemplateColumns: "68px 1fr",
+                gap: 18,
+                alignItems: "center",
+                padding: "20px 22px",
+                opacity: enter,
+                transform: `translateX(${Math.round((1 - enter) * 32)}px)`,
+              }}
+            >
+              <span style={{ ...mono, color: tone, fontSize: 31, fontWeight: 900 }}>
+                {rank}
+              </span>
+              <span>
+                <span style={{ ...sans, display: "block", fontSize: 27, fontWeight: 900 }}>
+                  {title}
+                </span>
+                <span style={{ ...mono, color: tone, fontSize: 18 }}>{meta}</span>
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </Shell>
+  );
+};
+
+const HandoffState = () => {
+  const frame = useCurrentFrame();
+  const rows = [
+    "$ deepclean next",
+    "candidate-001",
+    "plan + evidence + verification",
+  ];
+  const progress = interpolate(frame, [16, 72], [0.18, 0.92], clamp);
+
+  return (
+    <Shell label="agent handoff" accent={colors.amber}>
+      <div
+        style={{
+          position: "absolute",
+          left: 148,
+          top: 154,
+          width: 976,
+          minHeight: 384,
+          border: `2px solid ${colors.lineStrong}`,
+          borderRadius: 28,
+          background: colors.panelSoft,
+          overflow: "hidden",
+        }}
+      >
+        <div
+          style={{
+            position: "absolute",
+            left: 0,
+            top: 0,
+            bottom: 0,
+            width: `${progress * 100}%`,
+            background: `linear-gradient(90deg, ${colors.aqua}, ${colors.green}, ${colors.amber})`,
+            opacity: 0.18,
+          }}
+        />
+        <div style={{ position: "relative", padding: 42 }}>
+          <div style={{ ...mono, color: colors.amber, fontSize: 20, marginBottom: 16 }}>
+            .deepclean/handoffs/candidate-001.md
+          </div>
+          <div style={{ ...display, fontSize: 64, lineHeight: 0.96, fontWeight: 700 }}>
+            One bounded change, ready for review.
+          </div>
+          <div style={{ display: "grid", gap: 12, marginTop: 34 }}>
+            {rows.map((row, index) => {
+              const enter = fade(frame, 16 + index * 9, 34 + index * 9);
+              return (
+                <div
+                  key={row}
+                  style={{
+                    ...mono,
+                    color: index === 0 ? colors.aqua : colors.ink,
+                    fontSize: 26,
+                    opacity: enter,
+                    transform: `translateY(${Math.round((1 - enter) * 18)}px)`,
+                  }}
+                >
+                  {row}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    </Shell>
+  );
+};
+
+const AmbientGraph = () => {
+  const frame = useCurrentFrame();
+  const drift = interpolate(frame, [0, 180], [0, 1], clamp);
+  const pulse = interpolate(frame % 90, [0, 45, 90], [0.52, 1, 0.52], clamp);
+
+  return (
+    <>
+      <svg
+        width="100%"
+        height="100%"
+        viewBox="0 0 1440 900"
+        style={{ position: "absolute", inset: 0, opacity: 0.62 }}
+      >
+        {backgroundNodes.slice(0, -1).map((node, index) => {
+          const next = backgroundNodes[index + 1];
+          return (
+            <line
+              key={`${node.x}-${next.x}`}
+              x1={node.x + drift * 18}
+              y1={node.y}
+              x2={next.x - drift * 12}
+              y2={next.y}
+              stroke={colors.line}
+              strokeWidth="2"
+            />
+          );
+        })}
+      </svg>
+      {backgroundNodes.map((node, index) => (
+        <div
+          key={`${node.x}-${node.y}`}
+          style={{
+            position: "absolute",
+            left: node.x + Math.sin((frame + index * 13) / 38) * 10,
+            top: node.y + Math.cos((frame + index * 9) / 44) * 8,
+            width: 11,
+            height: 11,
+            borderRadius: 99,
+            background: node.tone,
+            opacity: 0.35 + pulse * 0.22,
+            boxShadow: `0 0 ${16 + pulse * 20}px ${node.tone}`,
+          }}
+        />
+      ))}
+    </>
+  );
+};
 
 export const HeroTerminal = () => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
-  const intro = spring({ frame, fps, config: { damping: 18, stiffness: 80 } });
-  const scan = interpolate(frame, [18, 118], [0, 1], clamp);
-  const report = fade(frame, 74, 118);
-  const handoff = fade(frame, 112, 154);
-  const loopGlow = interpolate(frame % 90, [0, 45, 90], [0.5, 1, 0.5]);
-  const sweepX = interpolate(frame, [16, 118], [68, 1020], {
+  const intro = spring({ frame, fps, config: { damping: 20, stiffness: 76 } });
+  const sweepY = interpolate(frame, [0, 180], [-140, 900], {
     ...clamp,
     easing: Easing.inOut(Easing.cubic),
   });
@@ -136,33 +413,34 @@ export const HeroTerminal = () => {
           position: "absolute",
           inset: 0,
           background:
-            "linear-gradient(135deg, rgba(24,216,245,0.1), transparent 28%, rgba(138,125,255,0.08), transparent 58%, rgba(255,176,32,0.08))",
+            "linear-gradient(rgba(255,255,255,0.028) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.028) 1px, transparent 1px)",
+          backgroundSize: "72px 72px",
+        }}
+      />
+      <AmbientGraph />
+      <div
+        style={{
+          position: "absolute",
+          left: 0,
+          right: 0,
+          top: sweepY,
+          height: 120,
+          background:
+            "linear-gradient(180deg, transparent, rgba(24,216,245,0.16), transparent)",
+          opacity: 0.58,
         }}
       />
       <div
         style={{
           position: "absolute",
           inset: 34,
-          border: `2px solid ${colors.lineSoft}`,
+          border: `2px solid ${colors.lineStrong}`,
           borderRadius: 36,
-          background:
-            "linear-gradient(180deg, rgba(14,19,23,0.88), rgba(7,8,9,0.94))",
-          boxShadow: "0 34px 120px rgba(0,0,0,0.54)",
+          background: "rgba(7,8,9,0.58)",
           overflow: "hidden",
-          transform: `scale(${0.982 + intro * 0.018})`,
+          transform: `scale(${0.984 + intro * 0.016})`,
         }}
       >
-        <div
-          style={{
-            position: "absolute",
-            inset: 0,
-            background:
-              "linear-gradient(rgba(255,255,255,0.035) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.035) 1px, transparent 1px)",
-            backgroundSize: "58px 58px",
-            opacity: 0.42,
-          }}
-        />
-
         <div
           style={{
             position: "absolute",
@@ -170,276 +448,43 @@ export const HeroTerminal = () => {
             right: 42,
             top: 32,
             display: "flex",
-            alignItems: "center",
             justifyContent: "space-between",
             ...mono,
+            color: colors.muted,
+            fontSize: 21,
           }}
         >
-          <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-            <span
-              style={{
-                width: 12,
-                height: 12,
-                borderRadius: 99,
-                background: colors.green,
-                boxShadow: `0 0 ${24 * loopGlow}px ${colors.green}`,
-              }}
-            />
-            <span style={{ color: colors.muted, fontSize: 22 }}>local repo scan</span>
-          </div>
-          <div style={{ color: colors.aqua, fontSize: 22 }}>no source edits</div>
+          <span>deepclean</span>
+          <span>{stageLabels[Math.min(2, Math.floor(frame / 60))]}</span>
         </div>
-
+        <Sequence from={0} durationInFrames={72}>
+          <MapState />
+        </Sequence>
+        <Sequence from={58} durationInFrames={72}>
+          <RankState />
+        </Sequence>
+        <Sequence from={116} durationInFrames={64}>
+          <HandoffState />
+        </Sequence>
         <div
           style={{
             position: "absolute",
-            left: 52,
-            top: 92,
-            width: 1038,
-            height: 560,
-            border: `2px solid ${colors.lineSoft}`,
-            borderRadius: 28,
-            background: "rgba(7,8,9,0.64)",
+            left: 70,
+            right: 70,
+            bottom: 38,
+            height: 3,
+            borderRadius: 999,
+            background: colors.line,
             overflow: "hidden",
           }}
         >
           <div
             style={{
-              position: "absolute",
-              left: sweepX - 130,
-              top: 0,
-              bottom: 0,
-              width: 260,
-              background:
-                "linear-gradient(90deg, transparent, rgba(24,216,245,0.2), transparent)",
-              opacity: 0.85,
-            }}
-          />
-          <div
-            style={{
-              position: "absolute",
-              left: sweepX,
-              top: 0,
-              bottom: 0,
-              width: 5,
-              background: colors.aqua,
-              boxShadow: `0 0 ${44 + 18 * loopGlow}px ${colors.aqua}`,
-            }}
-          />
-
-          {repoNodes.map((node, index) => {
-            const nodeIn = 0.42 + fade(frame, index * 2, 16 + index * 2) * 0.58;
-            return (
-              <div
-                key={`${node.x}-${node.y}`}
-                style={{
-                  position: "absolute",
-                  left: node.x,
-                  top: node.y,
-                  width: 92,
-                  height: 38,
-                  border: `2px solid ${node.tone}`,
-                  borderRadius: 10,
-                  background: "rgba(14,19,23,0.88)",
-                  boxShadow: `0 0 ${18 * loopGlow}px ${node.tone}55`,
-                  opacity: nodeIn,
-                  transform: `translateY(${Math.round((1 - nodeIn) * 12)}px)`,
-                }}
-              />
-            );
-          })}
-
-          {featureCards.map((card) => {
-            const cardSpring = spring({
-              frame: frame - card.delay,
-              fps,
-              config: { damping: 16, stiffness: 92 },
-            });
-            const cardIn = 0.34 + cardSpring * 0.66;
-            return (
-              <div
-                key={card.name}
-                style={{
-                  position: "absolute",
-                  left: card.x,
-                  top: card.y,
-                  width: card.width,
-                  minHeight: 128,
-                  border: `2px solid ${card.tone}`,
-                  borderRadius: 22,
-                  background:
-                    "linear-gradient(180deg, rgba(20,27,32,0.96), rgba(8,10,12,0.96))",
-                  boxShadow: `0 22px 70px ${card.tone}22`,
-                  opacity: Math.min(1, cardIn),
-                  transform: `translateY(${Math.round((1 - cardIn) * 36)}px) scale(${
-                    0.94 + cardIn * 0.06
-                  })`,
-                  padding: 22,
-                }}
-              >
-                <div style={{ ...mono, color: card.tone, fontSize: 19, marginBottom: 12 }}>
-                  semantic feature
-                </div>
-                <div
-                  style={{
-                    ...display,
-                    fontSize: 31,
-                    fontWeight: 700,
-                    lineHeight: 1,
-                    marginBottom: 15,
-                  }}
-                >
-                  {card.name}
-                </div>
-                <div style={{ display: "flex", gap: 8 }}>
-                  <span
-                    style={{
-                      ...mono,
-                      border: `1px solid ${colors.line}`,
-                      borderRadius: 999,
-                      color: colors.muted,
-                      fontSize: 17,
-                      padding: "5px 10px",
-                    }}
-                  >
-                    {card.files}
-                  </span>
-                  <span
-                    style={{
-                      ...mono,
-                      border: `1px solid ${colors.line}`,
-                      borderRadius: 999,
-                      color: colors.muted,
-                      fontSize: 17,
-                      padding: "5px 10px",
-                    }}
-                  >
-                    owner-ready
-                  </span>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-
-        <div
-          style={{
-            position: "absolute",
-            right: 52,
-            top: 124,
-            width: 390,
-            minHeight: 436,
-            border: `2px solid rgba(243,247,248,${0.12 + report * 0.16})`,
-            borderRadius: 28,
-            background: `rgba(14,19,23,${0.44 + report * 0.5})`,
-            boxShadow: `0 30px 90px rgba(0,0,0,${0.26 + report * 0.22})`,
-            opacity: 0.38 + report * 0.62,
-            transform: `translateX(${Math.round((1 - report) * 44)}px)`,
-            padding: 28,
-          }}
-        >
-          <div style={{ ...mono, color: colors.aqua, fontSize: 18, marginBottom: 18 }}>
-            .deepclean/report.md
-          </div>
-          <div style={{ ...display, fontSize: 42, lineHeight: 0.96, fontWeight: 700 }}>
-            Work queue, ranked.
-          </div>
-          <div style={{ display: "grid", gap: 12, marginTop: 24 }}>
-            {findings.map(([rank, title, meta, tone], index) => {
-              const rowIn = fade(frame, 94 + index * 12, 118 + index * 12);
-              return (
-                <div
-                  key={title}
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "42px 1fr",
-                    gap: 13,
-                    alignItems: "center",
-                    minHeight: 76,
-                    border: `2px solid ${colors.lineSoft}`,
-                    borderRadius: 16,
-                    background: colors.panelSoft,
-                    padding: "11px 13px",
-                    opacity: rowIn,
-                    transform: `translateY(${Math.round((1 - rowIn) * 18)}px)`,
-                  }}
-                >
-                  <div style={{ ...mono, color: tone, fontSize: 22, fontWeight: 800 }}>
-                    {rank}
-                  </div>
-                  <div>
-                    <div style={{ ...sans, fontSize: 22, fontWeight: 800 }}>{title}</div>
-                    <div style={{ ...mono, color: tone, fontSize: 16 }}>{meta}</div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-
-        <div
-          style={{
-            position: "absolute",
-            left: 82,
-            right: 82,
-            bottom: 42,
-            height: 146,
-            border: `2px solid ${colors.lineSoft}`,
-            borderRadius: 24,
-            background: "rgba(7,8,9,0.82)",
-            overflow: "hidden",
-          }}
-        >
-          <div
-            style={{
-              position: "absolute",
-              left: 0,
-              top: 0,
-              bottom: 0,
-              width: `${Math.round((0.34 + handoff * 0.66) * 100)}%`,
+              width: `${interpolate(frame, [0, 179], [18, 100], clamp)}%`,
+              height: "100%",
               background: `linear-gradient(90deg, ${colors.aqua}, ${colors.green}, ${colors.amber})`,
-              opacity: 0.24,
             }}
           />
-          <div
-            style={{
-              position: "absolute",
-              inset: 24,
-              display: "grid",
-              gridTemplateColumns: "1fr 1fr",
-              gap: 24,
-              alignItems: "center",
-            }}
-          >
-            <div>
-              <div style={{ ...mono, color: colors.green, fontSize: 18, marginBottom: 6 }}>
-                agent handoff packet
-              </div>
-              <div style={{ ...display, fontSize: 32, fontWeight: 700, lineHeight: 1.04 }}>
-                Focused improvement ready to ship.
-              </div>
-            </div>
-            <div style={{ display: "grid", gap: 7 }}>
-              {codeRows.map((row, index) => {
-                const rowIn = fade(frame, 116 + index * 8, 134 + index * 8);
-                return (
-                  <div
-                    key={row}
-                    style={{
-                      ...mono,
-                      color: index === 0 ? colors.aqua : colors.ink,
-                      fontSize: 20,
-                      opacity: rowIn,
-                      transform: `translateX(${Math.round((1 - rowIn) * 22)}px)`,
-                    }}
-                  >
-                    <span style={{ color: colors.muted }}>$ </span>
-                    {row}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
         </div>
       </div>
     </AbsoluteFill>

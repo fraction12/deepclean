@@ -44,7 +44,7 @@
     "spec:validate": "node scripts/spec-validate.mjs",
     "site:build": "node scripts/build-site.mjs",
     "site:preview": "node scripts/preview-site.mjs",
-    "site:render": "remotion render site/remotion/index.ts HeroTerminal site/assets/hero-terminal-loop.webm --codec=vp8 --overwrite && remotion still site/remotion/index.ts HeroTerminal site/assets/hero-terminal-poster.png --frame=142 --overwrite",
+    "site:render": "remotion render site/remotion/index.ts HeroTerminal site/assets/hero-terminal-loop.webm --codec=vp8 --overwrite && remotion still site/remotion/index.ts HeroTerminal site/assets/hero-terminal-poster.png --frame=165 --overwrite",
     "sync:matt-skills": "node scripts/sync-matt-pocock-skills.mjs",
     "smoke:build-clean": "node scripts/build-clean-smoke.mjs",
     "test": "vitest run --exclude \"dist/**\"",
@@ -55,7 +55,7 @@
   },
   "dependencies": {
     "typescript": "^6.0.3",
-    "zod": "^4.4.3"
+    "zod": "4.3.6"
   },
   "devDependencies": {
     "@remotion/cli": "^4.0.467",
