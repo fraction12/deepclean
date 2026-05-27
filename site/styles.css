@@ -31,20 +31,6 @@ body {
   overflow-x: hidden;
 }
 
-body::before {
-  position: fixed;
-  inset: 0;
-  z-index: -1;
-  content: "";
-  background:
-    linear-gradient(rgba(255, 255, 255, 0.025) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.025) 1px, transparent 1px);
-  background-size: 64px 64px;
-  background-position: 0 0;
-  mask-image: linear-gradient(180deg, black 0%, transparent 72%);
-  animation: grid-drift 28s linear infinite;
-}
-
 a {
   color: inherit;
   text-decoration: none;
@@ -137,7 +123,7 @@ main,
 
 .hero-background {
   position: absolute;
-  inset: 12px -6vw 0;
+  inset: 0 -9vw -10px;
   z-index: -2;
   overflow: hidden;
   pointer-events: none;
@@ -147,35 +133,43 @@ main,
 .hero-background::after {
   position: absolute;
   content: "";
-  opacity: 0.56;
+  pointer-events: none;
 }
 
 .hero-background::before {
-  inset: 8% 4% 16%;
-  background:
-    linear-gradient(115deg, transparent 0 36%, rgba(24, 216, 245, 0.16) 36.2%, transparent 36.7%),
-    linear-gradient(26deg, transparent 0 41%, rgba(255, 176, 32, 0.12) 41.2%, transparent 41.7%),
-    linear-gradient(151deg, transparent 0 52%, rgba(87, 214, 141, 0.12) 52.2%, transparent 52.7%);
-  animation: graph-drift 18s ease-in-out infinite alternate;
+  top: 12%;
+  right: -4%;
+  width: min(680px, 58vw);
+  height: min(680px, 58vw);
+  border: 28px solid rgba(24, 216, 245, 0.16);
+  border-right-color: transparent;
+  border-bottom-color: rgba(87, 214, 141, 0.1);
+  border-radius: 50%;
+  filter: drop-shadow(0 0 44px rgba(24, 216, 245, 0.08));
+  transform: rotate(-26deg);
+  animation: signal-orbit 16s ease-in-out infinite alternate;
 }
 
 .hero-background::after {
-  right: 8%;
-  bottom: 16%;
-  width: min(520px, 52vw);
-  height: 1px;
-  background: linear-gradient(90deg, transparent, rgba(243, 247, 248, 0.28), transparent);
-  animation: line-breathe 6.2s ease-in-out infinite;
+  left: 3%;
+  bottom: 4%;
+  width: min(740px, 62vw);
+  height: 18px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, transparent, rgba(255, 176, 32, 0.12), rgba(87, 214, 141, 0.1), transparent);
+  transform: rotate(-18deg);
+  animation: ribbon-breathe 9s ease-in-out infinite;
 }
 
 .hero-background span {
   position: absolute;
-  width: 9px;
-  height: 9px;
-  border: 1px solid rgba(243, 247, 248, 0.38);
-  border-radius: 2px;
-  background: rgba(7, 8, 9, 0.88);
-  animation: node-drift 10s ease-in-out infinite alternate;
+  width: 7px;
+  height: 7px;
+  border: 1px solid rgba(243, 247, 248, 0.22);
+  border-radius: 50%;
+  background: rgba(7, 8, 9, 0.72);
+  opacity: 0.58;
+  animation: node-drift 12s ease-in-out infinite alternate;
 }
 
 .hero-background span:nth-child(1) {
@@ -324,12 +318,12 @@ h3 {
 
 .hero-visual::before {
   position: absolute;
-  inset: 14px;
+  inset: 10px;
   z-index: 0;
-  border: 1px solid rgba(87, 214, 141, 0.18);
-  border-radius: 12px;
+  border: 1px solid rgba(87, 214, 141, 0.12);
+  border-radius: 16px;
   content: "";
-  transform: translate(18px, 18px);
+  transform: translate(14px, 14px);
 }
 
 .hero-visual::after {
@@ -351,12 +345,12 @@ h3 {
   display: block;
   width: 100%;
   aspect-ratio: 16 / 10;
-  border: 1px solid rgba(24, 216, 245, 0.32);
-  border-radius: 12px;
+  border: 1px solid rgba(24, 216, 245, 0.24);
+  border-radius: 16px;
   background: var(--panel);
-  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.48);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.38);
   object-fit: cover;
-  animation: demo-float 7s ease-in-out infinite;
+  animation: demo-float 8s ease-in-out infinite;
 }
 
 .hero-poster {
@@ -455,7 +449,7 @@ h3 {
 
 pre {
   position: relative;
-  overflow-x: auto;
+  overflow: hidden;
   margin: 0;
   border: 1px solid rgba(24, 216, 245, 0.28);
   border-radius: 10px;
@@ -489,6 +483,8 @@ pre::after {
 
 pre code {
   font-size: 0.94rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .site-footer {
@@ -591,7 +587,8 @@ pre code {
   }
 
   h1 {
-    font-size: clamp(2.55rem, 12vw, 3.25rem);
+    font-size: clamp(2.3rem, 10.8vw, 2.95rem);
+    line-height: 0.98;
   }
 
   h2 {
@@ -615,6 +612,45 @@ pre code {
     padding: 0 10px;
     font-size: 0.68rem;
     word-break: break-word;
+  }
+
+  .hero {
+    padding-top: 26px;
+  }
+
+  .hero-lede {
+    margin-bottom: 22px;
+    font-size: 1rem;
+  }
+
+  .hero-note {
+    font-size: 0.88rem;
+  }
+
+  .hero-background {
+    inset: 0 -52px -14px;
+  }
+
+  .hero-background::before {
+    top: 9%;
+    right: -180px;
+    width: 390px;
+    height: 390px;
+    border-width: 18px;
+  }
+
+  .hero-background span {
+    opacity: 0.32;
+  }
+
+  .hero-video,
+  .hero-poster {
+    border-radius: 12px;
+    animation-duration: 10s;
+  }
+
+  pre {
+    padding: 22px 18px 38px;
   }
 
   .workflow-list article {
@@ -641,12 +677,6 @@ pre code {
   }
 }
 
-@keyframes grid-drift {
-  to {
-    background-position: 64px 64px;
-  }
-}
-
 @keyframes hero-scan {
   0%,
   48% {
@@ -668,26 +698,26 @@ pre code {
   }
 }
 
-@keyframes graph-drift {
+@keyframes signal-orbit {
   from {
-    transform: translate3d(-10px, 8px, 0);
+    transform: rotate(-31deg) translate3d(-8px, 6px, 0);
   }
 
   to {
-    transform: translate3d(16px, -10px, 0);
+    transform: rotate(-19deg) translate3d(14px, -9px, 0);
   }
 }
 
-@keyframes line-breathe {
+@keyframes ribbon-breathe {
   0%,
   100% {
-    transform: scaleX(0.82);
-    opacity: 0.24;
+    transform: rotate(-18deg) scaleX(0.82);
+    opacity: 0.28;
   }
 
   50% {
-    transform: scaleX(1);
-    opacity: 0.56;
+    transform: rotate(-15deg) scaleX(1);
+    opacity: 0.62;
   }
 }
 

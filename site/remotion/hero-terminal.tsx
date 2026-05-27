@@ -49,15 +49,11 @@ const fade = (frame: number, start: number, end: number) =>
   interpolate(frame, [start, end], [0, 1], { ...clamp, easing: ease });
 
 const backgroundNodes = [
-  { x: 180, y: 210, tone: colors.aqua },
-  { x: 376, y: 154, tone: colors.green },
-  { x: 620, y: 226, tone: colors.amber },
-  { x: 862, y: 164, tone: colors.violet },
-  { x: 1068, y: 240, tone: colors.aqua },
-  { x: 258, y: 568, tone: colors.violet },
-  { x: 486, y: 628, tone: colors.aqua },
-  { x: 766, y: 590, tone: colors.green },
-  { x: 1046, y: 646, tone: colors.amber },
+  { x: 214, y: 260, tone: colors.aqua },
+  { x: 520, y: 188, tone: colors.green },
+  { x: 884, y: 262, tone: colors.amber },
+  { x: 1128, y: 556, tone: colors.aqua },
+  { x: 376, y: 648, tone: colors.violet },
 ];
 
 const stageLabels = ["map", "rank", "handoff"];
@@ -83,11 +79,11 @@ const Shell = ({
     <div
       style={{
         position: "absolute",
-        inset: 84,
+        inset: 62,
         border: `2px solid ${colors.line}`,
-        borderRadius: 34,
-        background: "rgba(7,8,9,0.84)",
-        boxShadow: "0 34px 110px rgba(0,0,0,0.42)",
+        borderRadius: 38,
+        background: "rgba(7,8,9,0.82)",
+        boxShadow: "0 28px 92px rgba(0,0,0,0.34)",
         opacity: 0.82 + entrance * 0.18,
         transform: `translateY(${Math.round((1 - entrance) * 10)}px)`,
         overflow: "hidden",
@@ -96,9 +92,9 @@ const Shell = ({
       <div
         style={{
           position: "absolute",
-          top: 34,
-          left: 38,
-          right: 38,
+          top: 30,
+          left: 36,
+          right: 36,
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
@@ -181,7 +177,7 @@ const MapState = () => {
       </div>
 
       {nodes.map((node, index) => {
-              const enter = fade(frame, 4 + index * 7, 18 + index * 7);
+        const enter = fade(frame, 4 + index * 7, 18 + index * 7);
         return (
           <div
             key={node.label}
@@ -224,12 +220,12 @@ const RankState = () => {
       <div
         style={{
           position: "absolute",
-          left: 132,
-          top: 162,
-          width: 438,
+          left: 116,
+          top: 148,
+          width: 488,
         }}
       >
-        <div style={{ ...display, fontSize: 74, lineHeight: 0.93, fontWeight: 700 }}>
+        <div style={{ ...display, fontSize: 82, lineHeight: 0.92, fontWeight: 700 }}>
           Ranked work, not noise.
         </div>
         <p style={{ ...sans, color: colors.muted, fontSize: 25, lineHeight: 1.35 }}>
@@ -239,9 +235,9 @@ const RankState = () => {
       <div
         style={{
           position: "absolute",
-          right: 130,
-          top: 138,
-          width: 520,
+          right: 110,
+          top: 128,
+          width: 560,
           display: "grid",
           gap: 18,
         }}
@@ -252,7 +248,7 @@ const RankState = () => {
             <div
               key={title}
               style={{
-                minHeight: 104,
+                minHeight: 112,
                 border: `2px solid ${colors.line}`,
                 borderRadius: 22,
                 background: colors.panelSoft,
@@ -296,10 +292,10 @@ const HandoffState = () => {
       <div
         style={{
           position: "absolute",
-          left: 148,
-          top: 154,
-          width: 976,
-          minHeight: 384,
+          left: 116,
+          top: 134,
+          width: 1040,
+          minHeight: 430,
           border: `2px solid ${colors.lineStrong}`,
           borderRadius: 28,
           background: colors.panelSoft,
@@ -321,7 +317,7 @@ const HandoffState = () => {
           <div style={{ ...mono, color: colors.amber, fontSize: 20, marginBottom: 16 }}>
             .deepclean/handoffs/candidate-001.md
           </div>
-          <div style={{ ...display, fontSize: 64, lineHeight: 0.96, fontWeight: 700 }}>
+          <div style={{ ...display, fontSize: 74, lineHeight: 0.95, fontWeight: 700 }}>
             One bounded change, ready for review.
           </div>
           <div style={{ display: "grid", gap: 12, marginTop: 34 }}>
@@ -333,7 +329,7 @@ const HandoffState = () => {
                   style={{
                     ...mono,
                     color: index === 0 ? colors.aqua : colors.ink,
-                    fontSize: 26,
+                    fontSize: 29,
                     opacity: enter,
                     transform: `translateY(${Math.round((1 - enter) * 18)}px)`,
                   }}
@@ -351,7 +347,10 @@ const HandoffState = () => {
 
 const AmbientGraph = () => {
   const frame = useCurrentFrame();
-  const drift = interpolate(frame, [0, 180], [0, 1], clamp);
+  const drift = interpolate(frame, [0, 180], [0, 1], {
+    ...clamp,
+    easing: Easing.inOut(Easing.cubic),
+  });
   const pulse = interpolate(frame % 90, [0, 45, 90], [0.52, 1, 0.52], clamp);
 
   return (
@@ -360,8 +359,34 @@ const AmbientGraph = () => {
         width="100%"
         height="100%"
         viewBox="0 0 1440 900"
-        style={{ position: "absolute", inset: 0, opacity: 0.62 }}
+        style={{ position: "absolute", inset: 0 }}
       >
+        <defs>
+          <linearGradient id="signalRibbon" x1="0" x2="1" y1="0" y2="1">
+            <stop offset="0%" stopColor={colors.aqua} stopOpacity="0" />
+            <stop offset="44%" stopColor={colors.aqua} stopOpacity="0.38" />
+            <stop offset="72%" stopColor={colors.green} stopOpacity="0.22" />
+            <stop offset="100%" stopColor={colors.amber} stopOpacity="0" />
+          </linearGradient>
+        </defs>
+        <path
+          d="M258 588 C436 404 610 528 744 300 C880 68 1098 62 1230 236"
+          stroke="url(#signalRibbon)"
+          strokeWidth="34"
+          strokeLinecap="round"
+          fill="none"
+          opacity={0.58 + pulse * 0.18}
+          transform={`translate(${Math.sin(drift * Math.PI) * 18} ${Math.cos(drift * Math.PI) * 10})`}
+        />
+        <path
+          d="M222 664 C422 552 602 716 826 540 C962 433 1056 424 1216 474"
+          stroke={colors.amber}
+          strokeWidth="8"
+          strokeLinecap="round"
+          fill="none"
+          opacity={0.1 + pulse * 0.08}
+          transform={`translate(${-Math.sin(drift * Math.PI) * 12} ${Math.cos(drift * Math.PI) * 8})`}
+        />
         {backgroundNodes.slice(0, -1).map((node, index) => {
           const next = backgroundNodes[index + 1];
           return (
@@ -373,6 +398,7 @@ const AmbientGraph = () => {
               y2={next.y}
               stroke={colors.line}
               strokeWidth="2"
+              opacity="0.52"
             />
           );
         })}
@@ -384,12 +410,12 @@ const AmbientGraph = () => {
             position: "absolute",
             left: node.x + Math.sin((frame + index * 13) / 38) * 10,
             top: node.y + Math.cos((frame + index * 9) / 44) * 8,
-            width: 11,
-            height: 11,
+            width: 9,
+            height: 9,
             borderRadius: 99,
             background: node.tone,
-            opacity: 0.35 + pulse * 0.22,
-            boxShadow: `0 0 ${16 + pulse * 20}px ${node.tone}`,
+            opacity: 0.24 + pulse * 0.18,
+            boxShadow: `0 0 ${12 + pulse * 16}px ${node.tone}`,
           }}
         />
       ))}
@@ -408,15 +434,6 @@ export const HeroTerminal = () => {
 
   return (
     <AbsoluteFill style={{ background: colors.panel, color: colors.ink }}>
-      <div
-        style={{
-          position: "absolute",
-          inset: 0,
-          background:
-            "linear-gradient(rgba(255,255,255,0.028) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.028) 1px, transparent 1px)",
-          backgroundSize: "72px 72px",
-        }}
-      />
       <AmbientGraph />
       <div
         style={{
@@ -433,10 +450,10 @@ export const HeroTerminal = () => {
       <div
         style={{
           position: "absolute",
-          inset: 34,
+          inset: 24,
           border: `2px solid ${colors.lineStrong}`,
-          borderRadius: 36,
-          background: "rgba(7,8,9,0.58)",
+          borderRadius: 38,
+          background: "rgba(7,8,9,0.5)",
           overflow: "hidden",
           transform: `scale(${0.984 + intro * 0.016})`,
         }}
@@ -457,13 +474,13 @@ export const HeroTerminal = () => {
           <span>deepclean</span>
           <span>{stageLabels[Math.min(2, Math.floor(frame / 60))]}</span>
         </div>
-        <Sequence from={0} durationInFrames={72}>
+        <Sequence from={0} durationInFrames={60}>
           <MapState />
         </Sequence>
-        <Sequence from={58} durationInFrames={72}>
+        <Sequence from={60} durationInFrames={60}>
           <RankState />
         </Sequence>
-        <Sequence from={116} durationInFrames={64}>
+        <Sequence from={120} durationInFrames={60}>
           <HandoffState />
         </Sequence>
         <div
