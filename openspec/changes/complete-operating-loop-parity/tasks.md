@@ -5,7 +5,7 @@ Each slice below MUST land through its own pull request unless an adjacent slice
 - [x] PR-01 State foundation: schemas, lazy migration, compatibility fixtures, and privacy notes for generated records.
 - [x] PR-02 Health/status: `doctor`, `status`, structured diagnostics, and user docs.
 - [x] PR-03 Stable identity: signatures, durable finding IDs, observation linking, lifecycle event persistence, and `history`.
-- [ ] PR-04 Revalidation: `revalidate`, outcome classification, freshness metadata, report badges, and lifecycle updates.
+- [x] PR-04 Revalidation: `revalidate`, outcome classification, freshness metadata, report badges, and lifecycle updates.
 - [ ] PR-05 Incremental scans: git/ref/path/reviewer scoped scanning, baseline metadata, dirty-tree provenance, and tests.
 - [ ] PR-06 CI mode: `deepclean ci`, policy gates, baseline-aware failures, CI artifacts, and GitHub Actions docs.
 - [ ] PR-07 Query/report filters: `list` or `findings`, shared filter model, baseline comparison, queue exports, and handoff freshness checks.
@@ -42,12 +42,12 @@ Each slice below MUST land through its own pull request unless an adjacent slice
 
 ## 4. Revalidation
 
-- [ ] 4.1 Add `deepclean revalidate <id|theme|all> --json`.
-- [ ] 4.2 Recollect minimum required evidence for the target finding or theme.
-- [ ] 4.3 Classify outcomes as unchanged, changed, fixed, stale, superseded, or inconclusive.
-- [ ] 4.4 Persist revalidation records and lifecycle events.
-- [ ] 4.5 Add report badges and filters for revalidation state.
-- [ ] 4.6 PR checkpoint: merge only after PR-04 includes fixtures for unchanged, changed, fixed, stale, superseded, and inconclusive outcomes.
+- [x] 4.1 Add `deepclean revalidate <id|theme|all> --json`.
+- [x] 4.2 Recollect minimum required evidence for the target finding or theme.
+- [x] 4.3 Classify outcomes as unchanged, changed, fixed, stale, superseded, or inconclusive.
+- [x] 4.4 Persist revalidation records and lifecycle events.
+- [x] 4.5 Add report badges and filters for revalidation state.
+- [x] 4.6 PR checkpoint: merge only after PR-04 includes fixtures for unchanged, changed, fixed, stale, superseded, and inconclusive outcomes.
 
 ## 5. Incremental Scans
 
