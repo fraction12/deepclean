@@ -7,14 +7,14 @@
       name="description"
       content="Deepclean turns working-but-sloppy codebases into local cleanup reports and agent-ready plans."
     />
-    <meta name="color-scheme" content="light" />
+    <meta name="color-scheme" content="dark" />
     <meta property="og:title" content="deepclean" />
     <meta
       property="og:description"
       content="Local repo cleanup reports for codebases that work, but need structure."
     />
     <meta property="og:type" content="website" />
-    <title>deepclean | Local cleanup reports for messy repos</title>
+    <title>deepclean | Cleanup reports for messy repos</title>
     <link rel="preconnect" href="https://api.fontshare.com" />
     <link rel="preconnect" href="https://cdn.fontshare.com" crossorigin />
     <link
@@ -31,7 +31,7 @@
       </a>
       <nav class="nav-links" aria-label="Primary navigation">
         <a href="#workflow">Workflow</a>
-        <a href="#trust">Trust</a>
+        <a href="#install">Install</a>
         <a href="https://github.com/fraction12/deepclean">GitHub</a>
       </nav>
     </header>
@@ -39,16 +39,11 @@
     <main>
       <section class="hero" aria-labelledby="hero-title">
         <div class="hero-copy">
-          <p class="eyebrow">Public alpha for AI-shaped codebases</p>
-          <h1 id="hero-title">
-            <span>Make</span>
-            <span>AI-coded</span>
-            <span>repos</span>
-            <span>clean.</span>
-          </h1>
+          <p class="eyebrow">Public alpha</p>
+          <h1 id="hero-title">Deepclean for messy AI&#8209;coded repos.</h1>
           <p class="hero-lede">
-            Deepclean scans a local repo and turns messy structure into durable
-            evidence, cleanup candidates, reports, and agent-ready handoffs.
+            Scan a local codebase, find the cleanup work that matters, and turn
+            it into reviewable reports, plans, and agent-ready handoffs.
           </p>
           <div class="hero-actions" aria-label="Primary actions">
             <a class="button primary" href="#install">
@@ -56,17 +51,15 @@
               npm install -g @fraction12/deepclean
             </a>
             <a class="button secondary" href="https://github.com/fraction12/deepclean">
-              View source
+              GitHub
             </a>
           </div>
-          <div class="trust-strip" aria-label="Trust highlights">
-            <span>Local evidence first</span>
-            <span>No source edits</span>
-            <span>Source-safe by default</span>
-          </div>
+          <p class="hero-note">
+            Local evidence first. No source edits. Built for one cleanup slice at a time.
+          </p>
         </div>
 
-        <div class="hero-visual" aria-label="Animated terminal preview">
+        <div class="hero-visual" aria-label="Animated Deepclean report preview">
           <video
             class="hero-video"
             src="./assets/hero-terminal-loop.webm"
@@ -80,91 +73,55 @@
           <img
             class="hero-poster"
             src="./assets/hero-terminal-poster.png"
-            alt="Terminal preview showing deepclean scan output and generated cleanup artifacts."
+            alt="Animated preview showing Deepclean converting repo signals into report findings and handoffs."
           />
         </div>
       </section>
 
       <section class="workflow" id="workflow" aria-labelledby="workflow-title">
-        <div class="section-kicker">Workflow</div>
-        <h2 id="workflow-title">One clean pass from scan to handoff.</h2>
-        <div class="steps">
+        <div>
+          <p class="section-kicker">Workflow</p>
+          <h2 id="workflow-title">From repo mess to next clean move.</h2>
+        </div>
+        <div class="workflow-list">
           <article>
             <span>01</span>
             <h3>Scan</h3>
-            <p>Collect local file metrics, duplication, graph, churn, and test signals.</p>
+            <p>Collect local graph, churn, duplication, tests, and file evidence.</p>
           </article>
           <article>
             <span>02</span>
             <h3>Rank</h3>
-            <p>Turn evidence into cleanup candidates with confidence, impact, and effort.</p>
+            <p>Group findings by impact, confidence, effort, and blast radius.</p>
           </article>
           <article>
             <span>03</span>
-            <h3>Report</h3>
-            <p>Write readable Markdown and JSON reports under `.deepclean/`.</p>
-          </article>
-          <article>
-            <span>04</span>
             <h3>Handoff</h3>
-            <p>Generate bounded task packets an agent can take one improvement at a time.</p>
-          </article>
-        </div>
-      </section>
-
-      <section class="artifact-band" aria-labelledby="artifact-title">
-        <div>
-          <div class="section-kicker">Artifacts</div>
-          <h2 id="artifact-title">Reports that survive the agent run.</h2>
-          <p>
-            Deepclean writes state to `.deepclean/` so findings can be reviewed,
-            triaged, planned, and handed off without losing the evidence trail.
-          </p>
-        </div>
-        <div class="artifact-list" aria-label="Generated artifact paths">
-          <span>.deepclean/evidence</span>
-          <span>.deepclean/candidates</span>
-          <span>.deepclean/reports</span>
-          <span>.deepclean/plans</span>
-          <span>.deepclean/handoffs</span>
-        </div>
-      </section>
-
-      <section class="trust" id="trust" aria-labelledby="trust-title">
-        <div class="section-kicker">Trust model</div>
-        <h2 id="trust-title">Report-first. Local-first. No repo-wide rewrite.</h2>
-        <div class="trust-grid">
-          <article>
-            <h3>Does not edit source</h3>
-            <p>Deepclean reports cleanup work. Fix execution is intentionally separate.</p>
-          </article>
-          <article>
-            <h3>Private source stays private</h3>
-            <p>Structured evidence is local. Source samples are redacted by default for synthesis.</p>
-          </article>
-          <article>
-            <h3>Built for review</h3>
-            <p>Every finding needs evidence, confidence, impact, effort, and a handoff path.</p>
+            <p>Write bounded plans an agent can execute without rewriting the repo.</p>
           </article>
         </div>
       </section>
 
       <section class="install" id="install" aria-labelledby="install-title">
         <div>
-          <div class="section-kicker">Install</div>
-          <h2 id="install-title">Try the alpha in a local repo.</h2>
+          <p class="section-kicker">Install</p>
+          <h2 id="install-title">Try it in a local repo.</h2>
+          <p>
+            Generated artifacts stay under <code>.deepclean/</code> so the evidence
+            trail survives the agent run.
+          </p>
         </div>
         <pre aria-label="Install commands"><code>npm install -g @fraction12/deepclean
 deepclean init
-deepclean scan --json
+deepclean scan --synthesize
 deepclean report
 deepclean next</code></pre>
       </section>
     </main>
 
     <footer class="site-footer">
-      <span>deepclean is MIT licensed and public alpha.</span>
-      <a href="https://github.com/fraction12/deepclean">GitHub</a>
+      <span>MIT licensed public alpha.</span>
+      <a href="https://github.com/fraction12/deepclean">View source</a>
     </footer>
   </body>
 </html>
