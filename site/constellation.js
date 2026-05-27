@@ -16,7 +16,7 @@ const clusters = [
   { x: 0.7, y: 0.28, r: 170, color: colors.aqua, stage: "scan" },
   { x: 0.55, y: 0.62, r: 145, color: colors.green, stage: "map" },
   { x: 0.82, y: 0.56, r: 132, color: colors.amber, stage: "rank" },
-  { x: 0.38, y: 0.37, r: 118, color: colors.violet, stage: "handoff" },
+  { x: 0.49, y: 0.38, r: 112, color: colors.violet, stage: "handoff" },
 ];
 
 const pointer = { x: 0, y: 0, tx: 0, ty: 0 };
@@ -27,6 +27,8 @@ let dpr = 1;
 let particles = [];
 let raf = 0;
 let start = performance.now();
+let hasStarted = false;
+let removeListeners = () => {};
 
 const seeded = (index) => {
   const value = Math.sin(index * 9283.143 + 17.61) * 43758.5453;
@@ -36,7 +38,7 @@ const seeded = (index) => {
 const chooseCluster = (index) => clusters[index % clusters.length];
 
 const buildParticles = () => {
-  const count = Math.max(96, Math.min(260, Math.round((width * height) / 7600)));
+  const count = Math.max(84, Math.min(220, Math.round((width * height) / 9000)));
   particles = Array.from({ length: count }, (_, index) => {
     const cluster = chooseCluster(index);
     const angle = seeded(index + 1) * Math.PI * 2;
@@ -48,10 +50,10 @@ const buildParticles = () => {
       cluster,
       homeX: clusterX + Math.cos(angle) * distance,
       homeY: clusterY + Math.sin(angle) * distance,
-      radius: 0.9 + seeded(index + 3) * 2.4,
+      radius: 0.75 + seeded(index + 3) * 2.05,
       drift: 0.45 + seeded(index + 4) * 1.25,
       phase: seeded(index + 5) * Math.PI * 2,
-      opacity: 0.18 + seeded(index + 6) * 0.44,
+      opacity: 0.14 + seeded(index + 6) * 0.38,
     };
   });
 };
@@ -76,13 +78,13 @@ const setPointer = (clientX, clientY) => {
 
 const drawParticle = (particle, t, activeIndex) => {
   const active = clusters[activeIndex] === particle.cluster ? 1 : 0;
-  const driftX = Math.sin(t * particle.drift + particle.phase) * (6 + active * 3);
-  const driftY = Math.cos(t * particle.drift * 0.9 + particle.phase) * (5 + active * 3);
+  const driftX = Math.sin(t * particle.drift + particle.phase) * (5 + active * 2.4);
+  const driftY = Math.cos(t * particle.drift * 0.9 + particle.phase) * (4 + active * 2.4);
   const parallaxX = pointer.x * (10 + active * 14);
   const parallaxY = pointer.y * (7 + active * 9);
   const x = particle.homeX + driftX + parallaxX;
   const y = particle.homeY + driftY + parallaxY;
-  const glow = particle.radius + active * 1.7;
+  const glow = particle.radius + active * 1.35;
 
   ctx.beginPath();
   ctx.arc(x, y, glow, 0, Math.PI * 2);
@@ -92,7 +94,7 @@ const drawParticle = (particle, t, activeIndex) => {
   if (active) {
     ctx.beginPath();
     ctx.arc(x, y, glow * 3.8, 0, Math.PI * 2);
-    ctx.fillStyle = `rgba(${particle.cluster.color}, 0.035)`;
+    ctx.fillStyle = `rgba(${particle.cluster.color}, 0.026)`;
     ctx.fill();
   }
 
@@ -112,7 +114,7 @@ const drawConnections = (points, activeIndex) => {
     ctx.beginPath();
     ctx.moveTo(a.x, a.y);
     ctx.lineTo(b.x, b.y);
-    ctx.strokeStyle = `rgba(${clusters[activeIndex].color}, ${0.1 + (1 - distance / 190) * 0.22})`;
+    ctx.strokeStyle = `rgba(${clusters[activeIndex].color}, ${0.08 + (1 - distance / 190) * 0.16})`;
     ctx.lineWidth = 1;
     ctx.stroke();
   }
@@ -127,7 +129,7 @@ const drawScanPath = (t, activeIndex) => {
   const gradient = ctx.createLinearGradient(x - 120, y, x + 120, y);
 
   gradient.addColorStop(0, `rgba(${active.color}, 0)`);
-  gradient.addColorStop(0.5, `rgba(${active.color}, 0.48)`);
+  gradient.addColorStop(0.5, `rgba(${active.color}, 0.36)`);
   gradient.addColorStop(1, `rgba(${active.color}, 0)`);
 
   ctx.save();
@@ -146,8 +148,8 @@ const drawClusterHalos = (t, activeIndex) => {
     const radius = cluster.r * (0.6 + active * 0.46 + Math.sin(t + index) * 0.025);
     const gradient = ctx.createRadialGradient(x, y, 0, x, y, radius);
 
-    gradient.addColorStop(0, `rgba(${cluster.color}, ${0.09 + active * 0.1})`);
-    gradient.addColorStop(0.58, `rgba(${cluster.color}, ${0.026 + active * 0.04})`);
+    gradient.addColorStop(0, `rgba(${cluster.color}, ${0.06 + active * 0.075})`);
+    gradient.addColorStop(0.58, `rgba(${cluster.color}, ${0.018 + active * 0.03})`);
     gradient.addColorStop(1, `rgba(${cluster.color}, 0)`);
     ctx.fillStyle = gradient;
     ctx.beginPath();
@@ -192,27 +194,40 @@ const render = (now) => {
 };
 
 const startConstellation = () => {
-  if (!canvas || !hero || reducedMotion.matches) return;
+  if (!canvas || !hero || reducedMotion.matches || hasStarted) return;
 
+  hasStarted = true;
   resize();
+  const onPointerMove = (event) => setPointer(event.clientX, event.clientY);
+  const onScroll = () => {
+    const rect = hero.getBoundingClientRect();
+    const progress = Math.max(-1, Math.min(1, rect.top / Math.max(1, rect.height)));
+    pointer.ty = progress * -0.55;
+  };
+
   window.addEventListener("resize", resize, { passive: true });
-  window.addEventListener("pointermove", (event) => setPointer(event.clientX, event.clientY), {
-    passive: true,
-  });
-  window.addEventListener(
-    "scroll",
-    () => {
-      const rect = hero.getBoundingClientRect();
-      const progress = Math.max(-1, Math.min(1, rect.top / Math.max(1, rect.height)));
-      pointer.ty = progress * -0.55;
-    },
-    { passive: true },
-  );
+  window.addEventListener("pointermove", onPointerMove, { passive: true });
+  window.addEventListener("scroll", onScroll, { passive: true });
+  removeListeners = () => {
+    window.removeEventListener("resize", resize);
+    window.removeEventListener("pointermove", onPointerMove);
+    window.removeEventListener("scroll", onScroll);
+    removeListeners = () => {};
+  };
   raf = requestAnimationFrame(render);
 };
 
-reducedMotion.addEventListener("change", () => {
+const stopConstellation = () => {
   cancelAnimationFrame(raf);
+  removeListeners();
+  hasStarted = false;
+  if (ctx) {
+    ctx.clearRect(0, 0, width, height);
+  }
+};
+
+reducedMotion.addEventListener("change", () => {
+  stopConstellation();
   if (!reducedMotion.matches) {
     start = performance.now();
     startConstellation();
