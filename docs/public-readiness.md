@@ -8,7 +8,7 @@ Deepclean is now shaped like a public CLI rather than a local experiment:
 - Reports are source-safe by default and source excerpts are not sent to Codex unless explicitly enabled.
 - External analyzer evidence can be ingested through SARIF and optional `jscpd`.
 - Codex synthesis now uses a built-in reviewer pack informed by a vendored MIT-licensed Matt Pocock skills snapshot, while keeping runtime prompts reproducible and source-safe.
-- Reports now separate the agent queue from raw candidate evidence, return explicit artifact paths in JSON, and infer verification commands from the target repository's Makefile and package scripts.
+- Reports separate the agent queue from raw candidate evidence, return explicit artifact paths in JSON, and infer verification commands from the target repository's Makefile and package scripts.
 
 ## Still Deliberately Deferred
 

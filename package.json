@@ -2,7 +2,7 @@
   "name": "@fraction12/deepclean",
   "version": "0.1.0-alpha.0",
   "private": false,
-  "description": "Clawpatch-style cleanup reports for working-but-sloppy codebases.",
+  "description": "Local cleanup reports and agent-ready plans for codebases that need structural cleanup.",
   "type": "module",
   "license": "MIT",
   "homepage": "https://github.com/fraction12/deepclean#readme",

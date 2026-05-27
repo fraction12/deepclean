@@ -68,7 +68,7 @@ interface CommandContext {
 }
 
 function printHelp(): void {
-  console.log(`deepclean: agent-first cleanup reports for working-but-sloppy codebases
+  console.log(`deepclean: local cleanup reports and agent-ready plans
 
 Usage:
   deepclean <command> [args] [flags]
