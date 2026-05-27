@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added semantic feature mapping with `.deepclean/features/` artifacts, `deepclean map`, scan feature counts, and first-pass package script, TS/JS, Python, test-suite, route/component/module, and config feature records.
 - Softened the public site, README, and package copy to frame Deepclean around clearer structure and focused improvements instead of criticizing the user's code.
 - Set the GitHub Pages site as the public project homepage and documented it in the README.
 - Added the complete operating loop: health/status, stable finding identity, lifecycle history, revalidation, incremental scans, CI policy mode, shared query filters, writer locks, retention pruning, source-safe exports, provider runtime controls, and guarded local fix attempts.

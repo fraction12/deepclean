@@ -8,6 +8,7 @@ import {
   candidateObservationRecordSchema,
   ciRunRecordSchema,
   evidenceRecordSchema,
+  featureRecordSchema,
   findingRecordSchema,
   fixAttemptRecordSchema,
   handoffRecordSchema,
@@ -25,6 +26,7 @@ import {
   type ClusterRecord,
   type DeepcleanConfig,
   type EvidenceRecord,
+  type FeatureRecord,
   type FindingRecord,
   type FixAttemptRecord,
   type HandoffRecord,
@@ -45,6 +47,7 @@ export interface StatePaths {
   runsDir: string;
   findingsDir: string;
   observationsDir: string;
+  featuresDir: string;
   evidenceDir: string;
   candidatesDir: string;
   clustersDir: string;
@@ -75,6 +78,7 @@ export function resolveStatePaths(options: {
     runsDir: path.join(stateDir, "runs"),
     findingsDir: path.join(stateDir, "findings"),
     observationsDir: path.join(stateDir, "observations"),
+    featuresDir: path.join(stateDir, "features"),
     evidenceDir: path.join(stateDir, "evidence"),
     candidatesDir: path.join(stateDir, "candidates"),
     clustersDir: path.join(stateDir, "clusters"),
@@ -96,6 +100,7 @@ export async function ensureState(paths: StatePaths): Promise<DeepcleanConfig> {
     mkdir(paths.runsDir, { recursive: true }),
     mkdir(paths.findingsDir, { recursive: true }),
     mkdir(paths.observationsDir, { recursive: true }),
+    mkdir(paths.featuresDir, { recursive: true }),
     mkdir(paths.evidenceDir, { recursive: true }),
     mkdir(paths.candidatesDir, { recursive: true }),
     mkdir(paths.clustersDir, { recursive: true }),
@@ -142,6 +147,19 @@ export async function writeEvidence(
     evidenceRecordSchema.parse(record);
   }
   const filePath = path.join(paths.evidenceDir, `${runId}.json`);
+  await writeJson(filePath, records);
+  return filePath;
+}
+
+export async function writeFeatures(
+  paths: StatePaths,
+  runId: string,
+  records: FeatureRecord[],
+): Promise<string> {
+  for (const record of records) {
+    featureRecordSchema.parse(record);
+  }
+  const filePath = path.join(paths.featuresDir, `${runId}.json`);
   await writeJson(filePath, records);
   return filePath;
 }
@@ -351,6 +369,14 @@ export async function readLatestEvidence(paths: StatePaths): Promise<EvidenceRec
   return readEvidence(paths, runId);
 }
 
+export async function readLatestFeatures(paths: StatePaths): Promise<FeatureRecord[]> {
+  const runId = await latestFeatureRunId(paths);
+  if (!runId) {
+    return [];
+  }
+  return readFeatures(paths, runId);
+}
+
 export async function readFindings(paths: StatePaths): Promise<FindingRecord[]> {
   const files = await jsonFiles(paths.findingsDir);
   const findings: FindingRecord[] = [];
@@ -425,6 +451,15 @@ export async function readEvidence(
   return parsed.map((item) => evidenceRecordSchema.parse(item));
 }
 
+export async function readFeatures(
+  paths: StatePaths,
+  runId: string,
+): Promise<FeatureRecord[]> {
+  const raw = await readFile(path.join(paths.featuresDir, `${runId}.json`), "utf8");
+  const parsed = JSON.parse(raw) as unknown[];
+  return parsed.map((item) => featureRecordSchema.parse(item));
+}
+
 export async function updateLatestCandidates(
   paths: StatePaths,
   candidates: CandidateRecord[],
@@ -443,6 +478,11 @@ async function jsonFiles(dir: string): Promise<string[]> {
   } catch {
     return [];
   }
+}
+
+async function latestFeatureRunId(paths: StatePaths): Promise<string | undefined> {
+  const files = await jsonFiles(paths.featuresDir);
+  return files.at(-1)?.replace(/\.json$/, "");
 }
 
 async function writeJson(filePath: string, value: unknown): Promise<void> {
