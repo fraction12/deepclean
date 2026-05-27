@@ -41,7 +41,9 @@ Use `--allow-source-in-model` only when the target repo and configured provider 
 
 ## Generated Record Sensitivity
 
-Treat `.deepclean/` as private by default. Records may contain repository-relative paths, absolute state paths in diagnostics, source excerpts, analyzer summaries, model prompt metadata, verification output paths, patch previews, and notes written by humans or agents. Future scrub/export commands must remove source excerpts, provider prompts, and sensitive local paths before producing support artifacts.
+Treat `.deepclean/` as private by default. Records may contain repository-relative paths, absolute state paths in diagnostics, source excerpts, analyzer summaries, model prompt metadata, verification output paths, patch previews, and notes written by humans or agents.
+
+Use `deepclean scrub --json` or `deepclean export --source-safe --json` before producing a support artifact. The source-safe export keeps actionable IDs, categories, priorities, verification commands, evidence IDs, and repository-relative paths, while omitting source excerpts, provider prompts, absolute state paths, generated handoff prose, and generated plan prose.
 
 ## Network
 

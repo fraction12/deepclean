@@ -68,6 +68,24 @@ deepclean findings --theme theme-001 --format codex --json
 
 `--format codex` on `list`/`findings` emits compact queue items with finding IDs, evidence IDs, files, constraints, and verification commands for worker handoff.
 
+## Retention And Sharing
+
+Use `prune --dry-run` before deleting generated state:
+
+```bash
+deepclean prune --keep-runs 5 --dry-run --json
+```
+
+The command persists a retention manifest under `.deepclean/retention/` with planned deletions, retained dependencies, blocked paths, and privacy notes. Running without `--dry-run` applies the same deletion plan and writes an applied manifest. Deepclean never prunes `.deepclean/config.json`, active locks, or latest retained run artifacts.
+
+Use a source-safe export before sharing generated state outside the local machine:
+
+```bash
+deepclean export --source-safe --output .deepclean/source-safe.json --json
+```
+
+`scrub --json` is the same source-safe export path. It keeps actionable IDs, priorities, categories, evidence IDs, verification commands, and repository-relative paths, but omits source excerpts, provider prompts, absolute state paths, generated handoff prose, and generated plan prose.
+
 ## Codex Is Missing
 
 Run:

@@ -343,6 +343,7 @@ export const retentionManifestRecordSchema = z.object({
   id: z.string(),
   dryRun: z.boolean(),
   keepRuns: z.number().int().nonnegative().optional(),
+  keepDays: z.number().int().nonnegative().optional(),
   deletePaths: z.array(z.string()),
   retainedPaths: z.array(z.string()),
   blockedPaths: z.array(z.object({
