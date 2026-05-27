@@ -15,24 +15,28 @@ export function buildCandidatePlan(
   evidence: EvidenceRecord[],
 ): PlanRecord {
   const candidateFiles = uniqueFileReferences(candidate.files, 12);
+  const readiness = candidate.fixReadiness;
   const steps = [
     {
-      title: "Characterize current behavior",
-      description: "Read the cited files and add or identify the smallest verification path before changing structure.",
+      title: "Pin the behavior first",
+      description: readiness?.suggestedRegressionTest
+        ?? "Read the cited files and add or identify the smallest behavior-level verification path before changing structure.",
       candidateIds: [candidate.id],
       files: candidateFiles,
       verification: candidate.verification,
     },
     {
-      title: "Map the responsibility boundary",
-      description: candidate.likelyRootCause,
+      title: "Map the proof and boundary",
+      description: `Confirm the symptom, risk, cited evidence, and natural extraction boundary. ${candidate.likelyRootCause}`,
       candidateIds: [candidate.id],
       files: candidateFiles,
       verification: [],
     },
     {
-      title: "Apply the focused cleanup",
-      description: candidate.suggestedDirection,
+      title: "Apply one PR-sized slice",
+      description: readiness?.minimumFixScope
+        ? `${readiness.minimumFixScope} ${candidate.suggestedDirection}`
+        : candidate.suggestedDirection,
       candidateIds: [candidate.id],
       files: candidateFiles,
       verification: candidate.verification,
@@ -149,6 +153,7 @@ function renderPlan(
   plan: PlanRecord,
   context: { cluster?: ClusterRecord; candidates: CandidateRecord[]; evidence: EvidenceRecord[] },
 ): string {
+  const sliceQueue = context.candidates.map((candidate) => candidateSlice(candidate));
   const lines = [
     `TASK: ${plan.title}`,
     "",
@@ -171,17 +176,36 @@ function renderPlan(
     );
   }
 
+  lines.push("Slice Queue:");
+  for (const slice of sliceQueue) {
+    lines.push(
+      `- ${slice.candidate.id}: ${slice.minimalFix}`,
+      `  Tests first: ${slice.testsFirst}`,
+      `  Stop line: ${slice.stopLine}`,
+    );
+  }
+  lines.push("");
+
   lines.push("Candidates:");
   for (const candidate of context.candidates) {
+    const slice = candidateSlice(candidate);
     lines.push(
       `- ${candidate.id} ${candidate.priority} ${candidate.title}`,
-      `  Direction: ${candidate.suggestedDirection}`,
+      `  Symptom: ${candidate.title}`,
+      `  Risk: ${candidate.whyItMatters}`,
+      `  Proof: ${proofForCandidate(candidate, context.evidence)}`,
+      `  Minimal fix: ${slice.minimalFix}`,
+      `  Verification: ${candidate.verification.join(", ") || "n/a"}`,
+      `  Non-goals: ${slice.nonGoals.join("; ")}`,
     );
   }
 
   lines.push("", "Evidence:");
   for (const record of context.evidence.slice(0, 20)) {
-    lines.push(`- ${record.id} ${record.title}: ${uniqueFileReferences(record.files, 8).map(formatFile).join(", ") || "n/a"}`);
+    lines.push(
+      `- ${record.id} ${record.kind} ${record.title}: ${uniqueFileReferences(record.files, 8).map(formatFile).join(", ") || "n/a"}`,
+      `  ${record.summary}`,
+    );
   }
 
   lines.push("", "Steps:");
@@ -198,8 +222,45 @@ function renderPlan(
   }
 
   lines.push("", "Constraints:", ...plan.constraints.map((constraint) => `- ${constraint}`));
+  lines.push("", "Expected No-op Behavior:");
+  lines.push("- Public behavior, API payloads, CLI output shape, and persisted data shape stay unchanged unless the plan explicitly says otherwise.");
+  lines.push("- Stop after the listed slice passes verification; do not keep expanding because nearby cleanup is tempting.");
   lines.push("", "Verification:", ...plan.verification.map((command) => `- ${command}`));
   return lines.join("\n");
+}
+
+function candidateSlice(candidate: CandidateRecord): {
+  candidate: CandidateRecord;
+  minimalFix: string;
+  testsFirst: string;
+  stopLine: string;
+  nonGoals: string[];
+} {
+  const fileList = uniqueFileReferences(candidate.files, 4).map(formatFile).join(", ") || "the cited files";
+  const minimalFix = candidate.fixReadiness?.minimumFixScope || candidate.suggestedDirection;
+  return {
+    candidate,
+    minimalFix,
+    testsFirst: candidate.fixReadiness?.suggestedRegressionTest
+      || "Add or identify the smallest behavior-level regression check before moving code.",
+    stopLine: `Only touch ${fileList} plus directly necessary tests/callers.`,
+    nonGoals: [
+      "do not rewrite unrelated helpers",
+      "do not change public behavior or response shapes",
+      "do not broaden into neighboring cleanup themes",
+    ],
+  };
+}
+
+function proofForCandidate(candidate: CandidateRecord, evidence: EvidenceRecord[]): string {
+  const evidenceById = new Map(evidence.map((record) => [record.id, record]));
+  const parts = candidate.evidenceIds
+    .map((id) => evidenceById.get(id))
+    .filter((record): record is EvidenceRecord => record !== undefined)
+    .slice(0, 5)
+    .map((record) => `${record.id}/${record.kind}`);
+  const files = uniqueFileReferences(candidate.files, 4).map(formatFile);
+  return [...parts, ...files].join(", ") || "n/a";
 }
 
 function unique(values: string[]): string[] {

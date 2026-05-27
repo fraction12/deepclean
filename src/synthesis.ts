@@ -22,7 +22,7 @@ import {
   type SynthesisAttemptRecord,
 } from "./types.js";
 
-const promptVersion = "codex-synthesis-v3-matt-pocock-reviewers";
+const promptVersion = "codex-synthesis-v4-proof-backed-slices";
 
 const synthesisOutputSchema = z.object({
   candidates: z.array(z.object({
@@ -324,7 +324,7 @@ Goal:
 - synthesize higher-quality maintainability cleanup candidates from local evidence
 - prefer cross-evidence architectural/testability/duplication issues over one metric in isolation
 - reject weak or noisy evidence rather than forcing findings
-- produce agent-ready cleanup directions, not code patches
+- produce proof-backed, PR-sized cleanup slices, not code patches or broad themes
 
 Cleanup-surface review flow:
 - Treat local evidence as the source of truth.
@@ -332,6 +332,9 @@ Cleanup-surface review flow:
 - Produce findings only when the surface shows a durable maintainability issue, not just an ugly file.
 - Think like a senior maintainer preparing bounded work for a future coding agent.
 - Prefer issues that explain how the codebase got sloppy and how to make it harder to re-slop.
+- Rank by sturdiness gained: state consistency, contract safety, data/service boundaries, auth/data-loading reliability, test fixture leverage, and behavior pinned by tests beat generic cleanliness.
+- A "large function" or "large file" is not enough. Only promote it when the evidence also supports change pressure, bug/test proximity, feature blockage, a natural extraction boundary, or a safe one-PR slice.
+- Big themes belong in notes unless you can express the next safe slice with touched files, tests first, stop line, minimal fix, and non-goals.
 
 Matt Pocock skills influence:
 - The built-in reviewer pack includes distilled guidance from the MIT-licensed Matt Pocock skills snapshot vendored in this repo for reference.
@@ -355,6 +358,8 @@ Hard rules:
 - verification commands should be practical for a future agent, usually npm test and npm run typecheck
 - every candidate should be traceable to one or more cleanup surfaces when possible
 - include fixReadiness for each candidate: minimum fix scope, suggested regression test, why current tests may miss it, and confidence downgrade reasons
+- fixReadiness.minimumFixScope must read like a small work order, not a theme: name the boundary to extract/rename/consolidate, the likely files, and the stop line
+- suggestedDirection must include non-goals when broad nearby cleanup is tempting
 - supportingQuotes are optional; if used, quote text must appear verbatim in the referenced source file
 - do not create a candidate that the critic-pass reviewer would reject
 - use notes for promising but under-supported themes instead of forcing weak candidates

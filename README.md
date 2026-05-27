@@ -154,6 +154,8 @@ See [Privacy And Trust](docs/privacy-and-trust.md), [Reviewer References](docs/r
 
 Broad themes are marked `too-broad` when they should not be handed to an agent as one task.
 
+Plans and handoffs are shaped as proof-backed PR slices, not smell lists. They call out the symptom, risk, evidence, minimal fix, tests to pin first, verification commands, expected no-op behavior, and non-goals so a future agent has a stop line instead of an invitation to over-refactor.
+
 ## External Analyzer Evidence
 
 Deepclean can ingest SARIF and duplicate-detection output:

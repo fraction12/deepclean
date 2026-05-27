@@ -168,17 +168,17 @@ function buildReportRecommendations(
   const warnings = clusters.flatMap((cluster) => (cluster.warnings ?? []).map((warning) => `${cluster.id}: ${warning}`));
   const firstTheme = boundedThemes[0];
   const firstCandidate = queuedCandidates[0];
-  const startHere = firstTheme
+  const startHere = firstCandidate
     ? {
-      id: firstTheme.id,
-      type: "theme" as const,
-      reason: "Highest-ranked bounded cleanup theme; generate a plan before handing it to an agent.",
+      id: firstCandidate.id,
+      type: "candidate" as const,
+      reason: "Highest-ranked PR-sized cleanup slice; generate a focused plan before making changes.",
     }
-    : firstCandidate
+    : firstTheme
       ? {
-        id: firstCandidate.id,
-        type: "candidate" as const,
-        reason: "Highest-ranked open candidate; generate a focused plan before making changes.",
+        id: firstTheme.id,
+        type: "theme" as const,
+        reason: "No candidate slice is ready; inspect the highest-ranked bounded theme and split it before handoff.",
       }
       : undefined;
   return {
@@ -186,21 +186,12 @@ function buildReportRecommendations(
     topCandidateIds,
     topThemeIds,
     warnings,
-    suggestedPlanTargets: [...topThemeIds.slice(0, 2), ...topCandidateIds.slice(0, 3)],
+    suggestedPlanTargets: [...topCandidateIds.slice(0, 4), ...topThemeIds.slice(0, 1)],
   };
 }
 
 function agentQueueCandidates(candidates: CandidateRecord[]): CandidateRecord[] {
-  const modelCandidates = candidates.filter((candidate) => candidate.provenance.source === "model-synthesis");
-  const highSignalLocal = candidates.filter((candidate) => (
-    candidate.provenance.source !== "model-synthesis"
-    && !isWeakMetricCandidate(candidate)
-  ));
-  const weakMetric = candidates.filter((candidate) => (
-    candidate.provenance.source !== "model-synthesis"
-    && isWeakMetricCandidate(candidate)
-  ));
-  return [...modelCandidates, ...highSignalLocal, ...weakMetric];
+  return [...candidates].sort((a, b) => agentReadinessScore(b) - agentReadinessScore(a) || a.id.localeCompare(b.id));
 }
 
 function isWeakMetricCandidate(candidate: CandidateRecord): boolean {
@@ -208,6 +199,27 @@ function isWeakMetricCandidate(candidate: CandidateRecord): boolean {
     return false;
   }
   return candidate.category === "complexity" || candidate.category === "testability";
+}
+
+function agentReadinessScore(candidate: CandidateRecord): number {
+  const priorityScore = { P0: 16, P1: 12, P2: 8, P3: 2 }[candidate.priority];
+  const confidenceScore = candidate.confidence === "high" ? 15 : candidate.confidence === "medium" ? 8 : 0;
+  const impactScore = candidate.impact === "feature" ? 14 : candidate.impact === "local" ? 10 : 5;
+  const effortScore = candidate.effort === "small" ? 14 : candidate.effort === "medium" ? 8 : -8;
+  const riskScore = candidate.risk === "safe" ? 10 : candidate.risk === "moderate" ? 5 : -18;
+  const evidenceScore = Math.min(candidate.evidenceIds.length, 4) * 6;
+  const synthesisScore = candidate.provenance.source === "model-synthesis" ? 20 : 0;
+  const readinessScore = candidate.fixReadiness ? 8 : 0;
+  const weakMetricPenalty = isWeakMetricCandidate(candidate) ? -25 : 0;
+  return priorityScore
+    + confidenceScore
+    + impactScore
+    + effortScore
+    + riskScore
+    + evidenceScore
+    + synthesisScore
+    + readinessScore
+    + weakMetricPenalty;
 }
 
 function recommendationMarkdown(recommendations: NonNullable<ReportRecord["recommendations"]>): string[] {
@@ -276,10 +288,13 @@ export function renderHandoff(
   candidate: CandidateRecord,
   evidence: EvidenceRecord[],
 ): string {
+  const testFirst = candidate.fixReadiness?.suggestedRegressionTest
+    || "Add or identify the smallest behavior-level regression check before moving code.";
+  const minimalFix = candidate.fixReadiness?.minimumFixScope || candidate.suggestedDirection;
   return [
-    `TASK: Investigate and address Deepclean candidate ${candidate.id}`,
+    `TASK: ${candidate.title}`,
     "",
-    `Problem: ${candidate.title}`,
+    `Candidate: ${candidate.id}`,
     "",
     `Category: ${candidate.category}`,
     `Priority: ${candidate.priority}`,
@@ -288,11 +303,17 @@ export function renderHandoff(
     `Effort: ${candidate.effort}`,
     `Risk: ${candidate.risk}`,
     "",
-    "Why it matters:",
+    "Why:",
     candidate.whyItMatters,
     "",
+    "Change:",
+    minimalFix,
+    "",
+    "Tests first:",
+    testFirst,
+    "",
     "Evidence:",
-    ...evidence.map((record) => `- ${record.id} ${record.title}: ${record.files.map(formatFile).join(", ")}`),
+    ...evidence.map((record) => `- ${record.id} ${record.kind} ${record.title}: ${record.files.map(formatFile).join(", ")} — ${record.summary}`),
     "",
     "Likely root cause:",
     candidate.likelyRootCause,
@@ -300,10 +321,11 @@ export function renderHandoff(
     "Suggested direction:",
     candidate.suggestedDirection,
     "",
-    "Constraints:",
-    "- Preserve existing behavior unless tests prove the current behavior is wrong.",
-    "- Keep changes scoped to this candidate.",
+    "Do not:",
+    "- Do not rewrite broad helper modules beyond this candidate.",
+    "- Do not change public API, CLI, or response shapes unless the tests prove current behavior is wrong.",
     "- Do not perform unrelated refactors.",
+    "- Do not keep expanding into adjacent cleanup once this slice passes verification.",
     "",
     "Verification:",
     ...candidate.verification.map((command) => `- ${command}`),
