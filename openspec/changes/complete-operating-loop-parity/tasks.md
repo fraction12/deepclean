@@ -8,7 +8,7 @@ Each slice below MUST land through its own pull request unless an adjacent slice
 - [x] PR-04 Revalidation: `revalidate`, outcome classification, freshness metadata, report badges, and lifecycle updates.
 - [x] PR-05 Incremental scans: git/ref/path/reviewer scoped scanning, baseline metadata, dirty-tree provenance, and tests.
 - [x] PR-06 CI mode: `deepclean ci`, policy gates, baseline-aware failures, CI artifacts, and GitHub Actions docs.
-- [ ] PR-07 Query/report filters: `list` or `findings`, shared filter model, baseline comparison, queue exports, and handoff freshness checks.
+- [x] PR-07 Query/report filters: `list` or `findings`, shared filter model, baseline comparison, queue exports, and handoff freshness checks.
 - [ ] PR-08 Locks/concurrency: writer locks, stale lock reporting, recovery guidance, and contention tests.
 - [ ] PR-09 Retention/sharing: `prune --dry-run`, applied prune manifests, scrub/export, retention safety tests, and privacy docs.
 - [ ] PR-10 Provider/runtime controls: provider/model/runtime flags, timeout/rate-limit diagnostics, offline/local-only modes, and synthesis docs.
@@ -68,12 +68,12 @@ Each slice below MUST land through its own pull request unless an adjacent slice
 
 ## 7. Reporting, Query, and Filters
 
-- [ ] 7.1 Add `deepclean list` / `deepclean findings` with filters for status, priority, category, risk, source, theme, path, age, owner, lifecycle state, and revalidation state.
-- [ ] 7.2 Add report filters and JSON fields using the same query model.
-- [ ] 7.3 Add baseline comparison output for latest run versus prior run/ref.
-- [ ] 7.4 Add compact queue exports for agents.
-- [ ] 7.5 Add docs for common query recipes.
-- [ ] 7.6 PR checkpoint: merge only after PR-07 proves the same filter semantics across report JSON, list/findings JSON, next, and queue export.
+- [x] 7.1 Add `deepclean list` / `deepclean findings` with filters for status, priority, category, risk, source, theme, path, age, owner, lifecycle state, and revalidation state.
+- [x] 7.2 Add report filters and JSON fields using the same query model.
+- [x] 7.3 Add baseline comparison output for latest run versus prior run/ref.
+- [x] 7.4 Add compact queue exports for agents.
+- [x] 7.5 Add docs for common query recipes.
+- [x] 7.6 PR checkpoint: merge only after PR-07 proves the same filter semantics across report JSON, list/findings JSON, next, and queue export.
 
 ## 8. Locks and Concurrency
 

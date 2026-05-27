@@ -35,6 +35,19 @@ Example GitHub Actions step:
 
 Use `--require-synthesis --synthesize` only in CI environments where the configured provider is installed and authenticated. Without `--synthesize`, `--require-synthesis` fails fast rather than silently running a weaker local-only gate.
 
+## Query Recipes
+
+Use the same filters across `report`, `next`, `list`, and `findings`:
+
+```bash
+deepclean list --status open --category architecture --path src --json
+deepclean next --priority P1 --risk design-needed --json
+deepclean report --baseline-status new --source model-synthesis --json
+deepclean findings --theme theme-001 --format codex --json
+```
+
+`--format codex` on `list`/`findings` emits compact queue items with finding IDs, evidence IDs, files, constraints, and verification commands for worker handoff.
+
 ## Codex Is Missing
 
 Run:
