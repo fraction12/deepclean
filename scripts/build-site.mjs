@@ -8,7 +8,7 @@ const outDir = path.join(root, ".site-dist");
 await rm(outDir, { recursive: true, force: true });
 await mkdir(outDir, { recursive: true });
 
-for (const entry of ["index.html", "styles.css", "assets"]) {
+for (const entry of ["index.html", "styles.css", "constellation.js", "assets"]) {
   await cp(path.join(siteDir, entry), path.join(outDir, entry), {
     recursive: true,
   });
