@@ -1,0 +1,94 @@
+name: Prepare Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Version bump to prepare when exact_version is empty."
+        required: true
+        default: alpha
+        type: choice
+        options:
+          - alpha
+          - patch
+          - minor
+          - major
+      exact_version:
+        description: "Exact version to prepare, such as 0.1.0-alpha.1. Overrides bump when set."
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+concurrency:
+  group: prepare-release
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    if: github.repository == 'fraction12/deepclean'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22.x
+          cache: npm
+
+      - run: npm ci
+
+      - name: Prepare release files
+        env:
+          BUMP: ${{ inputs.bump }}
+          EXACT_VERSION: ${{ inputs.exact_version || '' }}
+        run: |
+          if [ -n "$EXACT_VERSION" ]; then
+            npm run release:prepare -- --version "$EXACT_VERSION"
+          else
+            npm run release:prepare -- --bump "$BUMP"
+          fi
+
+      - run: npm run release:check
+
+      - name: Resolve prepared version
+        id: version
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "branch=release/v$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Create release pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+          BRANCH: ${{ steps.version.outputs.branch }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$BRANCH"
+          git add package.json package-lock.json CHANGELOG.md
+          git commit -m "release: v$VERSION"
+          git push --set-upstream origin "$BRANCH"
+          cat > /tmp/release-pr-body.md <<EOF
+          ## Summary
+          - Prepare release v$VERSION.
+          - Move CHANGELOG Unreleased entries into the release section.
+
+          ## Verification
+          - npm run release:check
+          EOF
+          gh pr create \
+            --base main \
+            --head "$BRANCH" \
+            --title "release: v$VERSION" \
+            --body-file /tmp/release-pr-body.md
+          gh workflow run ci.yml --ref "$BRANCH"

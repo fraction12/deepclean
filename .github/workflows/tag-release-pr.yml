@@ -1,0 +1,55 @@
+name: Tag Release PR
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+permissions:
+  contents: write
+  actions: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  tag:
+    if: >
+      github.repository == 'fraction12/deepclean' &&
+      github.event.pull_request.merged == true &&
+      startsWith(github.event.pull_request.title, 'release: v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22.x
+
+      - name: Create matching release tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          TAG="v$VERSION"
+          TITLE="${{ github.event.pull_request.title }}"
+          if [ "$TITLE" != "release: $TAG" ]; then
+            echo "Release PR title '$TITLE' does not match package version '$TAG'" >&2
+            exit 1
+          fi
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "Tag $TAG already exists locally" >&2
+            exit 1
+          fi
+          if git ls-remote --tags origin "refs/tags/$TAG" | grep -q "$TAG"; then
+            echo "Tag $TAG already exists on origin" >&2
+            exit 1
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag "$TAG"
+          git push origin "$TAG"
+          gh workflow run release.yml --ref "$TAG"

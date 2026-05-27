@@ -13,7 +13,40 @@ Configure npm trusted publishing for `@fraction12/deepclean`:
 
 The release workflow uses GitHub OIDC and does not require a long-lived npm token.
 
-## Normal Release
+## One-Command Release Prep
+
+Use the GitHub Actions `Prepare Release` workflow for normal releases.
+
+Inputs:
+
+- `bump`: `alpha`, `patch`, `minor`, or `major`
+- `exact_version`: optional exact version, such as `0.1.0-alpha.1`
+
+The workflow:
+
+1. Runs `npm run release:prepare`.
+2. Updates `package.json`, `package-lock.json`, and `CHANGELOG.md`.
+3. Runs `npm run release:check`.
+4. Opens a release PR named `release: v<version>`.
+5. Dispatches CI for the generated release branch.
+
+After the release PR is reviewed and merged, the `Tag Release PR` workflow creates the matching `v<version>` tag and dispatches the `Release` workflow against that tag. The existing `Release` workflow publishes to npm with provenance.
+
+For an alpha release, use `bump=alpha`. From `0.1.0-alpha.0`, this prepares `0.1.0-alpha.1`.
+
+From the CLI:
+
+```bash
+gh workflow run prepare-release.yml --ref main -f bump=alpha
+```
+
+For an exact version:
+
+```bash
+gh workflow run prepare-release.yml --ref main -f bump=alpha -f exact_version=0.1.0-alpha.1
+```
+
+## Manual Release
 
 1. Update `package.json` version.
 2. Move relevant `CHANGELOG.md` entries from `Unreleased` into that version.
@@ -34,7 +67,7 @@ git push origin v0.1.0-alpha.1
 
 The tag must match `package.json` exactly. For prereleases, the workflow publishes under the prerelease label, such as `alpha`. Stable versions publish under `latest`.
 
-## Manual Release
+## Manual Publish Retry
 
 Use the GitHub Actions `Release` workflow dispatch when a tag release needs to be retried or when publishing from the current branch deliberately.
 
