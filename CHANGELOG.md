@@ -2,7 +2,12 @@
 
 ## Unreleased
 
+## 0.1.0-alpha.2 - 2026-05-27
+
 - Changed `scan` and CI-style scans to request Codex synthesis by default after local evidence collection, with `--evidence-only` as the deterministic-only escape hatch.
+- Added synthesis attempt ledgers with validation checks, failure records for malformed provider output, and final candidate ID alignment after ranking.
+- Included `.deepclean/synthesis/` in doctor/status/prune retention so synthesis artifacts are visible, validated, and cleaned up with the rest of a run.
+- Refined the public site hero and motion treatment after UAT.
 
 ## 0.1.0-alpha.1 - 2026-05-27
 
