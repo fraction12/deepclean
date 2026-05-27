@@ -94,13 +94,14 @@ export async function synthesizeWithCodex(options: {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "deepclean-codex-"));
   const outputPath = path.join(tempDir, "codex-output.json");
   const schemaPath = path.join(tempDir, "synthesis.schema.json");
+  let attemptBase: ReturnType<typeof buildAttemptBase> | undefined;
 
   try {
     await writeFile(schemaPath, JSON.stringify(jsonSchema(), null, 2), "utf8");
     const reviewerPack = await resolveReviewerPack(options.root, options.config);
     diagnostics.push(...reviewerPack.diagnostics);
     const prompt = buildPrompt(options, reviewerPack.rubrics);
-    const attemptBase = buildAttemptBase({
+    attemptBase = buildAttemptBase({
       runId: options.runId,
       createdAt: options.createdAt,
       evidence: options.evidence,
@@ -266,10 +267,22 @@ export async function synthesizeWithCodex(options: {
       code: "codex_synthesis_error",
       message: error instanceof Error ? error.message : String(error),
       adapter: "codex-synthesis",
-    }];
+    }, ...diagnostics];
     return {
       candidates: [],
       diagnostics: failureDiagnostics,
+      attempt: attemptBase
+        ? {
+          ...attemptBase,
+          rawCandidateCount: 0,
+          acceptedCandidateCount: 0,
+          rejectedCandidateCount: 0,
+          rejectedEvidenceIds: [],
+          notes: [],
+          validations: [],
+          diagnostics: failureDiagnostics,
+        }
+        : undefined,
     };
   } finally {
     await rm(tempDir, { recursive: true, force: true });

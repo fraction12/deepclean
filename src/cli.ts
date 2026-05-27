@@ -1003,7 +1003,7 @@ async function executeScan(
   await writeFeatures(context.paths, runId, features);
   await writeEvidence(context.paths, runId, evidence);
   if (synthesisResult.attempt) {
-    await writeSynthesisAttempt(context.paths, synthesisResult.attempt);
+    await writeSynthesisAttempt(context.paths, remapSynthesisAttemptCandidateIds(synthesisResult.attempt, candidates));
   }
   await writeCandidates(context.paths, runId, candidates);
   await writeFindings(context.paths, identity.findings);
@@ -1058,6 +1058,26 @@ async function executeScan(
   };
 
   return { runId, diagnostics, data };
+}
+
+function remapSynthesisAttemptCandidateIds(
+  attempt: SynthesisAttemptRecord,
+  candidates: CandidateRecord[],
+): SynthesisAttemptRecord {
+  const candidateIdByValidationId = new Map(
+    candidates
+      .filter((candidate) => candidate.provenance.source === "model-synthesis")
+      .flatMap((candidate) => candidate.provenance.validationId
+        ? [[candidate.provenance.validationId, candidate.id] as const]
+        : []),
+  );
+  return {
+    ...attempt,
+    validations: attempt.validations.map((validation) => ({
+      ...validation,
+      candidateId: candidateIdByValidationId.get(validation.id),
+    })),
+  };
 }
 
 async function reportCommand(context: CommandContext): Promise<number> {
@@ -1853,6 +1873,7 @@ async function missingStateDirectories(paths: StatePaths): Promise<string[]> {
     ["locks", paths.locksDir],
     ["retention", paths.retentionDir],
     ["fixes", paths.fixesDir],
+    ["synthesis", paths.synthesisDir],
   ];
   const missing: string[] = [];
   for (const [name, dir] of expected) {
@@ -2216,6 +2237,7 @@ async function buildRetentionManifest(context: CommandContext): Promise<Retentio
     [context.paths.candidatesDir, "json"],
     [context.paths.clustersDir, "json"],
     [context.paths.observationsDir, "json"],
+    [context.paths.synthesisDir, "json"],
   ] as const) {
     const files = await filesWithExtension(dir, extension);
     for (const file of files) {
@@ -2702,6 +2724,7 @@ async function stateArtifactCounts(paths: StatePaths): Promise<Record<string, nu
     ["locks", paths.locksDir],
     ["retention", paths.retentionDir],
     ["fixes", paths.fixesDir],
+    ["synthesis", paths.synthesisDir],
   ];
   const counts: Record<string, number> = {};
   for (const [name, dir] of dirs) {

@@ -485,6 +485,7 @@ describe("deepclean cli", () => {
         ".deepclean/runs/run-20000101000000-old.json",
         ".deepclean/features/run-20000101000000-old.json",
         ".deepclean/evidence/run-20000101000000-old.json",
+        ".deepclean/synthesis/run-20000101000000-old.json",
         ".deepclean/reports/report-old.json",
         ".deepclean/reports/report-old.md",
       ]));
@@ -503,6 +504,7 @@ describe("deepclean cli", () => {
       await expect(stat(path.join(repo, ".deepclean", "config.json"))).resolves.toBeTruthy();
       await expect(stat(path.join(repo, ".deepclean", "evidence", `${latestRun}.json`))).resolves.toBeTruthy();
       await expect(stat(path.join(repo, ".deepclean", "features", `${latestRun}.json`))).resolves.toBeTruthy();
+      await expect(stat(path.join(repo, ".deepclean", "synthesis", "run-20000101000000-old.json"))).rejects.toThrow();
       expect(await readLockStatuses(resolveStatePaths({ cwd: repo }))).toEqual([]);
     });
   });
@@ -1311,10 +1313,11 @@ fs.writeFileSync(outputPath, JSON.stringify({
       expect(payload.data.candidates[0]?.provenance.runtime?.["timeoutMs"]).toBe(5000);
       const attempt = JSON.parse(
         await readFile(path.join(repo, ".deepclean", "synthesis", `${payload.data.runId}.json`), "utf8"),
-      ) as { rawCandidateCount: number; acceptedCandidateCount: number; validations: Array<{ status: string }> };
+      ) as { rawCandidateCount: number; acceptedCandidateCount: number; validations: Array<{ status: string; candidateId?: string }> };
       expect(attempt.rawCandidateCount).toBe(1);
       expect(attempt.acceptedCandidateCount).toBe(1);
       expect(attempt.validations[0]?.status).toBe("accepted");
+      expect(attempt.validations[0]?.candidateId).toBe(payload.data.candidates[0]?.id);
 
       const explain = await runCli(["explain", payload.data.candidates[0]?.id ?? "", "--json"], repo);
       expect(explain.code).toBe(0);
@@ -1705,12 +1708,19 @@ fs.writeFileSync(outputPath, "not json");
       const result = await runCli(["scan", "--synthesize", "--json"], repo);
       expect(result.code).toBe(0);
       const payload = JSON.parse(result.stdout) as {
-        data: { candidateCount: number; synthesis: { candidateCount: number } };
+        data: { runId: string; candidateCount: number; synthesis: { candidateCount: number } };
         diagnostics: Array<{ code: string }>;
       };
       expect(payload.data.candidateCount).toBeGreaterThan(0);
       expect(payload.data.synthesis.candidateCount).toBe(0);
       expect(payload.diagnostics.some((item) => item.code === "codex_synthesis_error")).toBe(true);
+      const attempt = JSON.parse(
+        await readFile(path.join(repo, ".deepclean", "synthesis", `${payload.data.runId}.json`), "utf8"),
+      ) as { rawCandidateCount: number; acceptedCandidateCount: number; rejectedCandidateCount: number; diagnostics: Array<{ code: string }> };
+      expect(attempt.rawCandidateCount).toBe(0);
+      expect(attempt.acceptedCandidateCount).toBe(0);
+      expect(attempt.rejectedCandidateCount).toBe(0);
+      expect(attempt.diagnostics.some((item) => item.code === "codex_synthesis_error")).toBe(true);
     });
   });
 
@@ -1806,6 +1816,7 @@ async function writeOldRunArtifacts(repo: string): Promise<void> {
   await mkdir(path.join(state, "candidates"), { recursive: true });
   await mkdir(path.join(state, "clusters"), { recursive: true });
   await mkdir(path.join(state, "observations"), { recursive: true });
+  await mkdir(path.join(state, "synthesis"), { recursive: true });
   await mkdir(path.join(state, "reports"), { recursive: true });
   await mkdir(path.join(state, "plans"), { recursive: true });
   await mkdir(path.join(state, "handoffs"), { recursive: true });
@@ -1826,6 +1837,34 @@ async function writeOldRunArtifacts(repo: string): Promise<void> {
   for (const dir of ["evidence", "features", "candidates", "clusters", "observations"]) {
     await writeFile(path.join(state, dir, `${oldRunId}.json`), "[]\n", "utf8");
   }
+  await writeFile(path.join(state, "synthesis", `${oldRunId}.json`), `${JSON.stringify({
+    schemaVersion,
+    recordType: "synthesis_attempt",
+    id: "synthesis-20000101000000-old",
+    runId: oldRunId,
+    provider: "codex",
+    promptVersion: "codex-synthesis-v3-matt-pocock-reviewers",
+    promptBytes: 100,
+    runtime: { timeoutMs: 1000 },
+    reviewerIds: [],
+    evidenceManifest: {
+      evidenceCount: 0,
+      includedEvidenceIds: [],
+      includedFileRefs: [],
+      omittedEvidenceIds: [],
+      includeSource: false,
+      tokenBudget: 8000,
+      excerptBudget: 0,
+    },
+    rawCandidateCount: 0,
+    acceptedCandidateCount: 0,
+    rejectedCandidateCount: 0,
+    rejectedEvidenceIds: [],
+    notes: [],
+    validations: [],
+    diagnostics: [],
+    createdAt: "2000-01-01T00:00:00.000Z",
+  }, null, 2)}\n`, "utf8");
   await writeFile(path.join(state, "reports", "report-old.json"), `${JSON.stringify({
     schemaVersion,
     recordType: "report",
