@@ -70,6 +70,19 @@ const valueFlags = new Set([
   "paths",
   "categories",
   "reviewers",
+  "output",
+  "sarif",
+  "max-p0",
+  "max-p1",
+  "max-p2",
+  "max-p3",
+  "max-new-p0",
+  "max-new-p1",
+  "max-new-p2",
+  "max-new-p3",
+  "max-stale",
+  "min-confidence",
+  "fail-category",
 ]);
 
 export function legacyParseArgs(argv: string[]): ParsedArgs {

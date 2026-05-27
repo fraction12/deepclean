@@ -511,6 +511,53 @@ ${Array.from({ length: 120 }, (_, index) => `  const dirtyValue${index} = ${inde
     });
   });
 
+  test("ci mode passes, fails policy, and writes artifacts", async () => {
+    await withTempRepo(async (repo) => {
+      await writeFixtureSource(repo);
+      const pass = await runCli(["ci", "--json", "--max-new-p0", "0"], repo);
+      expect(pass.code).toBe(0);
+      const passPayload = JSON.parse(pass.stdout) as {
+        data: { ciRun: { status: string }; result: { blockingFindingIds: string[] } };
+      };
+      expect(passPayload.data.ciRun.status).toBe("passed");
+      expect(passPayload.data.result.blockingFindingIds).toEqual([]);
+
+      const fail = await runCli([
+        "ci",
+        "--json",
+        "--max-new-p2",
+        "0",
+        "--output",
+        ".deepclean/ci/summary.md",
+        "--sarif",
+        ".deepclean/ci/deepclean.sarif",
+      ], repo);
+      expect(fail.code).toBe(3);
+      const failPayload = JSON.parse(fail.stdout) as {
+        data: {
+          ciRun: { status: string; artifactPaths: { markdown?: string; sarif?: string } };
+          result: { blockingFindingIds: string[] };
+        };
+      };
+      expect(failPayload.data.ciRun.status).toBe("policy-failed");
+      expect(failPayload.data.result.blockingFindingIds.length).toBeGreaterThan(0);
+      expect(await readFile(failPayload.data.ciRun.artifactPaths.markdown ?? "", "utf8")).toContain("# Deepclean CI");
+      const sarif = JSON.parse(await readFile(failPayload.data.ciRun.artifactPaths.sarif ?? "", "utf8")) as { version: string };
+      expect(sarif.version).toBe("2.1.0");
+    });
+  });
+
+  test("ci mode fails fast when synthesis is required but not requested", async () => {
+    await withTempRepo(async (repo) => {
+      await writeFixtureSource(repo);
+      const result = await runCli(["ci", "--require-synthesis", "--json"], repo);
+      expect(result.code).toBe(2);
+      const payload = JSON.parse(result.stdout) as { ok: boolean; error: { code: string } };
+      expect(payload.ok).toBe(false);
+      expect(payload.error.code).toBe("ci_synthesis_required");
+    });
+  });
+
   test("classifies revalidation outcomes", async () => {
     await withTempRepo(async (repo) => {
       await mkdir(path.join(repo, "src"), { recursive: true });

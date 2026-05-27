@@ -14,6 +14,27 @@ Important diagnostic codes:
 - `git_unavailable`: the target directory is not a git repository or git could not run there.
 - `provider_unavailable`: synthesis is configured but the provider command could not be executed.
 
+## CI Mode
+
+Use `deepclean ci --json` in automation. It runs a non-interactive scan, applies explicit policy gates, persists a CI run record under `.deepclean/ci/`, and exits `0` on pass or `3` on policy failure.
+
+Example GitHub Actions step:
+
+```yaml
+- name: Deepclean CI
+  run: |
+    npx @fraction12/deepclean@alpha ci \
+      --since origin/main \
+      --include-dirty \
+      --max-new-p0 0 \
+      --max-new-p1 0 \
+      --output .deepclean/ci/summary.md \
+      --sarif .deepclean/ci/deepclean.sarif \
+      --json
+```
+
+Use `--require-synthesis --synthesize` only in CI environments where the configured provider is installed and authenticated. Without `--synthesize`, `--require-synthesis` fails fast rather than silently running a weaker local-only gate.
+
 ## Codex Is Missing
 
 Run:

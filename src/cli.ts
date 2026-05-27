@@ -2,7 +2,7 @@
 
 import { execFile } from "node:child_process";
 import { realpathSync } from "node:fs";
-import { readdir, readFile, stat } from "node:fs/promises";
+import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
@@ -35,6 +35,7 @@ import {
   updateLatestCandidates,
   writeCandidates,
   writeCandidateObservations,
+  writeCiRun,
   writeClusters,
   writeEvidence,
   writeFindings,
@@ -67,6 +68,7 @@ const commands = [
   "init",
   "doctor",
   "status",
+  "ci",
   "scan",
   "report",
   "next",
@@ -132,6 +134,7 @@ Commands:
   init                         Create or validate .deepclean state
   doctor                       Check environment, config, state, git, provider, and privacy readiness
   status                       Summarize current project-local Deepclean state
+  ci                           Run non-interactive scan and policy gates for CI
   scan                         Collect local evidence and generate candidates
     --synthesize               Run local Codex synthesis over evidence
     --allow-source-in-model    Include source samples in Codex prompt
@@ -214,6 +217,8 @@ export async function main(argv: string[], cwd = process.cwd()): Promise<number>
         return await doctorCommand(context);
       case "status":
         return await statusCommand(context);
+      case "ci":
+        return await ciCommand(context);
       case "scan":
         return await scanCommand(context);
       case "report":
@@ -378,6 +383,50 @@ async function statusCommand(context: CommandContext): Promise<number> {
     printDiagnostics(diagnostics);
   }
   return 0;
+}
+
+async function ciCommand(context: CommandContext): Promise<number> {
+  const requireSynthesis = flagBoolean(context.parsed.flags, "require-synthesis");
+  if (requireSynthesis && !flagBoolean(context.parsed.flags, "synthesize")) {
+    const diagnostic: Diagnostic = {
+      level: "error",
+      code: "ci_synthesis_required",
+      message: "CI policy requires synthesis; rerun with --synthesize and a configured provider.",
+    };
+    emit(context.json, fail("ci", "ci_synthesis_required", diagnostic.message, [diagnostic]));
+    return 2;
+  }
+
+  const scan = await executeScan(context, { synthesize: flagBoolean(context.parsed.flags, "synthesize") });
+  const policy = ciPolicyFromFlags(context);
+  const gate = evaluateCiPolicy(scan.data.candidates, policy);
+  const createdAt = new Date().toISOString();
+  const artifactPaths = await writeCiArtifacts(context, scan.data, gate);
+  const ciRun = {
+    schemaVersion,
+    recordType: "ci_run" as const,
+    id: timestampId("ci"),
+    runId: scan.runId,
+    baselineRef: scan.data.scope.since ?? scan.data.scope.mergeBase,
+    status: gate.blockingFindingIds.length > 0 ? "policy-failed" as const : "passed" as const,
+    policy,
+    blockingFindingIds: gate.blockingFindingIds,
+    artifactPaths,
+    diagnostics: scan.diagnostics,
+    createdAt,
+  };
+  await writeCiRun(context.paths, ciRun);
+
+  emit(context.json, ok("ci", {
+    ciRun,
+    policy,
+    result: gate,
+    scan: scan.data,
+  }, scan.diagnostics));
+  if (!context.json && !context.quiet) {
+    console.log(`CI ${ciRun.status}: ${gate.blockingFindingIds.length} blocking finding${gate.blockingFindingIds.length === 1 ? "" : "s"}`);
+  }
+  return gate.blockingFindingIds.length > 0 ? 3 : 0;
 }
 
 async function scanCommand(context: CommandContext): Promise<number> {
@@ -1173,6 +1222,170 @@ function markDirtyTreeEvidence(evidence: EvidenceRecord[], scope: ScanScope): Ev
       }
       : record;
   });
+}
+
+function ciPolicyFromFlags(context: CommandContext): Record<string, unknown> {
+  const policy: Record<string, unknown> = {};
+  for (const key of [
+    "max-p0",
+    "max-p1",
+    "max-p2",
+    "max-p3",
+    "max-new-p0",
+    "max-new-p1",
+    "max-new-p2",
+    "max-new-p3",
+    "max-stale",
+  ]) {
+    const value = flagString(context.parsed.flags, key);
+    if (value !== undefined && value !== "") {
+      policy[key] = Number(value);
+    }
+  }
+  const minConfidence = flagString(context.parsed.flags, "min-confidence");
+  if (minConfidence) {
+    policy["min-confidence"] = minConfidence;
+  }
+  const failCategory = csvFlag(context, "fail-category");
+  if (failCategory.length > 0) {
+    policy["fail-category"] = failCategory;
+  }
+  return policy;
+}
+
+function evaluateCiPolicy(candidates: CandidateRecord[], policy: Record<string, unknown>): {
+  blockingFindingIds: string[];
+  reasons: Array<{ findingId: string; reason: string }>;
+} {
+  const blockers = new Map<string, string>();
+  const byPriority = countBy(candidates, (candidate) => candidate.priority.toLowerCase());
+  for (const priority of ["p0", "p1", "p2", "p3"]) {
+    const max = numberPolicy(policy, `max-${priority}`);
+    if (max !== undefined && (byPriority[priority] ?? 0) > max) {
+      for (const candidate of candidates.filter((item) => item.priority.toLowerCase() === priority).slice(max)) {
+        blockers.set(candidate.findingId ?? candidate.id, `max-${priority}`);
+      }
+    }
+    const maxNew = numberPolicy(policy, `max-new-${priority}`);
+    if (maxNew !== undefined) {
+      const newCandidates = candidates.filter((item) => (
+        item.priority.toLowerCase() === priority
+        && item.baselineStatus === "new"
+      ));
+      if (newCandidates.length > maxNew) {
+        for (const candidate of newCandidates.slice(maxNew)) {
+          blockers.set(candidate.findingId ?? candidate.id, `max-new-${priority}`);
+        }
+      }
+    }
+  }
+  const maxStale = numberPolicy(policy, "max-stale");
+  if (maxStale !== undefined) {
+    const stale = candidates.filter((candidate) => candidate.lifecycleState === "stale" || candidate.status === "stale");
+    if (stale.length > maxStale) {
+      for (const candidate of stale.slice(maxStale)) {
+        blockers.set(candidate.findingId ?? candidate.id, "max-stale");
+      }
+    }
+  }
+  const categories = Array.isArray(policy["fail-category"]) ? policy["fail-category"] : [];
+  for (const candidate of candidates) {
+    if (categories.includes(candidate.category)) {
+      blockers.set(candidate.findingId ?? candidate.id, `fail-category:${candidate.category}`);
+    }
+  }
+  const minConfidence = typeof policy["min-confidence"] === "string" ? policy["min-confidence"] : undefined;
+  if (minConfidence) {
+    const order = ["low", "medium", "high"];
+    const minimum = order.indexOf(minConfidence);
+    if (minimum >= 0) {
+      for (const candidate of candidates) {
+        if (order.indexOf(candidate.confidence) < minimum) {
+          blockers.set(candidate.findingId ?? candidate.id, `min-confidence:${minConfidence}`);
+        }
+      }
+    }
+  }
+  return {
+    blockingFindingIds: [...blockers.keys()].sort(),
+    reasons: [...blockers.entries()].map(([findingId, reason]) => ({ findingId, reason })),
+  };
+}
+
+async function writeCiArtifacts(
+  context: CommandContext,
+  scan: ScanExecutionResult["data"],
+  gate: { blockingFindingIds: string[]; reasons: Array<{ findingId: string; reason: string }> },
+): Promise<{ json?: string; markdown?: string; sarif?: string }> {
+  const artifactPaths: { json?: string; markdown?: string; sarif?: string } = {};
+  const output = flagString(context.parsed.flags, "output");
+  if (output) {
+    const markdownPath = path.resolve(context.paths.root, output);
+    await mkdir(path.dirname(markdownPath), { recursive: true });
+    await writeFile(markdownPath, renderCiMarkdown(scan, gate), "utf8");
+    artifactPaths.markdown = markdownPath;
+  }
+  const sarif = flagString(context.parsed.flags, "sarif");
+  if (sarif) {
+    const sarifPath = path.resolve(context.paths.root, sarif);
+    await mkdir(path.dirname(sarifPath), { recursive: true });
+    await writeFile(sarifPath, JSON.stringify(renderCiSarif(scan.candidates), null, 2) + "\n", "utf8");
+    artifactPaths.sarif = sarifPath;
+  }
+  return artifactPaths;
+}
+
+function renderCiMarkdown(
+  scan: ScanExecutionResult["data"],
+  gate: { blockingFindingIds: string[]; reasons: Array<{ findingId: string; reason: string }> },
+): string {
+  return [
+    "# Deepclean CI",
+    "",
+    `Run: ${scan.runId}`,
+    `Candidates: ${scan.candidateCount}`,
+    `Blocking: ${gate.blockingFindingIds.length}`,
+    "",
+    "## Blocking Findings",
+    "",
+    ...(
+      gate.reasons.length > 0
+        ? gate.reasons.map((reason) => `- ${reason.findingId}: ${reason.reason}`)
+        : ["None"]
+    ),
+    "",
+  ].join("\n");
+}
+
+function renderCiSarif(candidates: CandidateRecord[]): unknown {
+  return {
+    version: "2.1.0",
+    runs: [{
+      tool: { driver: { name: "Deepclean" } },
+      results: candidates.map((candidate) => ({
+        ruleId: `deepclean/${candidate.category}`,
+        level: candidate.priority === "P0" || candidate.priority === "P1" ? "warning" : "note",
+        message: { text: `${candidate.id}: ${candidate.title}` },
+        locations: candidate.files.slice(0, 1).map((file) => ({
+          physicalLocation: {
+            artifactLocation: { uri: file.path },
+            region: { startLine: file.startLine ?? 1, endLine: file.endLine ?? file.startLine ?? 1 },
+          },
+        })),
+        properties: {
+          findingId: candidate.findingId,
+          priority: candidate.priority,
+          confidence: candidate.confidence,
+          baselineStatus: candidate.baselineStatus,
+        },
+      })),
+    }],
+  };
+}
+
+function numberPolicy(policy: Record<string, unknown>, key: string): number | undefined {
+  const value = policy[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 async function gitMergeBaseChangedPaths(root: string, ref: string): Promise<string[]> {
