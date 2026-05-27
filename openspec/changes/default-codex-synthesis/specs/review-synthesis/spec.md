@@ -1,7 +1,7 @@
 ## MODIFIED Requirements
 
 ### Requirement: Review modes
-The system SHALL support maintainability investigation review modes focused on cleanup candidates, with built-in reviewer rubrics as the default and optional configured custom rubrics. The default scan mode SHALL run model-backed synthesis after local evidence collection unless the user explicitly selects evidence-only or local-only operation.
+The system SHALL support maintainability investigation review modes focused on cleanup candidates, with built-in reviewer rubrics as the default and optional configured custom rubrics. The default scan mode SHALL run model-backed synthesis after local evidence collection unless the user explicitly selects evidence-only or local-only operation, regardless of legacy `reviewSynthesis.enabled` values.
 
 #### Scenario: Default scan runs
 - **WHEN** an agent runs `deepclean scan`

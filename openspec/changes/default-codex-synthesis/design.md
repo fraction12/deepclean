@@ -9,7 +9,7 @@ Deepclean should treat synthesis as the normal product path and deterministic sc
 
 ## CLI Behavior
 
-- `deepclean scan` requests synthesis by default through `reviewSynthesis.enabled`.
+- `deepclean scan` requests synthesis by default after local evidence collection.
 - `deepclean ci` uses the same scan default so PR workflows produce synthesized artifacts unless explicitly disabled.
 - `--synthesize` remains accepted for backward compatibility and explicitness.
 - `--evidence-only` is added as product language for deterministic-only analysis.
@@ -25,4 +25,4 @@ Provider failures remain non-destructive for ordinary scans: Deepclean persists 
 
 ## Compatibility
 
-Existing users who already pass `--synthesize` see the same behavior. Users who relied on local-only default scans can use `--evidence-only`, `--offline`, `--local-only`, or config-level `reviewSynthesis.offline`.
+Existing users who already pass `--synthesize` see the same behavior. Users who relied on local-only default scans or legacy `reviewSynthesis.enabled=false` can use `--evidence-only`, `--offline`, `--local-only`, or config-level `reviewSynthesis.offline`.

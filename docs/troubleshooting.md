@@ -153,7 +153,7 @@ deepclean scan \
 
 Runtime controls can also live in `.deepclean/config.json` under `reviewSynthesis`: `model`, `effort`, `timeoutMs`, `retries`, `rpm`, `concurrency`, `tokenBudget`, `excerptBudget`, `offline`, and `privacyMode`.
 
-Use `--evidence-only`, `--offline`, or `--local-only` when no provider should run. Deepclean will keep local evidence/candidates, mark synthesis as skipped by policy, and emit `synthesis_skipped_by_policy` when synthesis would otherwise be requested.
+Use `--evidence-only`, `--offline`, or `--local-only` when no provider should run. Deepclean will keep local evidence/candidates, mark synthesis as skipped by policy, and emit `synthesis_skipped_by_policy` when synthesis would otherwise be requested. Legacy `reviewSynthesis.enabled=false` does not disable the default synthesis path; use `reviewSynthesis.offline=true` for config-level local-only operation.
 
 `--privacy-mode metadata` keeps provider prompts metadata-only unless `--allow-source-in-model` is used with a positive `--excerpt-budget`. `--privacy-mode local-only` disables provider execution. `--privacy-mode source-ok` allows source excerpts when the excerpt budget is positive.
 

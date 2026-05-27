@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Changed new Deepclean configs so `scan` and CI-style scans request Codex synthesis by default after local evidence collection, with `--evidence-only` as the deterministic-only escape hatch.
+- Changed `scan` and CI-style scans to request Codex synthesis by default after local evidence collection, with `--evidence-only` as the deterministic-only escape hatch.
 
 ## 0.1.0-alpha.1 - 2026-05-27
 

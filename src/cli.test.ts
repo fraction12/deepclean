@@ -835,7 +835,7 @@ fs.writeFileSync(outputPath, JSON.stringify({
 }));
 `);
 
-      const result = await runCli(["ci", "--json", "--max-new-p0", "0"], repo);
+      const result = await runCli(["ci", "--require-synthesis", "--json", "--max-new-p0", "0"], repo);
       expect(result.code).toBe(0);
       const payload = JSON.parse(result.stdout) as {
         data: {
@@ -859,6 +859,33 @@ fs.writeFileSync(outputPath, JSON.stringify({
       const payload = JSON.parse(result.stdout) as { ok: boolean; error: { code: string } };
       expect(payload.ok).toBe(false);
       expect(payload.error.code).toBe("ci_synthesis_required");
+    });
+  });
+
+  test("ci mode fails when required synthesis provider is unavailable", async () => {
+    await withTempRepo(async (repo) => {
+      await writeFixtureSource(repo);
+      await runCli(["init", "--json"], repo);
+      const configPath = path.join(repo, ".deepclean", "config.json");
+      const config = JSON.parse(await readFile(configPath, "utf8")) as {
+        reviewSynthesis: { command: string };
+      };
+      config.reviewSynthesis.command = path.join(repo, "missing-codex");
+      await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+
+      const result = await runCli(["ci", "--require-synthesis", "--json", "--max-new-p0", "0"], repo);
+      expect(result.code).toBe(2);
+      const payload = JSON.parse(result.stdout) as {
+        ok: boolean;
+        error: { code: string };
+        diagnostics: Array<{ code: string; level: string }>;
+      };
+      expect(payload.ok).toBe(false);
+      expect(payload.error.code).toBe("ci_synthesis_failed");
+      expect(payload.diagnostics.some((diagnostic) => (
+        diagnostic.code === "codex_provider_unavailable"
+        && diagnostic.level === "error"
+      ))).toBe(true);
     });
   });
 
@@ -1108,7 +1135,7 @@ fs.writeFileSync(outputPath, JSON.stringify({
     });
   });
 
-  test("scan synthesizes candidates by default through a local Codex-compatible command", async () => {
+  test("scan synthesizes candidates by default even with legacy enabled false config", async () => {
     await withTempRepo(async (repo) => {
       await writeFixtureSource(repo);
       await installFakeCodex(repo, `#!/usr/bin/env node
@@ -1149,6 +1176,12 @@ fs.writeFileSync(outputPath, JSON.stringify({
   notes: ["fake synthesis complete"]
 }));
 `);
+      const configPath = path.join(repo, ".deepclean", "config.json");
+      const config = JSON.parse(await readFile(configPath, "utf8")) as {
+        reviewSynthesis: { enabled: boolean };
+      };
+      config.reviewSynthesis.enabled = false;
+      await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
 
       const result = await runCli([
         "scan",
