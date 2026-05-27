@@ -62,8 +62,6 @@ jobs:
           NODE
 
       - name: Publish to npm
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npm publish --access public --tag "${{ steps.meta.outputs.npm_tag }}" --provenance
 
       - name: Published package

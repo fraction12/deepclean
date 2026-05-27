@@ -4,15 +4,14 @@ Deepclean deploys by publishing the npm package `@fraction12/deepclean`.
 
 ## Required GitHub Setup
 
-Add this repository secret:
+Configure npm trusted publishing for `@fraction12/deepclean`:
 
-```text
-NPM_TOKEN
-```
+- Publisher: GitHub Actions
+- Repository: `fraction12/deepclean`
+- Workflow: `.github/workflows/release.yaml`
+- Environment: `npm`
 
-Use an npm automation token with publish access to `@fraction12/deepclean`.
-
-The release workflow also requests GitHub OIDC so npm can attach provenance when the token and npm account allow it.
+The release workflow uses GitHub OIDC and does not require a long-lived npm token.
 
 ## Normal Release
 
@@ -50,4 +49,4 @@ npm dist-tag add @fraction12/deepclean@0.1.0-alpha.0 latest
 
 ## Token Hygiene
 
-Rotate npm tokens after any accidental exposure. If a token is rotated, update the `NPM_TOKEN` repository secret before the next release.
+Rotate npm tokens after any accidental exposure. This repository release path should not need one going forward.
