@@ -884,7 +884,7 @@ async function executeFeatureMap(context: CommandContext): Promise<{
     mapSource,
   });
   const files = discoveredFiles.filter((file) => fileInScope(file, scope));
-  const features = filterFeaturesByScanScope(fullFeatures, scope);
+  const features = fullFeatures.filter((feature) => featureInScope(feature, scope));
   const featurePath = await writeFeatures(context.paths, mapId, features);
   return {
     mapId,
@@ -3290,10 +3290,6 @@ function featureInScope(feature: FeatureRecord, scope: ScanScope): boolean {
     }
     return scope.changedPaths.length === 0 || scope.changedPaths.includes(filePath);
   });
-}
-
-function filterFeaturesByScanScope(features: FeatureRecord[], scope: ScanScope): FeatureRecord[] {
-  return features.filter((feature) => featureInScope(feature, scope));
 }
 
 function filterCandidatesByScanScope(candidates: CandidateRecord[], scope: ScanScope): CandidateRecord[] {
