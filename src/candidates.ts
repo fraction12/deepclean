@@ -143,6 +143,56 @@ export function reassignCandidateIds(candidates: CandidateRecord[]): CandidateRe
   }));
 }
 
+type CandidateEvidenceBase = Pick<
+  CandidateRecord,
+  | "schemaVersion"
+  | "recordType"
+  | "id"
+  | "runId"
+  | "status"
+  | "files"
+  | "evidenceIds"
+  | "affectedFeatureIds"
+  | "featureScope"
+  | "provenance"
+  | "createdAt"
+  | "updatedAt"
+>;
+
+function candidateEvidenceContext(
+  evidence: EvidenceRecord,
+  runId: string,
+  createdAt: string,
+  index: number,
+  verificationProfile?: VerificationProfile,
+): { base: CandidateEvidenceBase; verification: string[] } {
+  const verification = commandsForFiles(verificationProfile ?? {
+    defaultCommands: ["npm test", "npm run typecheck"],
+    pythonCommands: ["npm test", "npm run typecheck"],
+    frontendCommands: ["npm test", "npm run typecheck"],
+    adminCommands: ["npm test", "npm run typecheck"],
+  }, evidence.files, ["npm test", "npm run typecheck"]);
+  return {
+    base: {
+      schemaVersion,
+      recordType: "candidate" as const,
+      id: candidateId(index),
+      runId,
+      status: "open" as const,
+      files: evidence.files,
+      evidenceIds: [evidence.id],
+      affectedFeatureIds: evidence.affectedFeatureIds,
+      featureScope: featureScopeForEvidence(evidence),
+      provenance: {
+        source: "local-evidence" as const,
+      },
+      createdAt,
+      updatedAt: createdAt,
+    },
+    verification,
+  };
+}
+
 function candidateForEvidence(
   evidence: EvidenceRecord,
   runId: string,
@@ -150,28 +200,7 @@ function candidateForEvidence(
   index: number,
   verificationProfile?: VerificationProfile,
 ): CandidateRecord | undefined {
-  const verification = commandsForFiles(verificationProfile ?? {
-    defaultCommands: ["npm test", "npm run typecheck"],
-    pythonCommands: ["npm test", "npm run typecheck"],
-    frontendCommands: ["npm test", "npm run typecheck"],
-    adminCommands: ["npm test", "npm run typecheck"],
-  }, evidence.files, ["npm test", "npm run typecheck"]);
-  const base = {
-    schemaVersion,
-    recordType: "candidate" as const,
-    id: candidateId(index),
-    runId,
-    status: "open" as const,
-    files: evidence.files,
-    evidenceIds: [evidence.id],
-    affectedFeatureIds: evidence.affectedFeatureIds,
-    featureScope: featureScopeForEvidence(evidence),
-    provenance: {
-      source: "local-evidence" as const,
-    },
-    createdAt,
-    updatedAt: createdAt,
-  };
+  const { base, verification } = candidateEvidenceContext(evidence, runId, createdAt, index, verificationProfile);
 
   switch (evidence.kind) {
     case "duplicate-cluster":
