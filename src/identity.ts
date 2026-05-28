@@ -99,7 +99,7 @@ export function attachStableIdentity(options: {
 
 function upsertFindingForObservation(input: {
   candidate: CandidateRecord;
-  existing?: FindingRecord;
+  existing: FindingRecord | undefined;
   findingId: string;
   signature: FindingSignature;
   observationId: string;
