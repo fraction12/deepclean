@@ -19,6 +19,9 @@ const clusters = [
   { x: 0.49, y: 0.38, r: 112, color: colors.violet, stage: "handoff" },
 ];
 
+const stageDuration = 3.6;
+const transitionDuration = 1.45;
+
 const pointer = { x: 0, y: 0, tx: 0, ty: 0 };
 let ctx;
 let width = 0;
@@ -37,9 +40,33 @@ const seeded = (index) => {
 
 const chooseCluster = (index) => clusters[index % clusters.length];
 
+const smoothstep = (value) => {
+  const clamped = Math.max(0, Math.min(1, value));
+  return clamped * clamped * (3 - 2 * clamped);
+};
+
+const activeStageState = (elapsed) => {
+  const stagePosition = (elapsed / stageDuration) % clusters.length;
+  const activeIndex = Math.floor(stagePosition);
+  const nextIndex = (activeIndex + 1) % clusters.length;
+  const progress = stagePosition - activeIndex;
+  const transitionStart = 1 - transitionDuration / stageDuration;
+  const blend = smoothstep((progress - transitionStart) / (1 - transitionStart));
+  const weights = clusters.map(() => 0);
+
+  weights[activeIndex] = 1 - blend;
+  weights[nextIndex] = blend;
+
+  return {
+    activeIndex: blend > 0.5 ? nextIndex : activeIndex,
+    weights,
+  };
+};
+
 const buildParticles = () => {
   const count = Math.max(84, Math.min(220, Math.round((width * height) / 9000)));
   particles = Array.from({ length: count }, (_, index) => {
+    const clusterIndex = index % clusters.length;
     const cluster = chooseCluster(index);
     const angle = seeded(index + 1) * Math.PI * 2;
     const distance = Math.sqrt(seeded(index + 2)) * cluster.r;
@@ -48,6 +75,7 @@ const buildParticles = () => {
 
     return {
       cluster,
+      clusterIndex,
       homeX: clusterX + Math.cos(angle) * distance,
       homeY: clusterY + Math.sin(angle) * distance,
       radius: 0.75 + seeded(index + 3) * 2.05,
@@ -76,8 +104,8 @@ const setPointer = (clientX, clientY) => {
   pointer.ty = ((clientY - rect.top) / rect.height - 0.5) * 2;
 };
 
-const drawParticle = (particle, t, activeIndex) => {
-  const active = clusters[activeIndex] === particle.cluster ? 1 : 0;
+const drawParticle = (particle, t, weights) => {
+  const active = weights[particle.clusterIndex] ?? 0;
   const driftX = Math.sin(t * particle.drift + particle.phase) * (5 + active * 2.4);
   const driftY = Math.cos(t * particle.drift * 0.9 + particle.phase) * (4 + active * 2.4);
   const parallaxX = pointer.x * (10 + active * 14);
@@ -91,58 +119,67 @@ const drawParticle = (particle, t, activeIndex) => {
   ctx.fillStyle = `rgba(${particle.cluster.color}, ${particle.opacity + active * 0.36})`;
   ctx.fill();
 
-  if (active) {
+  if (active > 0.02) {
     ctx.beginPath();
     ctx.arc(x, y, glow * 3.8, 0, Math.PI * 2);
-    ctx.fillStyle = `rgba(${particle.cluster.color}, 0.026)`;
+    ctx.fillStyle = `rgba(${particle.cluster.color}, ${0.026 * active})`;
     ctx.fill();
   }
 
   return { x, y, active, particle };
 };
 
-const drawConnections = (points, activeIndex) => {
-  const activePoints = points.filter((point) => point.particle.cluster === clusters[activeIndex]);
-  const step = Math.max(3, Math.floor(activePoints.length / 22));
+const drawConnections = (points, weights) => {
+  clusters.forEach((cluster, clusterIndex) => {
+    const active = weights[clusterIndex] ?? 0;
+    if (active < 0.02) return;
 
-  for (let i = 0; i < activePoints.length; i += step) {
-    const a = activePoints[i];
-    const b = activePoints[(i + step * 2) % activePoints.length];
-    const distance = Math.hypot(a.x - b.x, a.y - b.y);
-    if (distance > 190) continue;
+    const activePoints = points.filter((point) => point.particle.clusterIndex === clusterIndex);
+    const step = Math.max(3, Math.floor(activePoints.length / 22));
 
-    ctx.beginPath();
-    ctx.moveTo(a.x, a.y);
-    ctx.lineTo(b.x, b.y);
-    ctx.strokeStyle = `rgba(${clusters[activeIndex].color}, ${0.08 + (1 - distance / 190) * 0.16})`;
-    ctx.lineWidth = 1;
-    ctx.stroke();
-  }
+    for (let i = 0; i < activePoints.length; i += step) {
+      const a = activePoints[i];
+      const b = activePoints[(i + step * 2) % activePoints.length];
+      const distance = Math.hypot(a.x - b.x, a.y - b.y);
+      if (distance > 190) continue;
+
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+      ctx.strokeStyle = `rgba(${cluster.color}, ${active * (0.08 + (1 - distance / 190) * 0.16)})`;
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+  });
 };
 
-const drawScanPath = (t, activeIndex) => {
-  const active = clusters[activeIndex];
-  const sweep = (Math.sin(t * 0.52) + 1) / 2;
-  const startX = active.x * width - active.r * 1.2;
-  const x = startX + active.r * 2.4 * sweep + pointer.x * 18;
-  const y = active.y * height + pointer.y * 12;
-  const gradient = ctx.createLinearGradient(x - 120, y, x + 120, y);
+const drawScanPaths = (t, weights) => {
+  clusters.forEach((active, index) => {
+    const weight = weights[index] ?? 0;
+    if (weight < 0.02) return;
 
-  gradient.addColorStop(0, `rgba(${active.color}, 0)`);
-  gradient.addColorStop(0.5, `rgba(${active.color}, 0.36)`);
-  gradient.addColorStop(1, `rgba(${active.color}, 0)`);
+    const sweep = (Math.sin(t * 0.52) + 1) / 2;
+    const startX = active.x * width - active.r * 1.2;
+    const x = startX + active.r * 2.4 * sweep + pointer.x * 18;
+    const y = active.y * height + pointer.y * 12;
+    const gradient = ctx.createLinearGradient(x - 120, y, x + 120, y);
 
-  ctx.save();
-  ctx.translate(x, y);
-  ctx.rotate(-0.24);
-  ctx.fillStyle = gradient;
-  ctx.fillRect(-140, -3, 280, 6);
-  ctx.restore();
+    gradient.addColorStop(0, `rgba(${active.color}, 0)`);
+    gradient.addColorStop(0.5, `rgba(${active.color}, ${0.36 * weight})`);
+    gradient.addColorStop(1, `rgba(${active.color}, 0)`);
+
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(-0.24);
+    ctx.fillStyle = gradient;
+    ctx.fillRect(-140, -3, 280, 6);
+    ctx.restore();
+  });
 };
 
-const drawClusterHalos = (t, activeIndex) => {
+const drawClusterHalos = (t, weights) => {
   clusters.forEach((cluster, index) => {
-    const active = index === activeIndex ? 1 : 0;
+    const active = weights[index] ?? 0;
     const x = cluster.x * width + pointer.x * (18 + active * 16);
     const y = cluster.y * height + pointer.y * (10 + active * 12);
     const radius = cluster.r * (0.6 + active * 0.46 + Math.sin(t + index) * 0.025);
@@ -178,17 +215,17 @@ const updateStage = (activeIndex) => {
 
 const render = (now) => {
   const elapsed = (now - start) / 1000;
-  const activeIndex = Math.floor((elapsed / 3.6) % clusters.length);
+  const stageState = activeStageState(elapsed);
 
   pointer.x += (pointer.tx - pointer.x) * 0.06;
   pointer.y += (pointer.ty - pointer.y) * 0.06;
 
   ctx.clearRect(0, 0, width, height);
-  drawClusterHalos(elapsed, activeIndex);
-  const points = particles.map((particle) => drawParticle(particle, elapsed, activeIndex));
-  drawConnections(points, activeIndex);
-  drawScanPath(elapsed, activeIndex);
-  updateStage(activeIndex);
+  drawClusterHalos(elapsed, stageState.weights);
+  const points = particles.map((particle) => drawParticle(particle, elapsed, stageState.weights));
+  drawConnections(points, stageState.weights);
+  drawScanPaths(elapsed, stageState.weights);
+  updateStage(stageState.activeIndex);
 
   raf = requestAnimationFrame(render);
 };
