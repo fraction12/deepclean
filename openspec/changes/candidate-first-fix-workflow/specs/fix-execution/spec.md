@@ -1,0 +1,87 @@
+## ADDED Requirements
+
+### Requirement: Candidate-first fix execution
+The system SHALL execute fixes against exactly one selected candidate, stable finding, or approved bounded slice.
+
+#### Scenario: User fixes one candidate
+- **WHEN** an agent runs `deepclean fix candidate-003 --apply --verification "make test" --json`
+- **THEN** Deepclean creates one fix attempt for `candidate-003`, applies at most one bounded patch, and records the selected candidate in the attempt state
+
+#### Scenario: User tries to batch unrelated candidates
+- **WHEN** an agent requests a fix workflow for multiple unrelated candidates
+- **THEN** Deepclean refuses and instructs the agent to run separate candidate-first attempts
+
+### Requirement: Fix plan before patch
+The system SHALL require a fix plan before source mutation.
+
+#### Scenario: Applied fix starts
+- **WHEN** an agent runs `deepclean fix candidate-003 --apply`
+- **THEN** Deepclean loads or generates a plan containing owned files, expected behavior, non-goals, verification commands, refusal conditions, and a why-this-is-safe note before invoking a patch worker
+
+### Requirement: Candidate-owned write scope
+The system SHALL restrict patch writes to candidate-owned files, feature-owned files, attached tests, or explicitly approved expanded files.
+
+#### Scenario: Patch edits out-of-scope file
+- **WHEN** the patch worker modifies a file outside the allowed write scope
+- **THEN** Deepclean records a scope failure, blocks PR-ready output, and marks the attempt `needs_human` unless the file was explicitly approved
+
+### Requirement: Verification command required
+The system SHALL require verification for applied fixes and PR workflows.
+
+#### Scenario: Verification is missing
+- **WHEN** an agent runs `deepclean fix candidate-003 --apply --json` without a verification command and the current plan has no approved verification command
+- **THEN** Deepclean refuses before source mutation and returns a structured missing-verification diagnostic
+
+### Requirement: Before and after evidence
+The system SHALL store before and after evidence for each applied fix attempt.
+
+#### Scenario: Fix attempt completes
+- **WHEN** Deepclean applies a patch and runs revalidation
+- **THEN** it persists the pre-fix candidate evidence, post-fix evidence or revalidation result, changed files, verification results, and lifecycle events
+
+### Requirement: Revalidation after patch
+The system SHALL revalidate the selected candidate after patching when requested by `--revalidate` or required by the `work --pr` workflow.
+
+#### Scenario: PR workflow runs
+- **WHEN** an agent runs `deepclean work candidate-003 --apply --branch chore/deepclean-candidate-003 --pr --verification "make test"`
+- **THEN** Deepclean runs candidate revalidation after the patch and before PR creation
+
+### Requirement: Fix outcome classification
+The system SHALL classify fix attempts as `resolved`, `partially-resolved`, `still-open`, `superseded`, or `needs_human`.
+
+#### Scenario: Verification passes but candidate remains
+- **WHEN** verification passes but revalidation reports the selected candidate still exists
+- **THEN** Deepclean records the outcome as `still-open` and blocks PR-ready success output
+
+#### Scenario: Candidate is improved but not gone
+- **WHEN** verification passes and revalidation reports the selected candidate has narrowed or split but not fully disappeared
+- **THEN** Deepclean records `partially-resolved` and includes remaining risk and follow-up guidance
+
+### Requirement: Broad candidate refusal
+The system SHALL refuse applied fixes for broad or ambiguous architecture candidates unless a clean bounded slice is available.
+
+#### Scenario: Architecture candidate is too broad
+- **WHEN** an agent runs `deepclean fix candidate-architecture-broad --apply`
+- **THEN** Deepclean refuses source mutation and produces a plan-only or slice-selection diagnostic
+
+### Requirement: Retry with failure evidence
+The system SHALL limit automated retries to at most one failed patch attempt using verification failure evidence.
+
+#### Scenario: First patch fails verification
+- **WHEN** the first patch stays in scope but verification fails
+- **THEN** Deepclean may run one retry with the verification failure output included in the worker context and records both attempts
+
+#### Scenario: Retry fails
+- **WHEN** the retry also fails verification or exceeds scope
+- **THEN** Deepclean marks the workflow `needs_human`
+
+### Requirement: PR gate
+The system SHALL create or prepare a pull request only after candidate scope, verification, and revalidation gates pass.
+
+#### Scenario: PR requested with passing proof
+- **WHEN** `deepclean work candidate-003 --pr` has passed verification, in-scope changes, and revalidation outcome `resolved`
+- **THEN** Deepclean may prepare or open a PR according to explicit user flags and persists a PR-ready summary
+
+#### Scenario: PR requested with failing proof
+- **WHEN** verification fails, revalidation is missing, revalidation says `still-open`, or changed files exceed scope
+- **THEN** Deepclean blocks PR creation and records the blocking reason

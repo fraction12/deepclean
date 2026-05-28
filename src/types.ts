@@ -83,6 +83,13 @@ export const fixAttemptStatuses = [
   "failed",
   "unverified",
 ] as const;
+export const fixAttemptOutcomes = [
+  "resolved",
+  "partially-resolved",
+  "still-open",
+  "superseded",
+  "needs_human",
+] as const;
 export const synthesisValidationStatuses = ["accepted", "rejected"] as const;
 export const ciRunStatuses = [
   "passed",
@@ -477,9 +484,15 @@ export const fixAttemptRecordSchema = z.object({
   recordType: z.literal("fix_attempt"),
   id: z.string(),
   findingId: z.string(),
+  candidateId: z.string().optional(),
   planId: z.string().optional(),
   status: z.enum(fixAttemptStatuses),
+  outcome: z.enum(fixAttemptOutcomes).optional(),
   dryRun: z.boolean(),
+  allowedWriteScope: z.array(z.string()).optional(),
+  outOfScopeFiles: z.array(z.string()).optional(),
+  beforeEvidenceIds: z.array(z.string()).optional(),
+  afterRevalidationId: z.string().optional(),
   changedFiles: z.array(z.string()),
   patchPreviewPath: z.string().optional(),
   verificationCommands: z.array(z.string()),
@@ -489,6 +502,20 @@ export const fixAttemptRecordSchema = z.object({
     passed: z.boolean(),
     outputPath: z.string().optional(),
   })),
+  worker: z.object({
+    provider: z.string(),
+    command: z.string(),
+    exitCode: z.number().int().nullable(),
+    outputPath: z.string().optional(),
+  }).optional(),
+  pr: z.object({
+    branch: z.string(),
+    base: z.string().optional(),
+    commitSha: z.string().optional(),
+    url: z.string().optional(),
+    summaryPath: z.string().optional(),
+    externalSideEffects: z.array(z.string()),
+  }).optional(),
   diagnostics: z.array(diagnosticSchema),
   createdAt: z.string(),
   updatedAt: z.string(),
