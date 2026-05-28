@@ -138,6 +138,7 @@ describe("deepclean cli", () => {
           git: { available: boolean; dirty: boolean };
           queue: { open: number; total: number; evidence: number; themes: number; features: number };
           artifacts: Record<string, number>;
+          progress: { net: string; runs: { latestRunId?: string; candidateCount?: number }; eventCount: number };
         };
       };
       expect(payload.data.initialized).toBe(true);
@@ -152,6 +153,10 @@ describe("deepclean cli", () => {
       expect(payload.data.artifacts["runs"]).toBeGreaterThan(0);
       expect(payload.data.artifacts["candidates"]).toBeGreaterThan(0);
       expect(payload.data.artifacts["features"]).toBeGreaterThan(0);
+      expect(payload.data.progress.net).toBe("neutral");
+      expect(payload.data.progress.runs.latestRunId).toBe(payload.data.latestRunId);
+      expect(payload.data.progress.runs.candidateCount).toBe(payload.data.queue.total);
+      expect(payload.data.progress.eventCount).toBeGreaterThan(0);
     });
   });
 
@@ -1734,6 +1739,50 @@ setInterval(() => {}, 1000);
       const secondPayload = JSON.parse(secondResult.stdout) as { data: { parent: { status: string }; childCandidateIds: string[] } };
       expect(secondPayload.data.parent.status).toBe("superseded");
       expect(secondPayload.data.childCandidateIds).toEqual(payload.data.childCandidateIds);
+    });
+  });
+
+  test("status surfaces progress from existing lifecycle and fix artifacts", async () => {
+    await withTempRepo(async (repo) => {
+      const prepared = await prepareFixableRepo(repo);
+      await enableFixExecution(repo);
+      await runCli([
+        "fix",
+        prepared.candidateId,
+        "--patch",
+        prepared.patchPath,
+        "--apply",
+        "--verification",
+        "test -f src/invoice.ts",
+        "--json",
+      ], repo);
+      const parent = await prepareSplittableCandidate(repo);
+      await runCli(["split", parent.id, "--json"], repo);
+
+      const result = await runCli(["status", "--progress-events", "50", "--json"], repo);
+      expect(result.code).toBe(0);
+      const payload = JSON.parse(result.stdout) as {
+        data: {
+          progress: {
+            net: string;
+            fixes: { attempts: number; verificationPassed: number; changedFiles: string[] };
+            splits: { parents: number; children: number; parentCandidateIds: string[] };
+            notes: string[];
+          };
+        };
+      };
+      expect(payload.data.progress.net).toBe("positive");
+      expect(payload.data.progress.fixes.attempts).toBeGreaterThan(0);
+      expect(payload.data.progress.fixes.verificationPassed).toBeGreaterThan(0);
+      expect(payload.data.progress.fixes.changedFiles).toContain("src/invoice.ts");
+      expect(payload.data.progress.splits.parents).toBeGreaterThan(0);
+      expect(payload.data.progress.splits.children).toBeGreaterThan(0);
+      expect(payload.data.progress.splits.parentCandidateIds).toContain(parent.id);
+
+      const human = await runCli(["status", "--progress-events", "50"], repo);
+      expect(human.stdout).toContain("progress: positive");
+      expect(human.stdout).toContain("fixes:");
+      expect(human.stdout).toContain("advanced:");
     });
   });
 

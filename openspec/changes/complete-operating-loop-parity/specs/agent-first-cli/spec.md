@@ -29,6 +29,7 @@ The system SHALL provide `deepclean status` to summarize current project-local D
 #### Scenario: Agent checks project state
 - **WHEN** an agent runs `deepclean status --json`
 - **THEN** Deepclean reports latest run, latest report, open finding counts, stale finding counts, fixed finding counts, suppressed finding counts, active locks, artifact counts, and pending revalidation work
+- **AND** Deepclean summarizes recent progress from existing run, lifecycle, split, and fix-attempt artifacts without creating a separate progress ledger
 
 ### Requirement: Query command
 The system SHALL provide a scriptable query command for finding queues.
