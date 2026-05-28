@@ -150,6 +150,21 @@ interface ScanExecutionResult {
   };
 }
 
+interface ScanPreparation {
+  startedAt: string;
+  completedAt: string;
+  runId: string;
+  config: DeepcleanConfig;
+  verificationProfile: Awaited<ReturnType<typeof inferVerificationProfile>>;
+  discoveredFiles: SourceFile[];
+  scope: ScanScope;
+  files: SourceFile[];
+  features: FeatureRecord[];
+  adapterResult: Awaited<ReturnType<typeof runEvidenceAdapters>>;
+  evidence: EvidenceRecord[];
+  localCandidates: CandidateRecord[];
+}
+
 interface ScanScope {
   incremental: boolean;
   since?: string;
@@ -971,38 +986,20 @@ async function executeScan(
   context: CommandContext,
   options: { synthesize?: boolean | undefined },
 ): Promise<ScanExecutionResult> {
-  const startedAt = new Date().toISOString();
-  const runId = timestampId("run");
-  const config = await ensureState(context.paths);
-  const verificationProfile = await inferVerificationProfile(context.paths.root);
-  const discoveredFiles = await discoverSourceFiles(context.paths.root, config.exclude);
-  const scope = await resolveScanScope(context, discoveredFiles);
-  const files = discoveredFiles.filter((file) => fileInScope(file, scope));
-  const features = await mapSemanticFeatures({
-    root: context.paths.root,
-    runId,
-    createdAt: startedAt,
-    files: discoveredFiles,
-    verificationProfile,
-    excludes: config.exclude,
-    mapSource: "heuristic",
-  });
-  const adapterResult = await runEvidenceAdapters(config.enabledAdapters, {
-    root: context.paths.root,
-    runId,
-    createdAt: startedAt,
-    files,
-    config,
-  });
-  const evidence = attachFeatureContextToEvidence(markDirtyTreeEvidence(adapterResult.evidence, scope), features);
-  const completedAt = new Date().toISOString();
-  const localCandidates = candidatesFromEvidence(
-    runId,
-    evidence,
+  const {
+    startedAt,
     completedAt,
-    config.candidateCaps,
+    runId,
+    config,
     verificationProfile,
-  );
+    discoveredFiles,
+    scope,
+    files,
+    features,
+    adapterResult,
+    evidence,
+    localCandidates,
+  } = await prepareScanInputs(context);
   const synthesisRequested = options.synthesize ?? true;
   const runtime = providerRuntimeControls(context, config);
   if (synthesisRequested && runtime.offline) {
@@ -1101,6 +1098,56 @@ async function executeScan(
   };
 
   return { runId, diagnostics, data };
+}
+
+async function prepareScanInputs(context: CommandContext): Promise<ScanPreparation> {
+  const startedAt = new Date().toISOString();
+  const runId = timestampId("run");
+  const config = await ensureState(context.paths);
+  const verificationProfile = await inferVerificationProfile(context.paths.root);
+  const discoveredFiles = await discoverSourceFiles(context.paths.root, config.exclude);
+  const scope = await resolveScanScope(context, discoveredFiles);
+  const files = discoveredFiles.filter((file) => fileInScope(file, scope));
+  const features = await mapSemanticFeatures({
+    root: context.paths.root,
+    runId,
+    createdAt: startedAt,
+    files: discoveredFiles,
+    verificationProfile,
+    excludes: config.exclude,
+    mapSource: "heuristic",
+  });
+  const adapterResult = await runEvidenceAdapters(config.enabledAdapters, {
+    root: context.paths.root,
+    runId,
+    createdAt: startedAt,
+    files,
+    config,
+  });
+  const evidence = attachFeatureContextToEvidence(markDirtyTreeEvidence(adapterResult.evidence, scope), features);
+  const completedAt = new Date().toISOString();
+  const localCandidates = candidatesFromEvidence(
+    runId,
+    evidence,
+    completedAt,
+    config.candidateCaps,
+    verificationProfile,
+  );
+
+  return {
+    startedAt,
+    completedAt,
+    runId,
+    config,
+    verificationProfile,
+    discoveredFiles,
+    scope,
+    files,
+    features,
+    adapterResult,
+    evidence,
+    localCandidates,
+  };
 }
 
 function remapSynthesisAttemptCandidateIds(
