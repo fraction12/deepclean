@@ -243,7 +243,12 @@ function featureRecord(args: {
 }
 
 function sourceFeatureKind(file: SourceFile): FeatureRecord["kind"] {
-  if (isRouteFile(file)) {
+  if (/(^|\/)(app|pages|routes)\//.test(file.path)
+    || /(^|\/)(api|views|routers?)\//.test(file.path)
+    || /\b(router|app)\.(get|post|put|patch|delete)\(/.test(file.text)
+    || /@(router|app)\.(get|post|put|patch|delete)\b/.test(file.text)
+    || /\b(APIRouter|FastAPI)\(/.test(file.text)
+    || /\b(createBrowserRouter|createRoutesFromElements)\(/.test(file.text)) {
     return "route";
   }
   if (isComponentFile(file)) {
@@ -253,15 +258,6 @@ function sourceFeatureKind(file: SourceFile): FeatureRecord["kind"] {
     return "python-module";
   }
   return "module";
-}
-
-function isRouteFile(file: SourceFile): boolean {
-  return /(^|\/)(app|pages|routes)\//.test(file.path)
-    || /(^|\/)(api|views|routers?)\//.test(file.path)
-    || /\b(router|app)\.(get|post|put|patch|delete)\(/.test(file.text)
-    || /@(router|app)\.(get|post|put|patch|delete)\b/.test(file.text)
-    || /\b(APIRouter|FastAPI)\(/.test(file.text)
-    || /\b(createBrowserRouter|createRoutesFromElements)\(/.test(file.text);
 }
 
 function isComponentFile(file: SourceFile): boolean {
