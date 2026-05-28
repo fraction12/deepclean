@@ -374,6 +374,10 @@ function resolveLocalImport(
   specifier: string,
   sourceByPath: Map<string, SourceFile>,
 ): string | undefined {
+  const fromExtension = path.posix.extname(fromPath);
+  if (fromExtension === ".py") {
+    return resolvePythonImport(fromPath, specifier, sourceByPath);
+  }
   if (!specifier.startsWith(".") && !specifier.startsWith("/")) {
     return undefined;
   }
@@ -397,6 +401,32 @@ function resolveLocalImport(
     `${base}/__init__.py`,
   ];
   return candidates.find((candidate) => sourceByPath.has(candidate) && !isGeneratedPath(candidate));
+}
+
+function resolvePythonImport(
+  fromPath: string,
+  specifier: string,
+  sourceByPath: Map<string, SourceFile>,
+): string | undefined {
+  const fromDir = path.posix.dirname(fromPath);
+  const base = normalizePath(specifier.startsWith(".")
+    ? path.posix.join(pythonRelativeImportBase(fromDir, specifier), specifier.replace(/^\.+/, "").replace(/\./g, "/"))
+    : specifier.replace(/\./g, "/"));
+  const candidates = [
+    base,
+    `${base}.py`,
+    `${base}/__init__.py`,
+  ];
+  return candidates.find((candidate) => sourceByPath.has(candidate) && !isGeneratedPath(candidate));
+}
+
+function pythonRelativeImportBase(fromDir: string, specifier: string): string {
+  const leadingDots = specifier.match(/^\.+/)?.[0].length ?? 0;
+  let base = fromDir;
+  for (let index = 1; index < leadingDots; index += 1) {
+    base = path.posix.dirname(base);
+  }
+  return base;
 }
 
 function isGeneratedPath(filePath: string): boolean {

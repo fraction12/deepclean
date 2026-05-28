@@ -570,6 +570,17 @@ router = APIRouter()
 def list_users():
     return []
 `, "utf8");
+      await mkdir(path.join(repo, "backend", "services"), { recursive: true });
+      await mkdir(path.join(repo, "backend", "api"), { recursive: true });
+      await writeFile(path.join(repo, "backend", "services", "ledger.py"), "def summarize():\n    return []\n", "utf8");
+      await writeFile(path.join(repo, "backend", "api", "orders.py"), `
+from fastapi import APIRouter
+from backend.services.ledger import summarize
+router = APIRouter()
+@router.get("/orders")
+def list_orders():
+    return summarize()
+`, "utf8");
 
       const result = await runCli(["map", "--json"], repo);
       expect(result.code).toBe(0);
@@ -598,7 +609,7 @@ def list_users():
       };
       expect(payload.data.mapId).toMatch(/^map-/);
       expect(payload.data.mapSource).toBe("heuristic");
-      expect(payload.data.sourceFileCount).toBe(6);
+      expect(payload.data.sourceFileCount).toBe(8);
       expect(payload.data.featureCount).toBeGreaterThanOrEqual(4);
       expect(payload.data.features.every((feature) => feature.featureId.startsWith("feature-"))).toBe(true);
       expect(payload.data.features.every((feature) => feature.runId === payload.data.mapId)).toBe(true);
@@ -616,6 +627,11 @@ def list_users():
       expect(payload.data.features.some((feature) => (
         feature.kind === "route"
         && feature.ownedFiles.some((file) => file.path === "api/users.py")
+      ))).toBe(true);
+      expect(payload.data.features.some((feature) => (
+        feature.kind === "route"
+        && feature.ownedFiles.some((file) => file.path === "backend/api/orders.py")
+        && feature.contextFiles.some((file) => file.path === "backend/services/ledger.py")
       ))).toBe(true);
       expect(payload.data.features.some((feature) => (
         feature.kind === "test-suite"
@@ -637,17 +653,83 @@ def list_users():
     await withTempRepo(async (repo) => {
       await writeFixtureSource(repo);
       const agent = await runCli(["map", "--source", "agent", "--json"], repo);
-      expect(agent.code).toBe(0);
-      const agentPayload = JSON.parse(agent.stdout) as {
-        data: { mapSource: string; features: Array<{ mapSource: string }> };
-      };
-      expect(agentPayload.data.mapSource).toBe("agent");
-      expect(agentPayload.data.features.every((feature) => feature.mapSource === "agent")).toBe(true);
+      expect(agent.code).toBe(2);
+      const agentPayload = JSON.parse(agent.stdout) as { error: { code: string } };
+      expect(agentPayload.error.code).toBe("unsupported_source");
 
       const invalid = await runCli(["map", "--source", "vibes", "--json"], repo);
       expect(invalid.code).toBe(2);
       const invalidPayload = JSON.parse(invalid.stdout) as { error: { code: string } };
       expect(invalidPayload.error.code).toBe("invalid_source");
+    });
+  });
+
+  test("scoped maps keep full-repo context before filtering", async () => {
+    await withTempRepo(async (repo) => {
+      await writeFixtureSource(repo);
+      await writeFile(path.join(repo, "src", "checkout.test.ts"), `
+import { calculateCheckout } from "./checkout.js";
+test("checkout", () => calculateCheckout([], false));
+`, "utf8");
+      await writeFile(path.join(repo, "src", "money.ts"), "export const cents = 100;\n", "utf8");
+      const checkout = await readFile(path.join(repo, "src", "checkout.ts"), "utf8");
+      await writeFile(path.join(repo, "src", "checkout.ts"), `import { cents } from "./money.js";\n${checkout}\nvoid cents;\n`, "utf8");
+
+      const result = await runCli(["map", "--paths", "src/checkout.ts", "--json"], repo);
+      expect(result.code).toBe(0);
+      const payload = JSON.parse(result.stdout) as {
+        data: {
+          sourceFileCount: number;
+          features: Array<{
+            ownedFiles: Array<{ path: string }>;
+            contextFiles: Array<{ path: string }>;
+            testFiles: Array<{ path: string }>;
+          }>;
+        };
+      };
+      expect(payload.data.sourceFileCount).toBe(4);
+      expect(payload.data.features.some((feature) => (
+        feature.ownedFiles.some((file) => file.path === "src/checkout.ts")
+        && feature.contextFiles.some((file) => file.path === "src/money.ts")
+        && feature.testFiles.some((file) => file.path === "src/checkout.test.ts")
+      ))).toBe(true);
+    });
+  });
+
+  test("scoped scans attach candidates to features mapped from full-repo context", async () => {
+    await withTempRepo(async (repo) => {
+      await writeFixtureSource(repo);
+      await writeFile(path.join(repo, "src", "checkout.test.ts"), `
+import { calculateCheckout } from "./checkout.js";
+test("checkout", () => calculateCheckout([], false));
+`, "utf8");
+      await writeFile(path.join(repo, "src", "money.ts"), "export const cents = 100;\n", "utf8");
+      const checkout = await readFile(path.join(repo, "src", "checkout.ts"), "utf8");
+      await writeFile(path.join(repo, "src", "checkout.ts"), `import { cents } from "./money.js";\n${checkout}\nvoid cents;\n`, "utf8");
+
+      const result = await runCli(["scan", "--paths", "src/checkout.ts", "--evidence-only", "--json"], repo);
+      expect(result.code).toBe(0);
+      const payload = JSON.parse(result.stdout) as {
+        data: {
+          sourceFileCount: number;
+          candidates: Array<{ affectedFeatureIds: string[] }>;
+          features: Array<{
+            featureId: string;
+            ownedFiles: Array<{ path: string }>;
+            contextFiles: Array<{ path: string }>;
+            testFiles: Array<{ path: string }>;
+          }>;
+        };
+      };
+      const checkoutFeature = payload.data.features.find((feature) => (
+        feature.ownedFiles.some((file) => file.path === "src/checkout.ts")
+      ));
+      expect(payload.data.sourceFileCount).toBe(1);
+      expect(checkoutFeature?.contextFiles.some((file) => file.path === "src/money.ts")).toBe(true);
+      expect(checkoutFeature?.testFiles.some((file) => file.path === "src/checkout.test.ts")).toBe(true);
+      expect(payload.data.candidates.some((candidate) => (
+        candidate.affectedFeatureIds.includes(checkoutFeature?.featureId ?? "")
+      ))).toBe(true);
     });
   });
 

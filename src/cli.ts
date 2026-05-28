@@ -820,8 +820,17 @@ async function fixCommand(context: CommandContext): Promise<number> {
 }
 
 async function mapCommand(context: CommandContext): Promise<number> {
-  if (!mapSourceFromFlags(context)) {
+  const mapSource = mapSourceFromFlags(context);
+  if (!mapSource) {
     emit(context.json, fail("map", "invalid_source", `--source must be one of: ${featureMapSources.join(", ")}`));
+    return 2;
+  }
+  if (mapSource === "agent") {
+    emit(context.json, fail(
+      "map",
+      "unsupported_source",
+      "--source agent requires provider-assisted feature-map refinement, which is not implemented yet. Use --source heuristic or --source auto.",
+    ));
     return 2;
   }
   const result = await executeFeatureMap(context);
@@ -864,22 +873,23 @@ async function executeFeatureMap(context: CommandContext): Promise<{
   const verificationProfile = await inferVerificationProfile(context.paths.root);
   const discoveredFiles = await discoverSourceFiles(context.paths.root, config.exclude);
   const scope = await resolveScanScope(context, discoveredFiles);
-  const files = discoveredFiles.filter((file) => fileInScope(file, scope));
-  const features = await mapSemanticFeatures({
+  const fullFeatures = await mapSemanticFeatures({
     root: context.paths.root,
     runId: mapId,
     createdAt,
-    files,
+    files: discoveredFiles,
     verificationProfile,
     excludes: config.exclude,
     mapSource,
   });
+  const files = discoveredFiles.filter((file) => fileInScope(file, scope));
+  const features = filterFeaturesByScanScope(fullFeatures, scope);
   const featurePath = await writeFeatures(context.paths, mapId, features);
   return {
     mapId,
     root: context.paths.root,
     mapSource,
-    sourceFileCount: files.length,
+    sourceFileCount: discoveredFiles.length,
     featureCount: features.length,
     features,
     scope,
@@ -970,7 +980,7 @@ async function executeScan(
     root: context.paths.root,
     runId,
     createdAt: startedAt,
-    files,
+    files: discoveredFiles,
     verificationProfile,
     excludes: config.exclude,
     mapSource: "heuristic",
@@ -2067,8 +2077,7 @@ async function resolveScanScope(context: CommandContext, files: SourceFile[]): P
 }
 
 function fileInScope(file: SourceFile, scope: ScanScope): boolean {
-  const pathMatched = scope.paths.length === 0
-    || scope.paths.some((prefix) => file.path === prefix || file.path.startsWith(`${prefix.replace(/\/$/, "")}/`));
+  const pathMatched = pathInScope(file.path, scope);
   if (!pathMatched) {
     return false;
   }
@@ -2076,6 +2085,34 @@ function fileInScope(file: SourceFile, scope: ScanScope): boolean {
     return true;
   }
   return scope.changedPaths.includes(file.path);
+}
+
+function pathInScope(filePath: string, scope: ScanScope): boolean {
+  return scope.paths.length === 0
+    || scope.paths.some((prefix) => filePath === prefix || filePath.startsWith(`${prefix.replace(/\/$/, "")}/`));
+}
+
+function featureInScope(feature: FeatureRecord, scope: ScanScope): boolean {
+  if (!scope.incremental) {
+    return true;
+  }
+  const featurePaths = uniqueNormalized([
+    ...feature.entrypoints.map((file) => file.path),
+    ...feature.ownedFiles.map((file) => file.path),
+    ...feature.contextFiles.map((file) => file.path),
+    ...feature.testFiles.map((file) => file.path),
+    ...feature.fileRoles.map((role) => role.path),
+  ]);
+  return featurePaths.some((filePath) => {
+    if (!pathInScope(filePath, scope)) {
+      return false;
+    }
+    return scope.changedPaths.length === 0 || scope.changedPaths.includes(filePath);
+  });
+}
+
+function filterFeaturesByScanScope(features: FeatureRecord[], scope: ScanScope): FeatureRecord[] {
+  return features.filter((feature) => featureInScope(feature, scope));
 }
 
 function filterCandidatesByScanScope(candidates: CandidateRecord[], scope: ScanScope): CandidateRecord[] {
