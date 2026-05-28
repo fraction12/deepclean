@@ -11,7 +11,12 @@ import { candidatesFromEvidence, rankCandidates, reassignCandidateIds } from "./
 import { buildClusters, unclusteredCandidateIds } from "./clusters.js";
 import { discoverSourceFiles, type SourceFile } from "./discovery.js";
 import { runEvidenceAdapters } from "./evidence.js";
-import { mapSemanticFeatures } from "./features.js";
+import {
+  attachFeatureContextToCandidates,
+  attachFeatureContextToEvidence,
+  featuresForCandidate,
+  mapSemanticFeatures,
+} from "./features.js";
 import { attachStableIdentity } from "./identity.js";
 import { fail, ok } from "./json.js";
 import {
@@ -64,12 +69,14 @@ import {
 } from "./state.js";
 import {
   candidateStatuses,
+  featureMapSources,
   schemaVersion,
   type CandidateRecord,
   type ClusterRecord,
   type DeepcleanConfig,
   type Diagnostic,
   type EvidenceRecord,
+  type FeatureRecord,
   type FixAttemptRecord,
   type RetentionManifestRecord,
   type RevalidationRecord,
@@ -813,6 +820,19 @@ async function fixCommand(context: CommandContext): Promise<number> {
 }
 
 async function mapCommand(context: CommandContext): Promise<number> {
+  const mapSource = mapSourceFromFlags(context);
+  if (!mapSource) {
+    emit(context.json, fail("map", "invalid_source", `--source must be one of: ${featureMapSources.join(", ")}`));
+    return 2;
+  }
+  if (mapSource === "agent") {
+    emit(context.json, fail(
+      "map",
+      "unsupported_source",
+      "--source agent requires provider-assisted feature-map refinement, which is not implemented yet. Use --source heuristic or --source auto.",
+    ));
+    return 2;
+  }
   const result = await executeFeatureMap(context);
   emit(context.json, ok("map", result));
   if (!context.json && !context.quiet) {
@@ -822,9 +842,21 @@ async function mapCommand(context: CommandContext): Promise<number> {
   return 0;
 }
 
+function mapSourceFromFlags(context: CommandContext): FeatureRecord["mapSource"] | undefined {
+  const source = flagString(context.parsed.flags, "source");
+  if (!source) {
+    return "heuristic";
+  }
+  if (featureMapSources.includes(source as FeatureRecord["mapSource"])) {
+    return source as FeatureRecord["mapSource"];
+  }
+  return undefined;
+}
+
 async function executeFeatureMap(context: CommandContext): Promise<{
   mapId: string;
   root: string;
+  mapSource: FeatureRecord["mapSource"];
   sourceFileCount: number;
   featureCount: number;
   features: Awaited<ReturnType<typeof mapSemanticFeatures>>;
@@ -833,24 +865,31 @@ async function executeFeatureMap(context: CommandContext): Promise<{
 }> {
   const createdAt = new Date().toISOString();
   const mapId = timestampId("map");
+  const mapSource = mapSourceFromFlags(context);
+  if (!mapSource) {
+    throw new Error(`--source must be one of: ${featureMapSources.join(", ")}`);
+  }
   const config = await ensureState(context.paths);
   const verificationProfile = await inferVerificationProfile(context.paths.root);
   const discoveredFiles = await discoverSourceFiles(context.paths.root, config.exclude);
   const scope = await resolveScanScope(context, discoveredFiles);
-  const files = discoveredFiles.filter((file) => fileInScope(file, scope));
-  const features = await mapSemanticFeatures({
+  const fullFeatures = await mapSemanticFeatures({
     root: context.paths.root,
     runId: mapId,
     createdAt,
-    files,
+    files: discoveredFiles,
     verificationProfile,
     excludes: config.exclude,
+    mapSource,
   });
+  const files = discoveredFiles.filter((file) => fileInScope(file, scope));
+  const features = filterFeaturesByScanScope(fullFeatures, scope);
   const featurePath = await writeFeatures(context.paths, mapId, features);
   return {
     mapId,
     root: context.paths.root,
-    sourceFileCount: files.length,
+    mapSource,
+    sourceFileCount: discoveredFiles.length,
     featureCount: features.length,
     features,
     scope,
@@ -941,9 +980,10 @@ async function executeScan(
     root: context.paths.root,
     runId,
     createdAt: startedAt,
-    files,
+    files: discoveredFiles,
     verificationProfile,
     excludes: config.exclude,
+    mapSource: "heuristic",
   });
   const adapterResult = await runEvidenceAdapters(config.enabledAdapters, {
     root: context.paths.root,
@@ -952,7 +992,7 @@ async function executeScan(
     files,
     config,
   });
-  const evidence = markDirtyTreeEvidence(adapterResult.evidence, scope);
+  const evidence = attachFeatureContextToEvidence(markDirtyTreeEvidence(adapterResult.evidence, scope), features);
   const completedAt = new Date().toISOString();
   const localCandidates = candidatesFromEvidence(
     runId,
@@ -978,6 +1018,7 @@ async function executeScan(
       runId,
       createdAt: completedAt,
       evidence,
+      features,
       config,
       existingCandidates: localCandidates,
       includeSource: runtime.allowSourceInModel,
@@ -986,10 +1027,10 @@ async function executeScan(
     })
     : { candidates: [], diagnostics: [] };
   const diagnostics = [...adapterResult.diagnostics, ...synthesisResult.diagnostics];
-  const rankedCandidates = reassignCandidateIds(rankCandidates([
+  const rankedCandidates = attachFeatureContextToCandidates(reassignCandidateIds(rankCandidates([
     ...localCandidates,
     ...synthesisResult.candidates,
-  ]));
+  ])), features);
   const identity = attachStableIdentity({
     runId,
     candidates: rankedCandidates,
@@ -1081,18 +1122,23 @@ function remapSynthesisAttemptCandidateIds(
 }
 
 async function reportCommand(context: CommandContext): Promise<number> {
-  const { candidates, evidence, runId } = await latestState(context.paths);
+  const { candidates, evidence, features, runId } = await latestState(context.paths);
   const config = await ensureState(context.paths);
   const latestClusters = await readLatestClusters(context.paths);
   const filter = queryFilterFromFlags(context);
   const filtered = filterCandidatesForQuery(candidates, latestClusters, filter);
+  const selectedFeature = filter.feature ? features.find((feature) => feature.featureId === filter.feature) : undefined;
+  if (filter.feature && !selectedFeature) {
+    emit(context.json, fail("report", "feature_not_found", `Feature not found: ${filter.feature}`));
+    return 1;
+  }
   const ranked = rankCandidates(filtered);
   const clusters = buildClusters(runId, ranked, evidence, new Date().toISOString(), config.clusters);
   await writeClusters(context.paths, runId, clusters);
-  const report = buildReportRecord(runId, ranked, clusters);
+  const report = buildReportRecord(runId, ranked, clusters, features);
   const markdown = clusters.length > 0
-    ? renderMarkdownReportWithClusters(ranked, clusters)
-    : renderMarkdownReport(ranked);
+    ? renderMarkdownReportWithClusters(ranked, clusters, features)
+    : renderMarkdownReport(ranked, features);
   const paths = await writeReport(context.paths, report, markdown);
 
   emit(context.json, ok("report", {
@@ -1104,6 +1150,7 @@ async function reportCommand(context: CommandContext): Promise<number> {
     candidates: ranked,
     clusters,
     filters: filter,
+    selectedFeature,
     evidenceCount: evidence.length,
   }));
   if (!context.json && !context.quiet) {
@@ -1115,14 +1162,21 @@ async function reportCommand(context: CommandContext): Promise<number> {
 }
 
 async function nextCommand(context: CommandContext): Promise<number> {
-  const [candidates, clusters] = await Promise.all([
+  const [candidates, clusters, features] = await Promise.all([
     readLatestCandidates(context.paths),
     readLatestClusters(context.paths),
+    readLatestFeatures(context.paths),
   ]);
-  const filtered = filterCandidatesForQuery(candidates, clusters, queryFilterFromFlags(context));
+  const filter = queryFilterFromFlags(context);
+  const selectedFeature = filter.feature ? features.find((feature) => feature.featureId === filter.feature) : undefined;
+  if (filter.feature && !selectedFeature) {
+    emit(context.json, fail("next", "feature_not_found", `Feature not found: ${filter.feature}`));
+    return 1;
+  }
+  const filtered = filterCandidatesForQuery(candidates, clusters, filter);
   const ranked = rankCandidates(filtered);
   const candidate = ranked.find((item) => item.status === "open");
-  emit(context.json, ok("next", { candidate: candidate ?? null }));
+  emit(context.json, ok("next", { candidate: candidate ?? null, selectedFeature }));
   if (!context.json && !context.quiet) {
     if (!candidate) {
       console.log("No open candidates.");
@@ -1134,11 +1188,17 @@ async function nextCommand(context: CommandContext): Promise<number> {
 }
 
 async function listCommand(context: CommandContext): Promise<number> {
-  const [candidates, clusters] = await Promise.all([
+  const [candidates, clusters, features] = await Promise.all([
     readLatestCandidates(context.paths),
     readLatestClusters(context.paths),
+    readLatestFeatures(context.paths),
   ]);
   const filter = queryFilterFromFlags(context);
+  const selectedFeature = filter.feature ? features.find((feature) => feature.featureId === filter.feature) : undefined;
+  if (filter.feature && !selectedFeature) {
+    emit(context.json, fail("list", "feature_not_found", `Feature not found: ${filter.feature}`));
+    return 1;
+  }
   const filtered = rankCandidates(filterCandidatesForQuery(candidates, clusters, filter));
   const format = flagString(context.parsed.flags, "format");
   const queue = format === "codex" ? filtered.map(candidateQueueItem) : undefined;
@@ -1146,6 +1206,7 @@ async function listCommand(context: CommandContext): Promise<number> {
     filters: filter,
     count: filtered.length,
     candidates: filtered,
+    selectedFeature,
     ...(queue ? { queue } : {}),
   }));
   if (!context.json && !context.quiet) {
@@ -1158,14 +1219,15 @@ async function listCommand(context: CommandContext): Promise<number> {
 
 async function showCommand(context: CommandContext): Promise<number> {
   const id = requireCandidateId(context);
-  const { candidates, evidence, clusters, runId } = await latestState(context.paths);
+  const { candidates, evidence, features, clusters, runId } = await latestState(context.paths);
   const config = await ensureState(context.paths);
   const availableClusters = clusters.length > 0 ? clusters : buildClusters(runId, candidates, evidence, new Date().toISOString(), config.clusters);
   const cluster = availableClusters.find((item) => item.id === id);
   if (cluster) {
     const clusterCandidates = candidates.filter((item) => cluster.candidateIds.includes(item.id));
     const supportingEvidence = evidenceForIds(evidence, cluster.evidenceIds);
-    emit(context.json, ok("show", { cluster, candidates: clusterCandidates, evidence: supportingEvidence }));
+    const affectedFeatures = featuresForCandidates(clusterCandidates, features);
+    emit(context.json, ok("show", { cluster, candidates: clusterCandidates, evidence: supportingEvidence, features: affectedFeatures }));
     if (!context.json && !context.quiet) {
       printCluster(cluster);
       for (const candidate of clusterCandidates) {
@@ -1180,7 +1242,8 @@ async function showCommand(context: CommandContext): Promise<number> {
     return 1;
   }
   const supportingEvidence = evidenceForIds(evidence, candidate.evidenceIds);
-  emit(context.json, ok("show", { candidate, evidence: supportingEvidence }));
+  const affectedFeatures = featuresForCandidate(candidate, features);
+  emit(context.json, ok("show", { candidate, evidence: supportingEvidence, features: affectedFeatures }));
   if (!context.json && !context.quiet) {
     printCandidate(candidate);
     for (const record of supportingEvidence) {
@@ -1418,7 +1481,7 @@ async function clusterCommand(context: CommandContext): Promise<number> {
 
 async function planCommand(context: CommandContext): Promise<number> {
   const id = requireCandidateId(context);
-  const { candidates, evidence, clusters, runId } = await latestState(context.paths);
+  const { candidates, evidence, features, clusters, runId } = await latestState(context.paths);
   const config = await ensureState(context.paths);
   const availableClusters = clusters.length > 0 ? clusters : buildClusters(runId, candidates, evidence, new Date().toISOString(), config.clusters);
   if (clusters.length === 0 && availableClusters.length > 0) {
@@ -1433,9 +1496,10 @@ async function planCommand(context: CommandContext): Promise<number> {
     }
     const clusterCandidates = candidates.filter((item) => cluster.candidateIds.includes(item.id));
     const supportingEvidence = evidenceForIds(evidence, cluster.evidenceIds);
-    const plan = buildClusterPlan(runId, cluster, clusterCandidates, supportingEvidence);
+    const affectedFeatures = featuresForCandidates(clusterCandidates, features);
+    const plan = buildClusterPlan(runId, cluster, clusterCandidates, supportingEvidence, affectedFeatures);
     const planPath = await writePlan(context.paths, plan);
-    emit(context.json, ok("plan", { plan, path: planPath, planPath, cluster, candidates: clusterCandidates, evidence: supportingEvidence }));
+    emit(context.json, ok("plan", { plan, path: planPath, planPath, cluster, candidates: clusterCandidates, evidence: supportingEvidence, features: affectedFeatures }));
     if (!context.json && !context.quiet) {
       console.log(plan.content);
       console.log("");
@@ -1450,9 +1514,10 @@ async function planCommand(context: CommandContext): Promise<number> {
     return 1;
   }
   const supportingEvidence = evidenceForIds(evidence, candidate.evidenceIds);
-  const plan = buildCandidatePlan(runId, candidate, supportingEvidence);
+  const affectedFeatures = featuresForCandidate(candidate, features);
+  const plan = buildCandidatePlan(runId, candidate, supportingEvidence, affectedFeatures);
   const planPath = await writePlan(context.paths, plan);
-  emit(context.json, ok("plan", { plan, path: planPath, planPath, candidate, evidence: supportingEvidence }));
+  emit(context.json, ok("plan", { plan, path: planPath, planPath, candidate, evidence: supportingEvidence, features: affectedFeatures }));
   if (!context.json && !context.quiet) {
     console.log(plan.content);
     console.log("");
@@ -1536,18 +1601,19 @@ async function triageCommand(context: CommandContext): Promise<number> {
 async function handoffCommand(context: CommandContext): Promise<number> {
   const id = requireCandidateId(context);
   const format = flagString(context.parsed.flags, "format") ?? "codex";
-  const { candidates, evidence } = await latestState(context.paths);
+  const { candidates, evidence, features } = await latestState(context.paths);
   const candidate = candidates.find((item) => item.id === id);
   if (!candidate) {
     emit(context.json, fail("handoff", "candidate_not_found", `Candidate not found: ${id}`));
     return 1;
   }
   const supportingEvidence = evidenceForIds(evidence, candidate.evidenceIds);
-  const handoff = buildHandoff(candidate, supportingEvidence, format);
+  const affectedFeatures = featuresForCandidate(candidate, features);
+  const handoff = buildHandoff(candidate, supportingEvidence, format, affectedFeatures);
   const handoffPath = await writeHandoff(context.paths, handoff);
   const warnings = handoffFreshnessWarnings(candidate);
 
-  emit(context.json, ok("handoff", { handoff, path: handoffPath, warnings }));
+  emit(context.json, ok("handoff", { handoff, path: handoffPath, warnings, features: affectedFeatures }));
   if (!context.json && !context.quiet) {
     for (const warning of warnings) {
       console.log(`warning: ${warning}`);
@@ -1564,17 +1630,19 @@ async function latestState(paths: StatePaths): Promise<{
   candidates: CandidateRecord[];
   clusters: ClusterRecord[];
   evidence: EvidenceRecord[];
+  features: FeatureRecord[];
 }> {
   const runId = await latestRunId(paths);
   if (!runId) {
     throw new Error("No scan run found. Run `deepclean scan` first.");
   }
-  const [candidates, clusters, evidence] = await Promise.all([
+  const [candidates, clusters, evidence, features] = await Promise.all([
     readLatestCandidates(paths),
     readLatestClusters(paths),
     readLatestEvidence(paths),
+    readLatestFeatures(paths),
   ]);
-  return { runId, candidates, clusters, evidence };
+  return { runId, candidates, clusters, evidence, features };
 }
 
 async function resolveFixTarget(paths: StatePaths, target: string): Promise<{
@@ -1818,6 +1886,11 @@ function evidenceForIds(evidence: EvidenceRecord[], ids: string[]): EvidenceReco
   return evidence.filter((item) => wanted.has(item.id));
 }
 
+function featuresForCandidates(candidates: CandidateRecord[], features: FeatureRecord[]): FeatureRecord[] {
+  const wanted = new Set(candidates.flatMap((candidate) => candidate.affectedFeatureIds));
+  return features.filter((feature) => wanted.has(feature.featureId));
+}
+
 function validationForCandidate(
   candidate: CandidateRecord,
   attempt: SynthesisAttemptRecord | undefined,
@@ -2004,8 +2077,7 @@ async function resolveScanScope(context: CommandContext, files: SourceFile[]): P
 }
 
 function fileInScope(file: SourceFile, scope: ScanScope): boolean {
-  const pathMatched = scope.paths.length === 0
-    || scope.paths.some((prefix) => file.path === prefix || file.path.startsWith(`${prefix.replace(/\/$/, "")}/`));
+  const pathMatched = pathInScope(file.path, scope);
   if (!pathMatched) {
     return false;
   }
@@ -2013,6 +2085,34 @@ function fileInScope(file: SourceFile, scope: ScanScope): boolean {
     return true;
   }
   return scope.changedPaths.includes(file.path);
+}
+
+function pathInScope(filePath: string, scope: ScanScope): boolean {
+  return scope.paths.length === 0
+    || scope.paths.some((prefix) => filePath === prefix || filePath.startsWith(`${prefix.replace(/\/$/, "")}/`));
+}
+
+function featureInScope(feature: FeatureRecord, scope: ScanScope): boolean {
+  if (!scope.incremental) {
+    return true;
+  }
+  const featurePaths = uniqueNormalized([
+    ...feature.entrypoints.map((file) => file.path),
+    ...feature.ownedFiles.map((file) => file.path),
+    ...feature.contextFiles.map((file) => file.path),
+    ...feature.testFiles.map((file) => file.path),
+    ...feature.fileRoles.map((role) => role.path),
+  ]);
+  return featurePaths.some((filePath) => {
+    if (!pathInScope(filePath, scope)) {
+      return false;
+    }
+    return scope.changedPaths.length === 0 || scope.changedPaths.includes(filePath);
+  });
+}
+
+function filterFeaturesByScanScope(features: FeatureRecord[], scope: ScanScope): FeatureRecord[] {
+  return features.filter((feature) => featureInScope(feature, scope));
 }
 
 function filterCandidatesByScanScope(candidates: CandidateRecord[], scope: ScanScope): CandidateRecord[] {
@@ -2056,6 +2156,7 @@ interface QueryFilter {
   category?: string;
   risk?: string;
   source?: string;
+  feature?: string;
   theme?: string;
   path?: string;
   lifecycleState?: string;
@@ -2071,6 +2172,7 @@ function queryFilterFromFlags(context: CommandContext): QueryFilter {
     ["category", "category"],
     ["risk", "risk"],
     ["source", "source"],
+    ["feature", "feature"],
     ["theme", "theme"],
     ["path", "path"],
     ["lifecycleState", "lifecycle-state"],
@@ -2108,6 +2210,9 @@ function filterCandidatesForQuery(
       return false;
     }
     if (filter.source && candidate.provenance.source !== filter.source) {
+      return false;
+    }
+    if (filter.feature && !candidate.affectedFeatureIds.includes(filter.feature)) {
       return false;
     }
     if (themeCandidateIds && !themeCandidateIds.has(candidate.id)) {

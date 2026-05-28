@@ -3,6 +3,7 @@ import {
   type CandidateRecord,
   type ClusterRecord,
   type EvidenceRecord,
+  type FeatureRecord,
   type FileReference,
   type PlanRecord,
 } from "./types.js";
@@ -13,6 +14,7 @@ export function buildCandidatePlan(
   runId: string,
   candidate: CandidateRecord,
   evidence: EvidenceRecord[],
+  features: FeatureRecord[] = [],
 ): PlanRecord {
   const candidateFiles = uniqueFileReferences(candidate.files, 12);
   const readiness = candidate.fixReadiness;
@@ -60,7 +62,7 @@ export function buildCandidatePlan(
   });
   return {
     ...plan,
-    content: renderPlan(plan, { candidates: [candidate], evidence }),
+    content: renderPlan(plan, { candidates: [candidate], evidence, features }),
   };
 }
 
@@ -69,6 +71,7 @@ export function buildClusterPlan(
   cluster: ClusterRecord,
   candidates: CandidateRecord[],
   evidence: EvidenceRecord[],
+  features: FeatureRecord[] = [],
 ): PlanRecord {
   const ordered = [...candidates].sort((a, b) => cluster.candidateIds.indexOf(a.id) - cluster.candidateIds.indexOf(b.id));
   const clusterFiles = uniqueFileReferences(cluster.files, 12);
@@ -113,7 +116,7 @@ export function buildClusterPlan(
   });
   return {
     ...plan,
-    content: renderPlan(plan, { cluster, candidates: ordered, evidence }),
+    content: renderPlan(plan, { cluster, candidates: ordered, evidence, features }),
   };
 }
 
@@ -151,7 +154,7 @@ function basePlan(values: {
 
 function renderPlan(
   plan: PlanRecord,
-  context: { cluster?: ClusterRecord; candidates: CandidateRecord[]; evidence: EvidenceRecord[] },
+  context: { cluster?: ClusterRecord; candidates: CandidateRecord[]; evidence: EvidenceRecord[]; features: FeatureRecord[] },
 ): string {
   const sliceQueue = context.candidates.map((candidate) => candidateSlice(candidate));
   const lines = [
@@ -174,6 +177,21 @@ function renderPlan(
       `- Files: ${uniqueFileReferences(context.cluster.files, 12).map(formatFile).join(", ") || "n/a"}`,
       "",
     );
+  }
+
+  if (context.features.length > 0) {
+    lines.push("Feature Boundary:");
+    for (const feature of context.features) {
+      lines.push(
+        `- ${feature.featureId}: ${feature.title}`,
+        `  Entrypoints: ${uniqueFileReferences(feature.entrypoints, 6).map(formatFile).join(", ") || "n/a"}`,
+        `  Owned files: ${uniqueFileReferences(feature.ownedFiles, 8).map(formatFile).join(", ") || "n/a"}`,
+        `  Context/shared files: ${uniqueFileReferences(feature.contextFiles, 8).map(formatFile).join(", ") || "n/a"}`,
+        `  Tests: ${uniqueFileReferences(feature.testFiles, 8).map(formatFile).join(", ") || "n/a"}`,
+        `  Verification: ${feature.verification.join(", ") || "n/a"}`,
+      );
+    }
+    lines.push("");
   }
 
   lines.push("Slice Queue:");
@@ -238,12 +256,15 @@ function candidateSlice(candidate: CandidateRecord): {
 } {
   const fileList = uniqueFileReferences(candidate.files, 4).map(formatFile).join(", ") || "the cited files";
   const minimalFix = candidate.fixReadiness?.minimumFixScope || candidate.suggestedDirection;
+  const featureScope = candidate.featureScope === "cross-feature"
+    ? " Split cross-feature work into one feature-local slice before editing."
+    : "";
   return {
     candidate,
     minimalFix,
     testsFirst: candidate.fixReadiness?.suggestedRegressionTest
       || "Add or identify the smallest behavior-level regression check before moving code.",
-    stopLine: `Only touch ${fileList} plus directly necessary tests/callers.`,
+    stopLine: `Only touch ${fileList} plus directly necessary tests/callers.${featureScope}`,
     nonGoals: [
       "do not rewrite unrelated helpers",
       "do not change public behavior or response shapes",

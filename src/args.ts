@@ -79,6 +79,7 @@ const valueFlags = new Set([
   "category",
   "risk",
   "source",
+  "feature",
   "theme",
   "path",
   "lifecycle-state",

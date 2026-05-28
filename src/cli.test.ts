@@ -24,6 +24,7 @@ import {
   schemaVersion,
   synthesisAttemptRecordSchema,
   type CandidateRecord,
+  type FeatureRecord,
   type FindingRecord,
   type LockRecord,
 } from "./types.js";
@@ -556,12 +557,37 @@ describe("deepclean cli", () => {
 import { calculateCheckout } from "./checkout.js";
 test("checkout", () => calculateCheckout([], false));
 `, "utf8");
+      await writeFile(path.join(repo, "src", "money.ts"), "export const cents = 100;\n", "utf8");
+      const checkout = await readFile(path.join(repo, "src", "checkout.ts"), "utf8");
+      await writeFile(path.join(repo, "src", "checkout.ts"), `import { cents } from "./money.js";\n${checkout}\nvoid cents;\n`, "utf8");
+      await mkdir(path.join(repo, "src", "generated"), { recursive: true });
+      await writeFile(path.join(repo, "src", "generated", "client.ts"), "export const generated = true;\n", "utf8");
+      await mkdir(path.join(repo, "api"), { recursive: true });
+      await writeFile(path.join(repo, "api", "users.py"), `
+from fastapi import APIRouter
+router = APIRouter()
+@router.get("/users")
+def list_users():
+    return []
+`, "utf8");
+      await mkdir(path.join(repo, "backend", "services"), { recursive: true });
+      await mkdir(path.join(repo, "backend", "api"), { recursive: true });
+      await writeFile(path.join(repo, "backend", "services", "ledger.py"), "def summarize():\n    return []\n", "utf8");
+      await writeFile(path.join(repo, "backend", "api", "orders.py"), `
+from fastapi import APIRouter
+from backend.services.ledger import summarize
+router = APIRouter()
+@router.get("/orders")
+def list_orders():
+    return summarize()
+`, "utf8");
 
       const result = await runCli(["map", "--json"], repo);
       expect(result.code).toBe(0);
       const payload = JSON.parse(result.stdout) as {
         data: {
           mapId: string;
+          mapSource: string;
           featureCount: number;
           sourceFileCount: number;
           path: string;
@@ -570,22 +596,42 @@ test("checkout", () => calculateCheckout([], false));
             runId: string;
             title: string;
             kind: string;
+            mapSource: string;
+            mapperVersion: string;
             ownedFiles: Array<{ path: string }>;
+            contextFiles: Array<{ path: string }>;
             testFiles: Array<{ path: string }>;
+            fileRoles: Array<{ path: string; role: string }>;
+            reasons: string[];
             verification: string[];
           }>;
         };
       };
       expect(payload.data.mapId).toMatch(/^map-/);
-      expect(payload.data.sourceFileCount).toBe(3);
+      expect(payload.data.mapSource).toBe("heuristic");
+      expect(payload.data.sourceFileCount).toBe(8);
       expect(payload.data.featureCount).toBeGreaterThanOrEqual(4);
       expect(payload.data.features.every((feature) => feature.featureId.startsWith("feature-"))).toBe(true);
       expect(payload.data.features.every((feature) => feature.runId === payload.data.mapId)).toBe(true);
+      expect(payload.data.features.every((feature) => feature.mapSource === "heuristic")).toBe(true);
+      expect(payload.data.features.every((feature) => feature.mapperVersion === "local-v1")).toBe(true);
+      expect(payload.data.features.some((feature) => feature.fileRoles.length > 0)).toBe(true);
+      expect(payload.data.features.some((feature) => feature.reasons.length > 0)).toBe(true);
       expect(payload.data.features.some((feature) => feature.kind === "package-script")).toBe(true);
       expect(payload.data.features.some((feature) => (
         feature.kind === "module"
         && feature.ownedFiles.some((file) => file.path === "src/checkout.ts")
+        && feature.contextFiles.some((file) => file.path === "src/money.ts")
         && feature.testFiles.some((file) => file.path === "src/checkout.test.ts")
+      ))).toBe(true);
+      expect(payload.data.features.some((feature) => (
+        feature.kind === "route"
+        && feature.ownedFiles.some((file) => file.path === "api/users.py")
+      ))).toBe(true);
+      expect(payload.data.features.some((feature) => (
+        feature.kind === "route"
+        && feature.ownedFiles.some((file) => file.path === "backend/api/orders.py")
+        && feature.contextFiles.some((file) => file.path === "backend/services/ledger.py")
       ))).toBe(true);
       expect(payload.data.features.some((feature) => (
         feature.kind === "test-suite"
@@ -595,8 +641,95 @@ test("checkout", () => calculateCheckout([], false));
         feature.kind === "package-script"
         && feature.verification.includes("npm run test")
       ))).toBe(true);
+      expect(payload.data.features.some((feature) => (
+        feature.ownedFiles.some((file) => file.path === "src/generated/client.ts")
+      ))).toBe(false);
       const saved = await readFile(payload.data.path, "utf8");
       expect(saved).toContain("\"recordType\": \"feature\"");
+    });
+  });
+
+  test("map validates ClawPatch-style source modes", async () => {
+    await withTempRepo(async (repo) => {
+      await writeFixtureSource(repo);
+      const agent = await runCli(["map", "--source", "agent", "--json"], repo);
+      expect(agent.code).toBe(2);
+      const agentPayload = JSON.parse(agent.stdout) as { error: { code: string } };
+      expect(agentPayload.error.code).toBe("unsupported_source");
+
+      const invalid = await runCli(["map", "--source", "vibes", "--json"], repo);
+      expect(invalid.code).toBe(2);
+      const invalidPayload = JSON.parse(invalid.stdout) as { error: { code: string } };
+      expect(invalidPayload.error.code).toBe("invalid_source");
+    });
+  });
+
+  test("scoped maps keep full-repo context before filtering", async () => {
+    await withTempRepo(async (repo) => {
+      await writeFixtureSource(repo);
+      await writeFile(path.join(repo, "src", "checkout.test.ts"), `
+import { calculateCheckout } from "./checkout.js";
+test("checkout", () => calculateCheckout([], false));
+`, "utf8");
+      await writeFile(path.join(repo, "src", "money.ts"), "export const cents = 100;\n", "utf8");
+      const checkout = await readFile(path.join(repo, "src", "checkout.ts"), "utf8");
+      await writeFile(path.join(repo, "src", "checkout.ts"), `import { cents } from "./money.js";\n${checkout}\nvoid cents;\n`, "utf8");
+
+      const result = await runCli(["map", "--paths", "src/checkout.ts", "--json"], repo);
+      expect(result.code).toBe(0);
+      const payload = JSON.parse(result.stdout) as {
+        data: {
+          sourceFileCount: number;
+          features: Array<{
+            ownedFiles: Array<{ path: string }>;
+            contextFiles: Array<{ path: string }>;
+            testFiles: Array<{ path: string }>;
+          }>;
+        };
+      };
+      expect(payload.data.sourceFileCount).toBe(4);
+      expect(payload.data.features.some((feature) => (
+        feature.ownedFiles.some((file) => file.path === "src/checkout.ts")
+        && feature.contextFiles.some((file) => file.path === "src/money.ts")
+        && feature.testFiles.some((file) => file.path === "src/checkout.test.ts")
+      ))).toBe(true);
+    });
+  });
+
+  test("scoped scans attach candidates to features mapped from full-repo context", async () => {
+    await withTempRepo(async (repo) => {
+      await writeFixtureSource(repo);
+      await writeFile(path.join(repo, "src", "checkout.test.ts"), `
+import { calculateCheckout } from "./checkout.js";
+test("checkout", () => calculateCheckout([], false));
+`, "utf8");
+      await writeFile(path.join(repo, "src", "money.ts"), "export const cents = 100;\n", "utf8");
+      const checkout = await readFile(path.join(repo, "src", "checkout.ts"), "utf8");
+      await writeFile(path.join(repo, "src", "checkout.ts"), `import { cents } from "./money.js";\n${checkout}\nvoid cents;\n`, "utf8");
+
+      const result = await runCli(["scan", "--paths", "src/checkout.ts", "--evidence-only", "--json"], repo);
+      expect(result.code).toBe(0);
+      const payload = JSON.parse(result.stdout) as {
+        data: {
+          sourceFileCount: number;
+          candidates: Array<{ affectedFeatureIds: string[] }>;
+          features: Array<{
+            featureId: string;
+            ownedFiles: Array<{ path: string }>;
+            contextFiles: Array<{ path: string }>;
+            testFiles: Array<{ path: string }>;
+          }>;
+        };
+      };
+      const checkoutFeature = payload.data.features.find((feature) => (
+        feature.ownedFiles.some((file) => file.path === "src/checkout.ts")
+      ));
+      expect(payload.data.sourceFileCount).toBe(1);
+      expect(checkoutFeature?.contextFiles.some((file) => file.path === "src/money.ts")).toBe(true);
+      expect(checkoutFeature?.testFiles.some((file) => file.path === "src/checkout.test.ts")).toBe(true);
+      expect(payload.data.candidates.some((candidate) => (
+        candidate.affectedFeatureIds.includes(checkoutFeature?.featureId ?? "")
+      ))).toBe(true);
     });
   });
 
@@ -612,7 +745,7 @@ test("checkout", () => calculateCheckout([], false));
           featureCount: number;
           evidenceCount: number;
           candidateCount: number;
-          candidates: Array<{ id: string }>;
+          candidates: Array<{ id: string; affectedFeatureIds: string[]; featureScope: string }>;
         };
       };
       expect(scanPayload.ok).toBe(true);
@@ -620,6 +753,8 @@ test("checkout", () => calculateCheckout([], false));
       expect(scanPayload.data.evidenceCount).toBeGreaterThan(0);
       expect(scanPayload.data.candidateCount).toBeGreaterThan(0);
       expect(scanPayload.data.candidates[0]?.id).toMatch(/^candidate-/);
+      expect(scanPayload.data.candidates.some((candidate) => candidate.affectedFeatureIds.length > 0)).toBe(true);
+      expect(scanPayload.data.candidates.some((candidate) => candidate.featureScope !== "unmapped")).toBe(true);
       const features = JSON.parse(
         await readFile(path.join(repo, ".deepclean", "features", `${scanPayload.data.runId}.json`), "utf8"),
       ) as Array<{ kind: string; ownedFiles: Array<{ path: string }> }>;
@@ -636,9 +771,12 @@ test("checkout", () => calculateCheckout([], false));
       const id = nextPayload.data.candidate?.id;
       expect(id).toBeTruthy();
       const show = await runCli(["show", id ?? "", "--json"], repo);
-      const showPayload = JSON.parse(show.stdout) as { data: { candidate: { id: string }; evidence: unknown[] } };
+      const showPayload = JSON.parse(show.stdout) as {
+        data: { candidate: { id: string }; evidence: unknown[]; features: unknown[] };
+      };
       expect(showPayload.data.candidate.id).toBe(id);
       expect(showPayload.data.evidence.length).toBeGreaterThan(0);
+      expect(showPayload.data.features.length).toBeGreaterThan(0);
     });
   });
 
@@ -1085,7 +1223,7 @@ fs.writeFileSync(outputPath, JSON.stringify({
         data: {
           report: {
             recommendations?: {
-              startHere?: { id: string; type: string };
+              startHere?: { id: string; type: string; featureId?: string; featureTitle?: string };
               suggestedPlanTargets: string[];
             };
           };
@@ -1096,12 +1234,15 @@ fs.writeFileSync(outputPath, JSON.stringify({
         };
       };
       expect(payload.data.report.recommendations?.startHere?.id).toMatch(/^(candidate|theme)-/);
+      expect(payload.data.report.recommendations?.startHere?.featureId).toMatch(/^feature-/);
       expect(payload.data.report.recommendations?.suggestedPlanTargets.length).toBeGreaterThan(0);
       expect(payload.data.reportPath).toBe(payload.data.paths.markdownPath);
       expect(payload.data.markdownPath).toBe(payload.data.paths.markdownPath);
       expect(payload.data.jsonPath).toMatch(/\.json$/);
       const markdown = await readFile(payload.data.paths.markdownPath, "utf8");
       expect(markdown).toContain("## Start Here");
+      expect(markdown).toContain("## Feature Map");
+      expect(markdown).toContain("Feature scope:");
       expect(markdown).toContain("## Agent Queue");
       expect(markdown).toContain("Suggested plan targets:");
     });
@@ -1143,6 +1284,49 @@ fs.writeFileSync(outputPath, JSON.stringify({
       const next = await runCli(["next", ...filters, "--json"], repo);
       const nextPayload = JSON.parse(next.stdout) as { data: { candidate: { id: string } | null } };
       expect(nextPayload.data.candidate?.id).toBe(listPayload.data.candidates[0]?.id);
+    });
+  });
+
+  test("feature filters apply to report, list, and next", async () => {
+    await withTempRepo(async (repo) => {
+      await writeFixtureSource(repo);
+      const scan = await runCli(["scan", "--evidence-only", "--json"], repo);
+      const scanPayload = JSON.parse(scan.stdout) as {
+        data: { candidates: Array<{ affectedFeatureIds: string[] }> };
+      };
+      const featureId = scanPayload.data.candidates.find((candidate) => candidate.affectedFeatureIds.length > 0)
+        ?.affectedFeatureIds[0];
+      expect(featureId).toBeTruthy();
+
+      const list = await runCli(["list", "--feature", featureId ?? "", "--json"], repo);
+      expect(list.code).toBe(0);
+      const listPayload = JSON.parse(list.stdout) as {
+        data: {
+          filters: { feature?: string };
+          selectedFeature?: { featureId: string };
+          candidates: Array<{ affectedFeatureIds: string[] }>;
+        };
+      };
+      expect(listPayload.data.filters.feature).toBe(featureId);
+      expect(listPayload.data.selectedFeature?.featureId).toBe(featureId);
+      expect(listPayload.data.candidates.length).toBeGreaterThan(0);
+      expect(listPayload.data.candidates.every((candidate) => candidate.affectedFeatureIds.includes(featureId ?? ""))).toBe(true);
+
+      const report = await runCli(["report", "--feature", featureId ?? "", "--json"], repo);
+      expect(report.code).toBe(0);
+      const reportPayload = JSON.parse(report.stdout) as {
+        data: { selectedFeature?: { featureId: string }; candidates: Array<{ affectedFeatureIds: string[] }> };
+      };
+      expect(reportPayload.data.selectedFeature?.featureId).toBe(featureId);
+      expect(reportPayload.data.candidates.every((candidate) => candidate.affectedFeatureIds.includes(featureId ?? ""))).toBe(true);
+
+      const next = await runCli(["next", "--feature", featureId ?? "", "--json"], repo);
+      expect(next.code).toBe(0);
+      const nextPayload = JSON.parse(next.stdout) as {
+        data: { selectedFeature?: { featureId: string }; candidate: { affectedFeatureIds: string[] } | null };
+      };
+      expect(nextPayload.data.selectedFeature?.featureId).toBe(featureId);
+      expect(nextPayload.data.candidate?.affectedFeatureIds).toContain(featureId);
     });
   });
 
@@ -1623,6 +1807,25 @@ export const value = buildThing();
     expect(plan.content).toContain("Non-goals:");
   });
 
+  test("candidate plans render feature boundaries", () => {
+    const candidate = candidateFixture({
+      affectedFeatureIds: ["feature-checkout"],
+      featureScope: "feature-local",
+    });
+    const feature = featureFixture({
+      featureId: "feature-checkout",
+      title: "Checkout",
+      entrypoints: [{ path: "src/checkout.ts" }],
+      ownedFiles: [{ path: "src/checkout.ts" }],
+      contextFiles: [{ path: "src/money.ts" }],
+      testFiles: [{ path: "src/checkout.test.ts" }],
+    });
+    const plan = buildCandidatePlan("run-test", candidate, [], [feature]);
+    expect(plan.content).toContain("Feature Boundary:");
+    expect(plan.content).toContain("Checkout");
+    expect(plan.content).toContain("src/checkout.test.ts");
+  });
+
   test("marks broad themes as too broad and blocks agent-ready plans", async () => {
     await withTempRepo(async (repo) => {
       await writeFixtureSource(repo);
@@ -2016,11 +2219,41 @@ function candidateFixture(overrides: Partial<CandidateRecord> = {}): CandidateRe
     risk: "moderate",
     files: [{ path: "src/example.ts", startLine: 1, endLine: 20 }],
     evidenceIds: ["ev-test"],
+    affectedFeatureIds: [],
+    featureScope: "unmapped",
     whyItMatters: "Fixture why.",
     likelyRootCause: "Fixture cause.",
     suggestedDirection: "Fixture direction.",
     verification: ["npm test"],
     provenance: { source: "local-evidence" },
+    createdAt: now,
+    updatedAt: now,
+    ...overrides,
+  };
+}
+
+function featureFixture(overrides: Partial<FeatureRecord> = {}): FeatureRecord {
+  const now = "2026-05-24T00:00:00.000Z";
+  return {
+    schemaVersion,
+    recordType: "feature",
+    featureId: "feature-fixture",
+    runId: "run-test",
+    title: "Fixture feature",
+    summary: "Fixture feature summary.",
+    kind: "module",
+    source: "src/example.ts",
+    mapSource: "heuristic",
+    mapperVersion: "local-v1",
+    confidence: "medium",
+    entrypoints: [{ path: "src/example.ts" }],
+    ownedFiles: [{ path: "src/example.ts" }],
+    contextFiles: [],
+    testFiles: [],
+    fileRoles: [{ path: "src/example.ts", role: "owned" }],
+    reasons: ["fixture"],
+    verification: ["npm test"],
+    tags: ["source"],
     createdAt: now,
     updatedAt: now,
     ...overrides,

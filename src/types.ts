@@ -99,6 +99,8 @@ export const featureKinds = [
   "test-suite",
   "config",
 ] as const;
+export const featureMapSources = ["heuristic", "auto", "agent"] as const;
+export const featureFileRoles = ["entrypoint", "owned", "context", "shared", "test", "config", "generated"] as const;
 
 export const diagnosticSchema = z.object({
   level: z.enum(["info", "warning", "error"]),
@@ -202,6 +204,12 @@ export const evidenceRecordSchema = z.object({
   title: z.string(),
   summary: z.string(),
   files: z.array(fileReferenceSchema),
+  affectedFeatureIds: z.array(z.string()).default([]),
+  fileRoles: z.array(z.object({
+    path: z.string(),
+    featureId: z.string(),
+    role: z.enum(featureFileRoles),
+  })).default([]),
   data: z.record(z.string(), z.unknown()),
   confidence: z.enum(confidenceLevels),
   createdAt: z.string(),
@@ -218,11 +226,18 @@ export const featureRecordSchema = z.object({
   summary: z.string(),
   kind: z.enum(featureKinds),
   source: z.string(),
+  mapSource: z.enum(featureMapSources).default("heuristic"),
+  mapperVersion: z.string().default("local-v1"),
   confidence: z.enum(confidenceLevels),
   entrypoints: z.array(fileReferenceSchema),
   ownedFiles: z.array(fileReferenceSchema),
   contextFiles: z.array(fileReferenceSchema),
   testFiles: z.array(fileReferenceSchema),
+  fileRoles: z.array(z.object({
+    path: z.string(),
+    role: z.enum(featureFileRoles),
+  })).default([]),
+  reasons: z.array(z.string()).default([]),
   verification: z.array(z.string()),
   tags: z.array(z.string()),
   createdAt: z.string(),
@@ -251,6 +266,8 @@ export const candidateRecordSchema = z.object({
   risk: z.enum(riskLevels),
   files: z.array(fileReferenceSchema),
   evidenceIds: z.array(z.string()),
+  affectedFeatureIds: z.array(z.string()).default([]),
+  featureScope: z.enum(["feature-local", "shared-context", "cross-feature", "unmapped"]).default("unmapped"),
   whyItMatters: z.string(),
   likelyRootCause: z.string(),
   suggestedDirection: z.string(),
@@ -576,6 +593,8 @@ export const reportRecordSchema = z.object({
       id: z.string(),
       type: z.enum(["candidate", "theme"]),
       reason: z.string(),
+      featureId: z.string().optional(),
+      featureTitle: z.string().optional(),
     }).optional(),
     topCandidateIds: z.array(z.string()),
     topThemeIds: z.array(z.string()),
