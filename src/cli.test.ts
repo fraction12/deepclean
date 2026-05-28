@@ -200,189 +200,10 @@ describe("deepclean cli", () => {
       },
     };
 
-    findingRecordSchema.parse({
-      schemaVersion,
-      recordType: "finding",
-      id: "finding-fixture",
-      signature,
-      identityConfidence: "medium",
-      title: "Fixture candidate",
-      category: "architecture",
-      status: "open",
-      lifecycleState: "open",
-      priority: "P2",
-      confidence: "medium",
-      impact: "feature",
-      effort: "medium",
-      risk: "moderate",
-      files: [{ path: "src/example.ts", startLine: 1, endLine: 20 }],
-      evidenceIds: ["ev-test"],
-      observationIds: ["observation-fixture"],
-      currentObservationId: "observation-fixture",
-      createdAt: now,
-      updatedAt: now,
-    });
-
-    candidateObservationRecordSchema.parse({
-      schemaVersion,
-      recordType: "candidate_observation",
-      id: "observation-fixture",
-      findingId: "finding-fixture",
-      candidateId: "candidate-001",
-      runId: "run-test",
-      signature,
-      identityConfidence: "medium",
-      baselineStatus: "new",
-      evidenceFreshness: "fresh",
-      observedAt: now,
-    });
-
-    lifecycleEventRecordSchema.parse({
-      schemaVersion,
-      recordType: "lifecycle_event",
-      id: "event-fixture",
-      targetType: "finding",
-      targetId: "finding-fixture",
-      findingId: "finding-fixture",
-      runId: "run-test",
-      kind: "created",
-      toState: "open",
-      command: "scan",
-      createdAt: now,
-    });
-
-    revalidationRecordSchema.parse({
-      schemaVersion,
-      recordType: "revalidation",
-      id: "revalidation-fixture",
-      targetType: "finding",
-      targetId: "finding-fixture",
-      runId: "run-test",
-      outcome: "unchanged",
-      evidenceIds: ["ev-test"],
-      previousObservationId: "observation-fixture",
-      diagnostics: [],
-      createdAt: now,
-    });
-
-    ciRunRecordSchema.parse({
-      schemaVersion,
-      recordType: "ci_run",
-      id: "ci-fixture",
-      runId: "run-test",
-      baselineRef: "main",
-      status: "passed",
-      policy: { "max-new-p0": 0 },
-      blockingFindingIds: [],
-      artifactPaths: { json: ".deepclean/ci/ci-fixture.json" },
-      diagnostics: [],
-      createdAt: now,
-    });
-
-    lockRecordSchema.parse({
-      schemaVersion,
-      recordType: "lock",
-      id: "lock-fixture",
-      owner: "deepclean",
-      pid: 1,
-      command: "scan",
-      statePath: ".deepclean",
-      createdAt: now,
-    });
-
-    retentionManifestRecordSchema.parse({
-      schemaVersion,
-      recordType: "retention_manifest",
-      id: "retention-fixture",
-      dryRun: true,
-      keepRuns: 5,
-      deletePaths: [".deepclean/runs/old.json"],
-      retainedPaths: [".deepclean/config.json"],
-      blockedPaths: [{ path: ".deepclean/config.json", reason: "config is never pruned" }],
-      privacyNotes: ["May contain source paths."],
-      createdAt: now,
-    });
-
-    fixAttemptRecordSchema.parse({
-      schemaVersion,
-      recordType: "fix_attempt",
-      id: "fix-fixture",
-      findingId: "finding-fixture",
-      planId: "plan-fixture",
-      status: "previewed",
-      dryRun: true,
-      changedFiles: ["src/example.ts"],
-      patchPreviewPath: ".deepclean/fixes/fix-fixture.patch",
-      verificationCommands: ["npm test"],
-      verificationResults: [{ command: "npm test", passed: true, exitCode: 0 }],
-      diagnostics: [],
-      createdAt: now,
-      updatedAt: now,
-    });
-
-    featureRecordSchema.parse({
-      schemaVersion,
-      recordType: "feature",
-      featureId: "feature-fixture",
-      runId: "run-test",
-      title: "Checkout calculation module",
-      summary: "Checkout behavior owned by src/checkout.ts.",
-      kind: "module",
-      source: "local-source",
-      confidence: "high",
-      entrypoints: [{ path: "src/checkout.ts" }],
-      ownedFiles: [{ path: "src/checkout.ts", startLine: 1, endLine: 20 }],
-      contextFiles: [{ path: "src/checkout.test.ts" }],
-      testFiles: [{ path: "src/checkout.test.ts" }],
-      verification: ["npm test"],
-      tags: ["module", "typescript", "area:src"],
-      createdAt: now,
-      updatedAt: now,
-    });
-
-    synthesisAttemptRecordSchema.parse({
-      schemaVersion,
-      recordType: "synthesis_attempt",
-      id: "synthesis-run-test",
-      runId: "run-test",
-      provider: "codex",
-      model: "gpt-test",
-      promptVersion: "codex-synthesis-v3-matt-pocock-reviewers",
-      promptBytes: 1200,
-      runtime: { timeoutMs: 1000 },
-      reviewerIds: ["architecture-deepening"],
-      evidenceManifest: {
-        evidenceCount: 1,
-        includedEvidenceIds: ["ev-test"],
-        includedFileRefs: [{ path: "src/example.ts", startLine: 1, endLine: 20 }],
-        omittedEvidenceIds: [],
-        includeSource: false,
-        tokenBudget: 8000,
-        excerptBudget: 0,
-      },
-      rawCandidateCount: 1,
-      acceptedCandidateCount: 1,
-      rejectedCandidateCount: 0,
-      rejectedEvidenceIds: [],
-      notes: [],
-      validations: [{
-        id: "validation-001",
-        status: "accepted",
-        draftTitle: "Fixture candidate",
-        candidateId: "candidate-001",
-        evidenceIds: ["ev-test"],
-        fileRefs: [{ path: "src/example.ts", startLine: 1, endLine: 20 }],
-        diagnostics: [],
-        fixReadiness: {
-          minimumFixScope: "One bounded module.",
-          suggestedRegressionTest: "Add a focused behavior test.",
-          whyCurrentTestsMissIt: "Current tests only cover the happy path.",
-          confidenceDowngradeReasons: [],
-        },
-      }],
-      diagnostics: [],
-      createdAt: now,
-    });
+    validateFindingLifecycleRecordSchemas(now, signature);
+    validateStateManagementRecordSchemas(now);
+    validatePlanningRecordSchemas(now);
+    validateFeatureAndSynthesisRecordSchemas(now);
   });
 
   test("reports and explicitly recovers stale writer locks", async () => {
@@ -2371,6 +2192,198 @@ process.exit(7);
     });
   });
 });
+
+function validateFindingLifecycleRecordSchemas(now: string, signature: FindingRecord["signature"]): void {
+  findingRecordSchema.parse({
+    schemaVersion,
+    recordType: "finding",
+    id: "finding-fixture",
+    signature,
+    identityConfidence: "medium",
+    title: "Fixture candidate",
+    category: "architecture",
+    status: "open",
+    lifecycleState: "open",
+    priority: "P2",
+    confidence: "medium",
+    impact: "feature",
+    effort: "medium",
+    risk: "moderate",
+    files: [{ path: "src/example.ts", startLine: 1, endLine: 20 }],
+    evidenceIds: ["ev-test"],
+    observationIds: ["observation-fixture"],
+    currentObservationId: "observation-fixture",
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  candidateObservationRecordSchema.parse({
+    schemaVersion,
+    recordType: "candidate_observation",
+    id: "observation-fixture",
+    findingId: "finding-fixture",
+    candidateId: "candidate-001",
+    runId: "run-test",
+    signature,
+    identityConfidence: "medium",
+    baselineStatus: "new",
+    evidenceFreshness: "fresh",
+    observedAt: now,
+  });
+
+  lifecycleEventRecordSchema.parse({
+    schemaVersion,
+    recordType: "lifecycle_event",
+    id: "event-fixture",
+    targetType: "finding",
+    targetId: "finding-fixture",
+    findingId: "finding-fixture",
+    runId: "run-test",
+    kind: "created",
+    toState: "open",
+    command: "scan",
+    createdAt: now,
+  });
+
+  revalidationRecordSchema.parse({
+    schemaVersion,
+    recordType: "revalidation",
+    id: "revalidation-fixture",
+    targetType: "finding",
+    targetId: "finding-fixture",
+    runId: "run-test",
+    outcome: "unchanged",
+    evidenceIds: ["ev-test"],
+    previousObservationId: "observation-fixture",
+    diagnostics: [],
+    createdAt: now,
+  });
+}
+
+function validateStateManagementRecordSchemas(now: string): void {
+  ciRunRecordSchema.parse({
+    schemaVersion,
+    recordType: "ci_run",
+    id: "ci-fixture",
+    runId: "run-test",
+    baselineRef: "main",
+    status: "passed",
+    policy: { "max-new-p0": 0 },
+    blockingFindingIds: [],
+    artifactPaths: { json: ".deepclean/ci/ci-fixture.json" },
+    diagnostics: [],
+    createdAt: now,
+  });
+
+  lockRecordSchema.parse({
+    schemaVersion,
+    recordType: "lock",
+    id: "lock-fixture",
+    owner: "deepclean",
+    pid: 1,
+    command: "scan",
+    statePath: ".deepclean",
+    createdAt: now,
+  });
+
+  retentionManifestRecordSchema.parse({
+    schemaVersion,
+    recordType: "retention_manifest",
+    id: "retention-fixture",
+    dryRun: true,
+    keepRuns: 5,
+    deletePaths: [".deepclean/runs/old.json"],
+    retainedPaths: [".deepclean/config.json"],
+    blockedPaths: [{ path: ".deepclean/config.json", reason: "config is never pruned" }],
+    privacyNotes: ["May contain source paths."],
+    createdAt: now,
+  });
+}
+
+function validatePlanningRecordSchemas(now: string): void {
+  fixAttemptRecordSchema.parse({
+    schemaVersion,
+    recordType: "fix_attempt",
+    id: "fix-fixture",
+    findingId: "finding-fixture",
+    planId: "plan-fixture",
+    status: "previewed",
+    dryRun: true,
+    changedFiles: ["src/example.ts"],
+    patchPreviewPath: ".deepclean/fixes/fix-fixture.patch",
+    verificationCommands: ["npm test"],
+    verificationResults: [{ command: "npm test", passed: true, exitCode: 0 }],
+    diagnostics: [],
+    createdAt: now,
+    updatedAt: now,
+  });
+}
+
+function validateFeatureAndSynthesisRecordSchemas(now: string): void {
+  featureRecordSchema.parse({
+    schemaVersion,
+    recordType: "feature",
+    featureId: "feature-fixture",
+    runId: "run-test",
+    title: "Checkout calculation module",
+    summary: "Checkout behavior owned by src/checkout.ts.",
+    kind: "module",
+    source: "local-source",
+    confidence: "high",
+    entrypoints: [{ path: "src/checkout.ts" }],
+    ownedFiles: [{ path: "src/checkout.ts", startLine: 1, endLine: 20 }],
+    contextFiles: [{ path: "src/checkout.test.ts" }],
+    testFiles: [{ path: "src/checkout.test.ts" }],
+    verification: ["npm test"],
+    tags: ["module", "typescript", "area:src"],
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  synthesisAttemptRecordSchema.parse({
+    schemaVersion,
+    recordType: "synthesis_attempt",
+    id: "synthesis-run-test",
+    runId: "run-test",
+    provider: "codex",
+    model: "gpt-test",
+    promptVersion: "codex-synthesis-v3-matt-pocock-reviewers",
+    promptBytes: 1200,
+    runtime: { timeoutMs: 1000 },
+    reviewerIds: ["architecture-deepening"],
+    evidenceManifest: {
+      evidenceCount: 1,
+      includedEvidenceIds: ["ev-test"],
+      includedFileRefs: [{ path: "src/example.ts", startLine: 1, endLine: 20 }],
+      omittedEvidenceIds: [],
+      includeSource: false,
+      tokenBudget: 8000,
+      excerptBudget: 0,
+    },
+    rawCandidateCount: 1,
+    acceptedCandidateCount: 1,
+    rejectedCandidateCount: 0,
+    rejectedEvidenceIds: [],
+    notes: [],
+    validations: [{
+      id: "validation-001",
+      status: "accepted",
+      draftTitle: "Fixture candidate",
+      candidateId: "candidate-001",
+      evidenceIds: ["ev-test"],
+      fileRefs: [{ path: "src/example.ts", startLine: 1, endLine: 20 }],
+      diagnostics: [],
+      fixReadiness: {
+        minimumFixScope: "One bounded module.",
+        suggestedRegressionTest: "Add a focused behavior test.",
+        whyCurrentTestsMissIt: "Current tests only cover the happy path.",
+        confidenceDowngradeReasons: [],
+      },
+    }],
+    diagnostics: [],
+    createdAt: now,
+  });
+}
 
 async function withTempRepo(fn: (repo: string) => Promise<void>): Promise<void> {
   const repo = await mkdtemp(path.join(os.tmpdir(), "deepclean-test-"));
