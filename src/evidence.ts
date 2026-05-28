@@ -278,13 +278,17 @@ async function duplicationAdapter(context: AdapterContext): Promise<AdapterResul
   const windowSize = 6;
 
   for (const file of context.files.filter((item) => !isTestPath(item.path))) {
-    const normalized = file.lines.map(normalizeCodeLine);
+    const normalized = file.lines.map((line) => line
+      .trim()
+      .replace(/\s+/g, " ")
+      .replace(/["'`][^"'`]*["'`]/g, "<string>")
+      .replace(/\b\d+(?:\.\d+)?\b/g, "<number>"));
     for (let index = 0; index <= normalized.length - windowSize; index += 1) {
       const slice = normalized.slice(index, index + windowSize);
       if (slice.filter(Boolean).length < windowSize) {
         continue;
       }
-      if (looksLikeLiteralList(slice)) {
+      if (slice.every((line) => /^["'`<][^=({]*["'`>]?,?$/.test(line.trim()))) {
         continue;
       }
       if (slice.filter((line) => /[=({.]|return|if |for |while /.test(line)).length < 3) {
@@ -339,7 +343,7 @@ async function codeGraphAdapter(context: AdapterContext): Promise<AdapterResult>
   const nodes = [...graph.nodes.entries()].map(([filePath, node]) => ({
     path: filePath,
     directory: moduleDirectory(filePath),
-    topLevel: topLevel(filePath),
+    topLevel: filePath.split("/")[0] ?? ".",
     incoming: node.importedBy.size,
     outgoing: node.imports.size,
   }));
@@ -405,7 +409,8 @@ async function importGraphAdapter(context: AdapterContext): Promise<AdapterResul
 async function typescriptStructureAdapter(context: AdapterContext): Promise<AdapterResult> {
   const evidence: EvidenceRecord[] = [];
 
-  for (const file of context.files.filter(isTsLikeFile)) {
+  const tsLikeExtensions = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts"]);
+  for (const file of context.files.filter((item) => tsLikeExtensions.has(item.extension))) {
     const shallowWrappers: Array<{ name: string; startLine: number; endLine: number }> = [];
     const sourceFile = ts.createSourceFile(
       file.path,
@@ -416,7 +421,15 @@ async function typescriptStructureAdapter(context: AdapterContext): Promise<Adap
     );
 
     visitNode(sourceFile, (node) => {
-      if (!isFunctionLikeWithBody(node)) {
+      if (
+        !(
+          ts.isFunctionDeclaration(node)
+          || ts.isMethodDeclaration(node)
+          || ts.isFunctionExpression(node)
+          || ts.isArrowFunction(node)
+        )
+        || !node.body
+      ) {
         return;
       }
       const start = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile));
@@ -580,18 +593,6 @@ async function testDiscoveryAdapter(context: AdapterContext): Promise<AdapterRes
   return { evidence, diagnostics: [] };
 }
 
-function normalizeCodeLine(line: string): string {
-  return line
-    .trim()
-    .replace(/\s+/g, " ")
-    .replace(/["'`][^"'`]*["'`]/g, "<string>")
-    .replace(/\b\d+(?:\.\d+)?\b/g, "<number>");
-}
-
-function looksLikeLiteralList(lines: string[]): boolean {
-  return lines.every((line) => /^["'`<][^=({]*["'`>]?,?$/.test(line.trim()));
-}
-
 function firstMatchPerFile(
   matches: Array<{ file: SourceFile; startLine: number; text: string }>,
 ): Array<{ file: SourceFile; startLine: number; text: string }> {
@@ -715,10 +716,6 @@ function compactObject(value: Record<string, unknown>, omitKeys: string[]): Reco
   return result;
 }
 
-function unique<T>(values: T[]): T[] {
-  return [...new Set(values)];
-}
-
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
@@ -818,10 +815,6 @@ function moduleDirectory(filePath: string): string {
   return parts.slice(0, Math.min(parts.length - 1, 2)).join("/");
 }
 
-function topLevel(filePath: string): string {
-  return filePath.split("/")[0] ?? ".";
-}
-
 function collectImports(file: SourceFile): string[] {
   if (file.extension === ".py") {
     return collectPythonImports(file);
@@ -889,7 +882,7 @@ function importPathCandidates(base: string): string[] {
       `${withoutExtension}.cjs`,
     ]
     : [];
-  return unique([
+  const candidates = [
     base,
     ...emittedJsSourceCandidates,
     `${base}.ts`,
@@ -910,7 +903,8 @@ function importPathCandidates(base: string): string[] {
     `${base}/index.mjs`,
     `${base}/index.cjs`,
     `${base}/__init__.py`,
-  ]);
+  ];
+  return [...new Set(candidates)];
 }
 
 function aliasImportBase(fromPath: string, specifier: string): string {
@@ -938,22 +932,9 @@ function collectPythonImports(file: SourceFile): string[] {
   return imports;
 }
 
-function isTsLikeFile(file: SourceFile): boolean {
-  return [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts"].includes(file.extension);
-}
-
 function visitNode(node: ts.Node, visitor: (node: ts.Node) => void): void {
   visitor(node);
   node.forEachChild((child) => visitNode(child, visitor));
-}
-
-function isFunctionLikeWithBody(node: ts.Node): node is ts.FunctionLikeDeclaration & { body: ts.ConciseBody } {
-  return (
-    ts.isFunctionDeclaration(node)
-    || ts.isMethodDeclaration(node)
-    || ts.isFunctionExpression(node)
-    || ts.isArrowFunction(node)
-  ) && Boolean(node.body);
 }
 
 function functionName(node: ts.FunctionLikeDeclaration): string | undefined {
