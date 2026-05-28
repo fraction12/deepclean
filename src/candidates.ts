@@ -363,7 +363,7 @@ function candidateAreas(candidate: CandidateRecord): string[] {
   return [...new Set(candidate.files.map((file) => candidateArea(file.path)))];
 }
 
-function candidateArea(filePath: string): string {
+export function candidateArea(filePath: string): string {
   const parts = filePath.split("/").filter(Boolean);
   if (parts.length === 0) {
     return ".";

@@ -1,3 +1,4 @@
+import { candidateArea as surfaceArea } from "./candidates.js";
 import type { CandidateRecord, EvidenceRecord, FileReference } from "./types.js";
 
 export interface ReviewerRubric {
@@ -478,25 +479,6 @@ function scoreEvidence(record: EvidenceRecord): number {
       : record.kind === "dependency-hotspot" ? 4
         : 2;
   return confidenceScore + kindScore;
-}
-
-function surfaceArea(filePath: string): string {
-  const parts = filePath.split("/").filter(Boolean);
-  if (parts.length === 0) {
-    return ".";
-  }
-  const srcIndex = parts.indexOf("src");
-  if (srcIndex >= 0) {
-    const end = Math.min(parts.length - 1, srcIndex + 3);
-    return parts.slice(0, end).join("/") || (parts[0] ?? ".");
-  }
-  if (parts.length >= 3 && ["backend", "core", "frontend", "admin", "api"].includes(parts[0] ?? "")) {
-    return parts.slice(0, 2).join("/");
-  }
-  if (parts.length <= 2) {
-    return parts.length === 1 ? "." : parts[0] ?? ".";
-  }
-  return parts.slice(0, 2).join("/");
 }
 
 function unique(values: string[]): string[] {
