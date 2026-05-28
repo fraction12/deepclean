@@ -1412,59 +1412,7 @@ fs.writeFileSync(outputPath, JSON.stringify({
 
   test("scan synthesizes candidates by default even with legacy enabled false config", async () => {
     await withTempRepo(async (repo) => {
-      await writeFixtureSource(repo);
-      await installFakeCodex(repo, `#!/usr/bin/env node
-const fs = require("node:fs");
-const stdin = fs.readFileSync(0, "utf8");
-if (
-  !stdin.includes("architecture-deepening")
-  || !stdin.includes("deep-module-discipline")
-  || !stdin.includes("feedback-loop-discipline")
-  || !stdin.includes("agent-ready-slices")
-  || !stdin.includes("Matt Pocock skills influence")
-  || !stdin.includes("Cleanup surfaces:")
-  || !stdin.includes("critic-pass")
-) {
-  console.error("missing reviewer pack or cleanup surfaces");
-  process.exit(2);
-}
-const evidenceIds = [...stdin.matchAll(/"id": "(ev-[^"]+)"/g)].map((match) => match[1]);
-if (evidenceIds.length === 0) process.exit(2);
-const outputIndex = process.argv.indexOf("-o");
-const outputPath = process.argv[outputIndex + 1];
-fs.writeFileSync(outputPath, JSON.stringify({
-  candidates: [{
-    title: "Validation logic is spread across checkout and invoice",
-    category: "architecture",
-    priority: "P1",
-    confidence: "high",
-    impact: "feature",
-    effort: "medium",
-    risk: "moderate",
-    files: [{ path: "src/checkout.ts", startLine: 1, endLine: 1 }, { path: "src/invoice.ts", startLine: 1, endLine: 1 }],
-    evidenceIds,
-    whyItMatters: "Spread validation creates drift risk.",
-    likelyRootCause: "Fast implementation duplicated the same pricing concept.",
-    suggestedDirection: "Create one pricing calculation module and route both callers through it.",
-    verification: ["npm test", "npm run typecheck"],
-    fixReadiness: {
-      minimumFixScope: "One pricing calculation module plus its callers.",
-      suggestedRegressionTest: "Add checkout and invoice regression coverage around pricing calculations.",
-      whyCurrentTestsMissIt: "Existing evidence points at structure and duplication, not behavior-level coverage.",
-      confidenceDowngradeReasons: []
-    },
-    supportingQuotes: []
-  }],
-  rejectedEvidenceIds: [],
-  notes: ["fake synthesis complete"]
-}));
-`);
-      const configPath = path.join(repo, ".deepclean", "config.json");
-      const config = JSON.parse(await readFile(configPath, "utf8")) as {
-        reviewSynthesis: { enabled: boolean };
-      };
-      config.reviewSynthesis.enabled = false;
-      await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+      await setupLegacyDisabledAcceptedSynthesis(repo);
 
       const result = await runCli([
         "scan",
@@ -2467,6 +2415,62 @@ async function installFakeCodex(repo: string, source: string): Promise<void> {
     reviewSynthesis: { command: string };
   };
   config.reviewSynthesis.command = fakeCodex;
+  await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+}
+
+async function setupLegacyDisabledAcceptedSynthesis(repo: string): Promise<void> {
+  await writeFixtureSource(repo);
+  await installFakeCodex(repo, `#!/usr/bin/env node
+const fs = require("node:fs");
+const stdin = fs.readFileSync(0, "utf8");
+if (
+  !stdin.includes("architecture-deepening")
+  || !stdin.includes("deep-module-discipline")
+  || !stdin.includes("feedback-loop-discipline")
+  || !stdin.includes("agent-ready-slices")
+  || !stdin.includes("Matt Pocock skills influence")
+  || !stdin.includes("Cleanup surfaces:")
+  || !stdin.includes("critic-pass")
+) {
+  console.error("missing reviewer pack or cleanup surfaces");
+  process.exit(2);
+}
+const evidenceIds = [...stdin.matchAll(/"id": "(ev-[^"]+)"/g)].map((match) => match[1]);
+if (evidenceIds.length === 0) process.exit(2);
+const outputIndex = process.argv.indexOf("-o");
+const outputPath = process.argv[outputIndex + 1];
+fs.writeFileSync(outputPath, JSON.stringify({
+  candidates: [{
+    title: "Validation logic is spread across checkout and invoice",
+    category: "architecture",
+    priority: "P1",
+    confidence: "high",
+    impact: "feature",
+    effort: "medium",
+    risk: "moderate",
+    files: [{ path: "src/checkout.ts", startLine: 1, endLine: 1 }, { path: "src/invoice.ts", startLine: 1, endLine: 1 }],
+    evidenceIds,
+    whyItMatters: "Spread validation creates drift risk.",
+    likelyRootCause: "Fast implementation duplicated the same pricing concept.",
+    suggestedDirection: "Create one pricing calculation module and route both callers through it.",
+    verification: ["npm test", "npm run typecheck"],
+    fixReadiness: {
+      minimumFixScope: "One pricing calculation module plus its callers.",
+      suggestedRegressionTest: "Add checkout and invoice regression coverage around pricing calculations.",
+      whyCurrentTestsMissIt: "Existing evidence points at structure and duplication, not behavior-level coverage.",
+      confidenceDowngradeReasons: []
+    },
+    supportingQuotes: []
+  }],
+  rejectedEvidenceIds: [],
+  notes: ["fake synthesis complete"]
+}));
+`);
+  const configPath = path.join(repo, ".deepclean", "config.json");
+  const config = JSON.parse(await readFile(configPath, "utf8")) as {
+    reviewSynthesis: { enabled: boolean };
+  };
+  config.reviewSynthesis.enabled = false;
   await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
 }
 
