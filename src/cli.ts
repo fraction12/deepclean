@@ -396,7 +396,7 @@ async function doctorCommand(context: CommandContext): Promise<number> {
   const initialized = await pathExists(context.paths.stateDir);
   const missingDirs = initialized ? await missingStateDirectories(context.paths) : [];
   const locks = initialized ? await readLockStatuses(context.paths, {
-    staleAfterMs: staleLockMsFromFlags(context),
+    staleAfterMs: numberFlag(context, "stale-lock-ms"),
   }) : [];
   const staleLocks = locks.filter((lock) => lock.stale);
   const configResult = await readConfigForDoctor(context.paths);
@@ -502,7 +502,7 @@ async function statusCommand(context: CommandContext): Promise<number> {
   }
   const artifactCounts = await stateArtifactCounts(context.paths);
   const locks = initialized ? await readLockStatuses(context.paths, {
-    staleAfterMs: staleLockMsFromFlags(context),
+    staleAfterMs: numberFlag(context, "stale-lock-ms"),
   }) : [];
   const statusCounts = countBy(candidates, (candidate) => candidate.status);
   const data = {
@@ -561,7 +561,7 @@ async function unlockCommand(context: CommandContext): Promise<number> {
     return 2;
   }
   const result = await recoverStaleLocks(context.paths, {
-    staleAfterMs: staleLockMsFromFlags(context),
+    staleAfterMs: numberFlag(context, "stale-lock-ms"),
   });
   emit(context.json, ok("unlock", {
     removed: result.removed.map(lockStatusPayload),
@@ -2994,7 +2994,7 @@ async function withWriteLock(context: CommandContext, fn: () => Promise<number>)
     command: context.parsed.command ?? "unknown",
     wait: flagBoolean(context.parsed.flags, "wait-lock"),
     timeoutMs: numberFlag(context, "lock-timeout-ms") ?? 0,
-    staleAfterMs: staleLockMsFromFlags(context),
+    staleAfterMs: numberFlag(context, "stale-lock-ms"),
   };
   return withStateWriteLock(context.paths, lockOptions, fn);
 }
@@ -3269,8 +3269,13 @@ function fileInScope(file: SourceFile, scope: ScanScope): boolean {
 }
 
 function pathInScope(filePath: string, scope: ScanScope): boolean {
-  return scope.paths.length === 0
-    || scope.paths.some((prefix) => filePath === prefix || filePath.startsWith(`${prefix.replace(/\/$/, "")}/`));
+  if (scope.paths.length === 0) {
+    return true;
+  }
+  return scope.paths.some((prefix) => {
+    const normalizedPrefix = prefix.replace(/\/$/, "");
+    return filePath === prefix || filePath.startsWith(`${normalizedPrefix}/`);
+  });
 }
 
 function featureInScope(feature: FeatureRecord, scope: ScanScope): boolean {
@@ -3656,7 +3661,8 @@ async function filesWithExtension(dir: string, extension: string): Promise<strin
 }
 
 function relativeStatePath(paths: StatePaths, filePath: string): string {
-  return path.relative(paths.root, filePath).split(path.sep).join("/");
+  const relativePath = path.relative(paths.root, filePath);
+  return relativePath.split(path.sep).join("/");
 }
 
 function sourceSafeFile(
@@ -3833,10 +3839,6 @@ function csvFlag(context: CommandContext, key: string): string[] {
     return [];
   }
   return value.split(",").map((item) => item.trim()).filter(Boolean);
-}
-
-function staleLockMsFromFlags(context: CommandContext): number | undefined {
-  return numberFlag(context, "stale-lock-ms");
 }
 
 function providerRuntimeControls(context: CommandContext, config: DeepcleanConfig): ProviderRuntimeControls {
