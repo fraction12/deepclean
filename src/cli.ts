@@ -2066,6 +2066,7 @@ async function runProcess(
     let idleTimer: ReturnType<typeof setTimeout> | undefined;
     let hardTimer: ReturnType<typeof setTimeout> | undefined;
     let killTimer: ReturnType<typeof setTimeout> | undefined;
+    let sawRepoProgress = false;
     const child = spawn(command, args, {
       stdio: ["pipe", "pipe", "pipe"],
       env: process.env,
@@ -2100,7 +2101,11 @@ async function runProcess(
       idleTimer = setTimeout(() => {
         void (async () => {
           const current = await collectProcessProgressSnapshot(options.progressRoot, stdout, stderr);
-          if (!sameProcessProgressSnapshot(progressSnapshot, current)) {
+          const progressKind = processProgressKind(progressSnapshot, current, sawRepoProgress);
+          if (progressKind !== "none") {
+            if (progressKind === "repo") {
+              sawRepoProgress = true;
+            }
             progressSnapshot = current;
             scheduleIdleCheck();
             return;
@@ -2165,11 +2170,18 @@ async function collectProcessProgressSnapshot(
   };
 }
 
-function sameProcessProgressSnapshot(
+function processProgressKind(
   left: { outputLength: number; dirtySignature: string },
   right: { outputLength: number; dirtySignature: string },
-): boolean {
-  return left.outputLength === right.outputLength && left.dirtySignature === right.dirtySignature;
+  sawRepoProgress: boolean,
+): "repo" | "startup-output" | "none" {
+  if (left.dirtySignature !== right.dirtySignature) {
+    return "repo";
+  }
+  if (!sawRepoProgress && left.outputLength !== right.outputLength) {
+    return "startup-output";
+  }
+  return "none";
 }
 
 function buildFixWorkerPrompt(options: {

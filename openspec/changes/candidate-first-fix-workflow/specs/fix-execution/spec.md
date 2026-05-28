@@ -90,8 +90,12 @@ The system SHALL limit automated retries to at most one failed patch attempt usi
 The system SHALL monitor local patch workers with an idle-progress watchdog and a hard execution ceiling.
 
 #### Scenario: Worker keeps making meaningful progress
-- **WHEN** a local patch worker reaches its idle timeout but Deepclean observes changed repo state or worker output since the previous check
+- **WHEN** a local patch worker reaches its idle timeout but Deepclean observes changed repo state since the previous check
 - **THEN** Deepclean resets the idle clock and lets the worker continue until completion or the hard ceiling
+
+#### Scenario: Worker is chatty after landing an in-scope patch
+- **WHEN** a local patch worker emits output after Deepclean has already observed repo-state progress but does not make further repo-state progress before the idle timeout
+- **THEN** Deepclean terminates the worker through the idle watchdog instead of treating output-only chatter as meaningful progress
 
 #### Scenario: Worker idles after landing an in-scope patch
 - **WHEN** a local patch worker reaches its idle timeout without new progress after modifying only candidate-owned files

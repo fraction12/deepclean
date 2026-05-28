@@ -1734,7 +1734,9 @@ fs.readFileSync(0, "utf8");
 const target = "src/invoice.ts";
 const source = fs.readFileSync(target, "utf8");
 fs.writeFileSync(target, source.replace("export function", "// worker timeout fix applied\\nexport function"));
-setInterval(() => {}, 1000);
+setInterval(() => {
+  process.stdout.write("still working after patch\\n");
+}, 50);
 `);
       const result = await runCli([
         "fix",
