@@ -1665,6 +1665,97 @@ process.exit(0);
     });
   });
 
+  test("fix can invoke a bounded local Codex patch worker without an explicit patch file", async () => {
+    await withTempRepo(async (repo) => {
+      const prepared = await prepareFixableRepo(repo);
+      await rm(prepared.patchPath, { force: true });
+      await enableFixExecution(repo);
+      await installFakeCodex(repo, `#!/usr/bin/env node
+const fs = require("node:fs");
+fs.readFileSync(0, "utf8");
+const target = "src/invoice.ts";
+const source = fs.readFileSync(target, "utf8");
+fs.writeFileSync(target, source.replace("export function", "// worker fix applied\\nexport function"));
+`);
+      const result = await runCli([
+        "fix",
+        prepared.candidateId,
+        "--apply",
+        "--verification",
+        "test -f src/invoice.ts",
+        "--allow-dirty",
+        "--json",
+      ], repo);
+      expect(result.code).toBe(0);
+      const payload = JSON.parse(result.stdout) as {
+        data: {
+          attempt: {
+            status: string;
+            outcome?: string;
+            worker?: { provider: string; outputPath?: string };
+            changedFiles: string[];
+            allowedWriteScope?: string[];
+          };
+          externalSideEffects: unknown[];
+        };
+      };
+      expect(payload.data.attempt.status).toBe("passed");
+      expect(payload.data.attempt.outcome).toBe("partially-resolved");
+      expect(payload.data.attempt.worker?.provider).toBe("codex");
+      expect(payload.data.attempt.changedFiles).toEqual(["src/invoice.ts"]);
+      expect(payload.data.attempt.allowedWriteScope).toContain("src/invoice.ts");
+      expect(payload.data.externalSideEffects).toEqual([]);
+      await expect(stat(payload.data.attempt.worker?.outputPath ?? "")).resolves.toBeTruthy();
+      expect(await readFile(path.join(repo, "src", "invoice.ts"), "utf8")).toContain("worker fix applied");
+    });
+  });
+
+  test("work blocks PR-ready summary when revalidation does not resolve the candidate", async () => {
+    await withTempRepo(async (repo) => {
+      const prepared = await prepareFixableRepo(repo);
+      await rm(prepared.patchPath, { force: true });
+      await enableFixExecution(repo);
+      await installFakeCodex(repo, `#!/usr/bin/env node
+const fs = require("node:fs");
+fs.readFileSync(0, "utf8");
+const target = "src/invoice.ts";
+fs.writeFileSync(target, \`
+export function calculateInvoice(items, coupon) {
+  return { subtotal: items.length, discount: coupon ? 1 : 0, tax: 0, total: items.length };
+}
+\`);
+`);
+      const result = await runCli([
+        "work",
+        prepared.candidateId,
+        "--branch",
+        "chore/deepclean-candidate-001",
+        "--apply",
+        "--verification",
+        "test -f src/invoice.ts",
+        "--no-pr",
+        "--allow-dirty",
+        "--json",
+      ], repo);
+      expect(result.code).toBe(3);
+      const payload = JSON.parse(result.stdout) as {
+        data: {
+          attempt: { status: string; outcome?: string };
+          revalidation?: { outcome: string };
+          prSummaryPath?: string;
+          externalSideEffects: unknown[];
+        };
+      };
+      expect(payload.data.attempt.status).toBe("failed");
+      expect(payload.data.attempt.outcome).toBe("needs_human");
+      expect(payload.data.revalidation?.outcome).toBe("stale");
+      expect(payload.data.prSummaryPath).toBeUndefined();
+      expect(payload.data.externalSideEffects).toEqual([]);
+      const branch = await execFileAsync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: repo });
+      expect(branch.stdout.trim()).toBe("chore/deepclean-candidate-001");
+    });
+  });
+
   test("respects configurable local candidate caps", async () => {
     await withTempRepo(async (repo) => {
       await writeFixtureSource(repo);

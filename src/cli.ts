@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -107,6 +107,7 @@ const commands = [
   "prune",
   "scrub",
   "fix",
+  "work",
   "cluster",
   "plan",
   "triage",
@@ -233,9 +234,16 @@ Commands:
     --patch <file>             Patch file to preview/apply
     --dry-run                  Persist preview without changing source
     --apply                    Apply the patch locally
-    --allow-source-mutation    Required with --apply
     --allow-dirty              Allow dirty files inside target scope
-    --verification-command <c> Override verification command
+    --verification <c>         Required verification command for --apply
+    --verification-command <c> Alias for --verification
+    --allow-files <glob>       Explicitly allow additional changed files
+  work <finding-or-candidate>  Candidate-first branch and PR workflow
+    --branch <name>            Create or switch to a candidate branch
+    --apply                    Apply the bounded patch
+    --verification <c>         Required verification command
+    --pr                       Push and open a PR after local proof passes
+    --no-pr                    Stop after local proof and PR-ready summary
   cluster [theme-id]           Group related candidates into cleanup themes
   plan <candidate-or-theme>    Generate an agent-ready cleanup plan
   triage <candidate-id>        Update candidate status with --status and --note
@@ -331,6 +339,8 @@ export async function main(argv: string[], cwd = process.cwd()): Promise<number>
         return await scrubCommand(context);
       case "fix":
         return await withWriteLock(context, () => fixCommand(context));
+      case "work":
+        return await withWriteLock(context, () => workCommand(context));
       case "cluster":
         return await withWriteLock(context, () => clusterCommand(context));
       case "plan":
@@ -678,145 +688,43 @@ async function scrubCommand(context: CommandContext): Promise<number> {
 
 async function fixCommand(context: CommandContext): Promise<number> {
   const target = requireCandidateId(context);
-  if (target.startsWith("theme-")) {
-    emit(context.json, fail("fix", "fix_target_too_broad", "Fix execution requires one stable finding or candidate, not a broad theme."));
-    return 2;
+  const result = await runCandidateFixWorkflow(context, target, {
+    command: "fix",
+    requirePrProof: false,
+    createBranch: false,
+    openPr: false,
+  });
+  if (!result.ok) {
+    emit(context.json, fail("fix", result.code, result.message, result.diagnostics));
+    return result.exitCode;
   }
-  const patch = flagString(context.parsed.flags, "patch");
-  if (!patch) {
-    emit(context.json, fail("fix", "patch_required", "--patch is required so Deepclean can preview/apply an explicit local patch."));
-    return 2;
+  emit(context.json, ok("fix", result.data, result.data.attempt.diagnostics));
+  if (!context.json && !context.quiet) {
+    console.log(`${result.data.attempt.dryRun ? "Previewed" : "Ran"} fix ${result.data.attempt.id}: ${result.data.attempt.outcome ?? result.data.attempt.status}`);
   }
-  const dryRun = flagBoolean(context.parsed.flags, "dry-run") || !flagBoolean(context.parsed.flags, "apply");
-  const config = await ensureState(context.paths);
-  if (!dryRun && (!config.fixExecution.enabled || !flagBoolean(context.parsed.flags, "allow-source-mutation"))) {
-    emit(context.json, fail("fix", "fix_opt_in_required", "Applying fixes requires fixExecution.enabled=true and --allow-source-mutation."));
-    return 2;
-  }
+  return result.exitCode;
+}
 
-  const resolved = await resolveFixTarget(context.paths, target);
-  if (!resolved) {
-    emit(context.json, fail("fix", "finding_not_found", `Finding or candidate not found: ${target}`));
-    return 1;
+async function workCommand(context: CommandContext): Promise<number> {
+  const target = requireCandidateId(context);
+  const result = await runCandidateFixWorkflow(context, target, {
+    command: "work",
+    requirePrProof: flagBoolean(context.parsed.flags, "pr"),
+    createBranch: true,
+    openPr: flagBoolean(context.parsed.flags, "pr"),
+  });
+  if (!result.ok) {
+    emit(context.json, fail("work", result.code, result.message, result.diagnostics));
+    return result.exitCode;
   }
-  const blocked = fixReadinessBlocker(resolved.candidate);
-  if (blocked) {
-    emit(context.json, fail("fix", blocked.code, blocked.message));
-    return 2;
-  }
-  const plan = await latestPlanForTarget(context.paths, resolved.candidate.id);
-  if (!plan) {
-    emit(context.json, fail("fix", "fix_plan_required", "Generate a current plan before fixing this finding."));
-    return 2;
-  }
-  const revalidation = await latestRevalidationForFinding(context.paths, resolved.findingId);
-  if (!revalidation || !["unchanged", "changed"].includes(revalidation.outcome)) {
-    emit(context.json, fail("fix", "fix_revalidation_required", "Run revalidation before applying or previewing this fix."));
-    return 2;
-  }
-
-  const patchPath = path.resolve(context.paths.root, patch);
-  const patchContent = await readFile(patchPath, "utf8");
-  const changedFiles = changedFilesFromPatch(patchContent);
-  if (changedFiles.length === 0) {
-    emit(context.json, fail("fix", "patch_empty", "Patch preview did not contain changed files."));
-    return 2;
-  }
-  const dirty = await dirtyFiles(context.paths.root);
-  const targetPaths = new Set(resolved.candidate.files.map((file) => file.path));
-  const statePrefix = `${relativeStatePath(context.paths, context.paths.stateDir).replace(/\/$/, "")}/`;
-  const patchRelativePath = relativeStatePath(context.paths, patchPath);
-  const dirtyOutsideTarget = dirty.filter((file) => (
-    !targetPaths.has(file)
-    && file !== patchRelativePath
-    && !file.startsWith(statePrefix)
-  ));
-  if (!dryRun && dirtyOutsideTarget.length > 0 && !flagBoolean(context.parsed.flags, "allow-dirty")) {
-    emit(context.json, fail("fix", "dirty_tree", `Dirty files outside target scope: ${dirtyOutsideTarget.join(", ")}`));
-    return 2;
-  }
-
-  const attemptId = timestampId("fix");
-  const patchPreviewPath = path.join(context.paths.fixesDir, `${attemptId}.patch`);
-  await mkdir(context.paths.fixesDir, { recursive: true });
-  await writeFile(patchPreviewPath, patchContent, "utf8");
-
-  const verificationCommands = verificationCommandsForFix(context, config, resolved.candidate);
-  let status: FixAttemptRecord["status"] = dryRun ? "previewed" : "unverified";
-  let verificationResults: FixAttemptRecord["verificationResults"] = [];
-  const diagnostics: Diagnostic[] = [];
-  if (!dryRun) {
-    const apply = await execFileAsync("git", ["apply", patchPath], { cwd: context.paths.root, timeout: 30_000 })
-      .then(() => ({ ok: true, error: undefined as string | undefined }))
-      .catch((error) => ({ ok: false, error: error instanceof Error ? error.message : String(error) }));
-    if (!apply.ok) {
-      diagnostics.push({ level: "error", code: "patch_apply_failed", message: apply.error ?? "Patch failed to apply." });
-      status = "failed";
-    } else if (verificationCommands.length > 0) {
-      verificationResults = await runFixVerification(context.paths, attemptId, verificationCommands);
-      status = verificationResults.every((result) => result.passed) ? "passed" : "failed";
+  emit(context.json, ok("work", result.data, result.data.attempt.diagnostics));
+  if (!context.json && !context.quiet) {
+    console.log(`Work ${result.data.attempt.id}: ${result.data.attempt.outcome ?? result.data.attempt.status}`);
+    if (result.data.pr?.url) {
+      console.log(`PR: ${result.data.pr.url}`);
     }
   }
-
-  const now = new Date().toISOString();
-  const attempt: FixAttemptRecord = {
-    schemaVersion,
-    recordType: "fix_attempt",
-    id: attemptId,
-    findingId: resolved.findingId,
-    planId: plan.id,
-    status,
-    dryRun,
-    changedFiles,
-    patchPreviewPath,
-    verificationCommands,
-    verificationResults,
-    diagnostics,
-    createdAt: now,
-    updatedAt: now,
-  };
-  const attemptPath = await writeFixAttempt(context.paths, attempt);
-  await writeLifecycleEvents(context.paths, [
-    {
-      schemaVersion,
-      recordType: "lifecycle_event",
-      id: timestampId("event"),
-      targetType: "fix_attempt",
-      targetId: attempt.id,
-      findingId: resolved.findingId,
-      kind: "fix-attempted",
-      command: "fix",
-      createdAt: now,
-      data: { dryRun, status, changedFiles },
-    },
-    ...(status === "passed" || status === "failed"
-      ? [{
-        schemaVersion,
-        recordType: "lifecycle_event" as const,
-        id: timestampId("event"),
-        targetType: "fix_attempt" as const,
-        targetId: attempt.id,
-        findingId: resolved.findingId,
-        kind: status === "passed" ? "verification-passed" as const : "verification-failed" as const,
-        command: "fix",
-        createdAt: now,
-        data: { verificationResults },
-      }]
-      : []),
-  ]);
-
-  emit(context.json, ok("fix", {
-    attempt,
-    attemptPath,
-    patchPreviewPath,
-    changedFiles,
-    externalSideEffects: [],
-    next: status === "passed" ? "Review local changes and open a PR manually if desired." : "Inspect the fix attempt artifact before continuing.",
-  }, diagnostics));
-  if (!context.json && !context.quiet) {
-    console.log(`${dryRun ? "Previewed" : "Applied"} fix ${attempt.id}: ${status}`);
-  }
-  return status === "failed" ? 3 : 0;
+  return result.exitCode;
 }
 
 async function mapCommand(context: CommandContext): Promise<number> {
@@ -1645,16 +1553,821 @@ async function latestState(paths: StatePaths): Promise<{
   return { runId, candidates, clusters, evidence, features };
 }
 
+type FixWorkflowResult = {
+  ok: true;
+  exitCode: number;
+  data: {
+    attempt: FixAttemptRecord;
+    attemptPath: string;
+    planPath: string;
+    patchPreviewPath?: string;
+    prSummaryPath?: string;
+    changedFiles: string[];
+    outOfScopeFiles: string[];
+    allowedWriteScope: string[];
+    revalidation?: RevalidationRecord;
+    pr?: FixAttemptRecord["pr"];
+    externalSideEffects: string[];
+    next: string;
+  };
+} | {
+  ok: false;
+  exitCode: number;
+  code: string;
+  message: string;
+  diagnostics?: Diagnostic[];
+};
+
+async function runCandidateFixWorkflow(
+  context: CommandContext,
+  target: string,
+  options: {
+    command: "fix" | "work";
+    requirePrProof: boolean;
+    createBranch: boolean;
+    openPr: boolean;
+  },
+): Promise<FixWorkflowResult> {
+  if (target.startsWith("theme-")) {
+    return {
+      ok: false,
+      exitCode: 2,
+      code: "fix_target_too_broad",
+      message: "Fix execution requires one stable finding or candidate, not a broad theme.",
+    };
+  }
+
+  const config = await ensureState(context.paths);
+  const state = await latestState(context.paths);
+  const resolved = await resolveFixTargetFromCandidates(state.candidates, target);
+  if (!resolved) {
+    return {
+      ok: false,
+      exitCode: 1,
+      code: "finding_not_found",
+      message: `Finding or candidate not found: ${target}`,
+    };
+  }
+
+  const blocked = fixReadinessBlocker(resolved.candidate);
+  if (blocked) {
+    return { ok: false, exitCode: 2, ...blocked };
+  }
+
+  const dryRun = flagBoolean(context.parsed.flags, "dry-run") || !flagBoolean(context.parsed.flags, "apply");
+  const verificationCommands = verificationCommandsForFix(context, config, resolved.candidate);
+  if (!dryRun && verificationCommands.length === 0) {
+    return {
+      ok: false,
+      exitCode: 2,
+      code: "verification_required",
+      message: "--verification is required for applied candidate fixes unless the candidate or config supplies verification commands.",
+    };
+  }
+  if (options.requirePrProof && verificationCommands.length === 0) {
+    return {
+      ok: false,
+      exitCode: 2,
+      code: "verification_required",
+      message: "--verification is required before Deepclean can prepare or open a PR.",
+    };
+  }
+
+  const planResult = await ensureFixPlan(context.paths, state.runId, resolved.candidate, state.evidence, state.features);
+  const allowedWriteScope = allowedWriteScopeForCandidate(resolved.candidate, state.features, context);
+  const dirtyBefore = await dirtyFiles(context.paths.root);
+  const patch = flagString(context.parsed.flags, "patch");
+  const patchPath = patch ? path.resolve(context.paths.root, patch) : undefined;
+  const allowedDirty = flagBoolean(context.parsed.flags, "allow-dirty");
+  const statePrefix = `${relativeStatePath(context.paths, context.paths.stateDir).replace(/\/$/, "")}/`;
+  const patchRelativePath = patchPath ? relativeStatePath(context.paths, patchPath) : undefined;
+  const dirtyOutsideTarget = dirtyBefore.filter((file) => (
+    !isPathAllowed(file, allowedWriteScope)
+    && file !== patchRelativePath
+    && !file.startsWith(statePrefix)
+  ));
+  if (!dryRun && dirtyOutsideTarget.length > 0 && !allowedDirty) {
+    return {
+      ok: false,
+      exitCode: 2,
+      code: "dirty_tree",
+      message: `Dirty files outside target scope: ${dirtyOutsideTarget.join(", ")}`,
+    };
+  }
+
+  const branch = flagString(context.parsed.flags, "branch");
+  if (options.createBranch) {
+    if (!branch) {
+      return {
+        ok: false,
+        exitCode: 2,
+        code: "branch_required",
+        message: "`deepclean work` requires --branch so the patch has an isolated PR lane.",
+      };
+    }
+    if (!dryRun) {
+      const branchResult = await checkoutWorkBranch(context.paths.root, branch);
+      if (!branchResult.ok) {
+        return {
+          ok: false,
+          exitCode: 2,
+          code: "branch_checkout_failed",
+          message: branchResult.error,
+        };
+      }
+    }
+  }
+
+  const attemptId = timestampId("fix");
+  const diagnostics: Diagnostic[] = [];
+  await mkdir(context.paths.fixesDir, { recursive: true });
+
+  let patchPreviewPath: string | undefined;
+  let worker: FixAttemptRecord["worker"];
+  let status: FixAttemptRecord["status"] = dryRun ? "previewed" : "unverified";
+  let changedFiles: string[] = [];
+  let verificationResults: FixAttemptRecord["verificationResults"] = [];
+  let revalidation: RevalidationRecord | undefined;
+
+  if (patchPath) {
+    const patchContent = await readFile(patchPath, "utf8");
+    changedFiles = changedFilesFromPatch(patchContent);
+    if (changedFiles.length === 0) {
+      return {
+        ok: false,
+        exitCode: 2,
+        code: "patch_empty",
+        message: "Patch preview did not contain changed files.",
+      };
+    }
+    patchPreviewPath = path.join(context.paths.fixesDir, `${attemptId}.patch`);
+    await writeFile(patchPreviewPath, patchContent, "utf8");
+    if (!dryRun) {
+      const apply = await execFileAsync("git", ["apply", patchPath], { cwd: context.paths.root, timeout: 30_000 })
+        .then(() => ({ ok: true, error: undefined as string | undefined }))
+        .catch((error) => ({ ok: false, error: error instanceof Error ? error.message : String(error) }));
+      if (!apply.ok) {
+        diagnostics.push({ level: "error", code: "patch_apply_failed", message: apply.error ?? "Patch failed to apply." });
+        status = "failed";
+      }
+    }
+  } else if (!dryRun) {
+    const workerResult = await runCodexPatchWorker({
+      root: context.paths.root,
+      command: config.reviewSynthesis.command,
+      model: config.reviewSynthesis.model,
+      timeoutMs: config.reviewSynthesis.timeoutMs,
+      attemptId,
+      candidate: resolved.candidate,
+      planContent: planResult.plan.content,
+      evidence: evidenceForIds(state.evidence, resolved.candidate.evidenceIds),
+      features: featuresForCandidate(resolved.candidate, state.features),
+      allowedWriteScope,
+      verificationCommands,
+      outputDir: context.paths.fixesDir,
+    });
+    worker = workerResult.worker;
+    diagnostics.push(...workerResult.diagnostics);
+    if (workerResult.exitCode !== 0) {
+      status = "failed";
+    }
+  }
+
+  if (!dryRun) {
+    changedFiles = uniqueNormalized([
+      ...changedFiles,
+      ...(await changedFilesSince(context.paths.root, dirtyBefore)),
+    ]).filter((file) => !file.startsWith(statePrefix));
+  }
+  const outOfScopeFiles = changedFiles.filter((file) => !isPathAllowed(file, allowedWriteScope));
+  if (!dryRun && changedFiles.length === 0 && status !== "failed") {
+    diagnostics.push({
+      level: "error",
+      code: "fix_no_changed_files",
+      message: "Patch worker completed without changing candidate-owned files.",
+    });
+    status = "failed";
+  }
+  if (outOfScopeFiles.length > 0) {
+    diagnostics.push({
+      level: "error",
+      code: "fix_scope_failed",
+      message: `Patch changed files outside candidate scope: ${outOfScopeFiles.join(", ")}`,
+    });
+    status = "failed";
+  }
+
+  if (!dryRun && status !== "failed") {
+    verificationResults = await runFixVerification(context.paths, attemptId, verificationCommands);
+    status = verificationResults.every((result) => result.passed) ? "passed" : "failed";
+  }
+
+  const revalidationRequired = flagBoolean(context.parsed.flags, "revalidate") || options.createBranch || options.requirePrProof;
+  if (!dryRun && revalidationRequired) {
+    const record = await revalidateFixTarget(context, resolved.findingId);
+    revalidation = record.revalidation;
+    diagnostics.push(...record.diagnostics);
+  }
+
+  const outcome = classifyFixOutcome({
+    dryRun,
+    status,
+    outOfScopeFiles,
+    verificationResults,
+    revalidation,
+    requireRevalidation: revalidationRequired,
+  });
+  if (outcome === "needs_human" && status !== "failed" && !dryRun) {
+    status = "failed";
+  }
+
+  let prSummaryPath: string | undefined;
+  let pr: FixAttemptRecord["pr"];
+  const externalSideEffects: string[] = [];
+  const localSummaryAllowed = outcome === "resolved";
+  const prProofPassed = outcome === "resolved";
+  if (options.requirePrProof && !prProofPassed) {
+    diagnostics.push({
+      level: "error",
+      code: "pr_blocked",
+      message: "PR workflow requires in-scope changes, passing verification, and revalidation outcome resolved.",
+    });
+  }
+  if (!dryRun && localSummaryAllowed && branch) {
+    prSummaryPath = await writePrReadySummary(context.paths, {
+      attemptId,
+      candidate: resolved.candidate,
+      branch,
+      changedFiles,
+      verificationResults,
+      revalidation,
+      outcome,
+      planId: planResult.plan.id,
+    });
+    pr = {
+      branch,
+      base: flagString(context.parsed.flags, "base"),
+      summaryPath: prSummaryPath,
+      externalSideEffects,
+    };
+    if (options.openPr) {
+      const prResult = await commitPushAndOpenPr(context, {
+        branch,
+        base: pr.base,
+        title: flagString(context.parsed.flags, "title") ?? `${resolved.candidate.id}: ${resolved.candidate.title}`,
+        bodyPath: prSummaryPath,
+        commitMessage: flagString(context.parsed.flags, "commit-message") ?? `fix: address ${resolved.candidate.id}`,
+        changedFiles,
+      });
+      if (!prResult.ok) {
+        diagnostics.push({ level: "error", code: "pr_create_failed", message: prResult.error });
+        status = "failed";
+      } else {
+        pr = {
+          ...pr,
+          commitSha: prResult.commitSha,
+          url: prResult.url,
+          externalSideEffects: ["git commit", "git push", "gh pr create"],
+        };
+        externalSideEffects.push(...pr.externalSideEffects);
+      }
+    }
+  }
+
+  const now = new Date().toISOString();
+  const attempt: FixAttemptRecord = {
+    schemaVersion,
+    recordType: "fix_attempt",
+    id: attemptId,
+    findingId: resolved.findingId,
+    candidateId: resolved.candidate.id,
+    planId: planResult.plan.id,
+    status,
+    outcome,
+    dryRun,
+    allowedWriteScope,
+    outOfScopeFiles,
+    beforeEvidenceIds: resolved.candidate.evidenceIds,
+    afterRevalidationId: revalidation?.id,
+    changedFiles,
+    patchPreviewPath,
+    verificationCommands,
+    verificationResults,
+    worker,
+    pr,
+    diagnostics,
+    createdAt: now,
+    updatedAt: now,
+  };
+  const attemptPath = await writeFixAttempt(context.paths, attempt);
+  await writeFixLifecycleEvents(context.paths, attempt, options.command, revalidation);
+
+  const blockedPr = options.requirePrProof && !prProofPassed;
+  return {
+    ok: true,
+    exitCode: status === "failed" || blockedPr ? 3 : 0,
+    data: {
+      attempt,
+      attemptPath,
+      planPath: planResult.path,
+      ...(patchPreviewPath ? { patchPreviewPath } : {}),
+      ...(prSummaryPath ? { prSummaryPath } : {}),
+      changedFiles,
+      outOfScopeFiles,
+      allowedWriteScope,
+      ...(revalidation ? { revalidation } : {}),
+      ...(pr ? { pr } : {}),
+      externalSideEffects,
+      next: nextFixWorkflowStep({ dryRun, outcome, options, pr }),
+    },
+  };
+}
+
 async function resolveFixTarget(paths: StatePaths, target: string): Promise<{
   findingId: string;
   candidate: CandidateRecord;
 } | undefined> {
   const candidates = await readLatestCandidates(paths);
+  return resolveFixTargetFromCandidates(candidates, target);
+}
+
+function resolveFixTargetFromCandidates(candidates: CandidateRecord[], target: string): {
+  findingId: string;
+  candidate: CandidateRecord;
+} | undefined {
   const candidate = candidates.find((item) => item.id === target || item.findingId === target);
   if (!candidate) {
     return undefined;
   }
   return { findingId: candidate.findingId ?? candidate.id, candidate };
+}
+
+async function ensureFixPlan(
+  paths: StatePaths,
+  runId: string,
+  candidate: CandidateRecord,
+  evidence: EvidenceRecord[],
+  features: FeatureRecord[],
+): Promise<{ plan: { id: string; content: string }; path: string }> {
+  const existing = await latestPlanForTarget(paths, candidate.id);
+  if (existing?.content) {
+    return { plan: existing, path: existing.path };
+  }
+  const plan = buildCandidatePlan(
+    runId,
+    candidate,
+    evidenceForIds(evidence, candidate.evidenceIds),
+    featuresForCandidate(candidate, features),
+  );
+  const planPath = await writePlan(paths, plan);
+  return { plan, path: planPath };
+}
+
+function allowedWriteScopeForCandidate(
+  candidate: CandidateRecord,
+  features: FeatureRecord[],
+  context: CommandContext,
+): string[] {
+  const scope = new Set<string>();
+  for (const file of candidate.files) {
+    scope.add(normalizeRelativePath(file.path));
+  }
+  for (const feature of featuresForCandidate(candidate, features)) {
+    for (const file of [...feature.ownedFiles, ...feature.testFiles]) {
+      scope.add(normalizeRelativePath(file.path));
+    }
+  }
+  const extra = splitList(flagString(context.parsed.flags, "allow-files"));
+  for (const item of extra) {
+    scope.add(normalizeRelativePath(item));
+  }
+  return [...scope].sort();
+}
+
+async function runCodexPatchWorker(options: {
+  root: string;
+  command: string;
+  model?: string | undefined;
+  timeoutMs: number;
+  attemptId: string;
+  candidate: CandidateRecord;
+  planContent: string;
+  evidence: EvidenceRecord[];
+  features: FeatureRecord[];
+  allowedWriteScope: string[];
+  verificationCommands: string[];
+  outputDir: string;
+}): Promise<{
+  exitCode: number | null;
+  worker: NonNullable<FixAttemptRecord["worker"]>;
+  diagnostics: Diagnostic[];
+}> {
+  const outputPath = path.join(options.outputDir, `${options.attemptId}-worker.txt`);
+  const prompt = buildFixWorkerPrompt(options);
+  const args = [
+    "exec",
+    "-C",
+    options.root,
+    "-s",
+    "workspace-write",
+    "--skip-git-repo-check",
+  ];
+  if (options.model) {
+    args.push("-m", options.model);
+  }
+  args.push("-");
+  const result = await runProcess(options.command, args, prompt, options.timeoutMs, options.root);
+  await writeFile(outputPath, `${result.stdout}${result.stderr ? `\nSTDERR:\n${result.stderr}` : ""}`, "utf8");
+  return {
+    exitCode: result.exitCode,
+    worker: {
+      provider: "codex",
+      command: options.command,
+      exitCode: result.exitCode,
+      outputPath,
+    },
+    diagnostics: result.exitCode === 0
+      ? []
+      : [{
+        level: "error",
+        code: result.timedOut
+          ? "fix_worker_timeout"
+          : result.providerUnavailable
+            ? "fix_worker_unavailable"
+            : "fix_worker_failed",
+        message: result.stderr || result.stdout || "Patch worker failed.",
+      }],
+  };
+}
+
+async function runProcess(
+  command: string,
+  args: string[],
+  stdin: string,
+  timeoutMs: number,
+  cwd?: string,
+): Promise<{ exitCode: number | null; stdout: string; stderr: string; timedOut: boolean; providerUnavailable: boolean }> {
+  return new Promise((resolve) => {
+    let timedOut = false;
+    let providerUnavailable = false;
+    const child = spawn(command, args, {
+      stdio: ["pipe", "pipe", "pipe"],
+      env: process.env,
+      cwd,
+    });
+    let stdout = "";
+    let stderr = "";
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGTERM");
+    }, timeoutMs);
+
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => {
+      stdout += chunk;
+    });
+    child.stderr.on("data", (chunk: string) => {
+      stderr += chunk;
+    });
+    child.on("error", (error) => {
+      clearTimeout(timeout);
+      providerUnavailable = typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
+      resolve({ exitCode: 1, stdout, stderr: error.message, timedOut, providerUnavailable });
+    });
+    child.on("close", (exitCode) => {
+      clearTimeout(timeout);
+      resolve({ exitCode, stdout, stderr, timedOut, providerUnavailable });
+    });
+    child.stdin.end(stdin);
+  });
+}
+
+function buildFixWorkerPrompt(options: {
+  candidate: CandidateRecord;
+  planContent: string;
+  evidence: EvidenceRecord[];
+  features: FeatureRecord[];
+  allowedWriteScope: string[];
+  verificationCommands: string[];
+}): string {
+  return [
+    "You are applying one bounded Deepclean fix in a local repository.",
+    "",
+    "Rules:",
+    "- Fix only the selected candidate.",
+    "- Keep the patch minimal.",
+    "- Edit only files in Allowed write scope.",
+    "- Do not commit, push, open PRs, publish, or run external actions.",
+    "- Add or update focused tests only when they are in scope.",
+    "- Stop if the plan is too broad or unsafe.",
+    "",
+    "Candidate JSON:",
+    JSON.stringify(options.candidate, null, 2),
+    "",
+    "Allowed write scope:",
+    options.allowedWriteScope.map((file) => `- ${file}`).join("\n") || "- n/a",
+    "",
+    "Verification commands the final patch must satisfy:",
+    options.verificationCommands.map((command) => `- ${command}`).join("\n") || "- n/a",
+    "",
+    "Feature context:",
+    JSON.stringify(options.features.map((feature) => ({
+      featureId: feature.featureId,
+      title: feature.title,
+      ownedFiles: feature.ownedFiles,
+      testFiles: feature.testFiles,
+      verification: feature.verification,
+    })), null, 2),
+    "",
+    "Evidence:",
+    JSON.stringify(options.evidence.map((record) => ({
+      id: record.id,
+      kind: record.kind,
+      title: record.title,
+      summary: record.summary,
+      files: record.files,
+    })), null, 2),
+    "",
+    "Fix plan:",
+    options.planContent,
+  ].join("\n");
+}
+
+async function revalidateFixTarget(
+  context: CommandContext,
+  findingId: string,
+): Promise<{ revalidation: RevalidationRecord; diagnostics: Diagnostic[] }> {
+  const beforeFindings = await readFindings(context.paths);
+  const finding = beforeFindings.find((item) => item.id === findingId);
+  const scan = await executeScan(context, { synthesize: false });
+  const revalidation = await classifyRevalidation({
+    root: context.paths.root,
+    finding,
+    currentCandidates: scan.data.candidates,
+    runId: scan.runId,
+    createdAt: new Date().toISOString(),
+  });
+  await writeRevalidation(context.paths, revalidation);
+  return { revalidation, diagnostics: scan.diagnostics };
+}
+
+function classifyFixOutcome(options: {
+  dryRun: boolean;
+  status: FixAttemptRecord["status"];
+  outOfScopeFiles: string[];
+  verificationResults: FixAttemptRecord["verificationResults"];
+  revalidation?: RevalidationRecord | undefined;
+  requireRevalidation: boolean;
+}): FixAttemptRecord["outcome"] {
+  if (options.dryRun) {
+    return undefined;
+  }
+  if (options.outOfScopeFiles.length > 0 || options.status === "failed") {
+    return "needs_human";
+  }
+  if (options.verificationResults.some((result) => !result.passed)) {
+    return "needs_human";
+  }
+  if (options.requireRevalidation && !options.revalidation) {
+    return "needs_human";
+  }
+  switch (options.revalidation?.outcome) {
+    case "fixed":
+      return "resolved";
+    case "changed":
+      return "partially-resolved";
+    case "unchanged":
+      return "still-open";
+    case "superseded":
+      return "superseded";
+    case "stale":
+    case "inconclusive":
+      return "needs_human";
+    case undefined:
+      return options.status === "passed" ? "partially-resolved" : "needs_human";
+  }
+}
+
+async function writePrReadySummary(
+  paths: StatePaths,
+  options: {
+    attemptId: string;
+    candidate: CandidateRecord;
+    branch: string;
+    changedFiles: string[];
+    verificationResults: FixAttemptRecord["verificationResults"];
+    revalidation?: RevalidationRecord | undefined;
+    outcome: NonNullable<FixAttemptRecord["outcome"]>;
+    planId: string;
+  },
+): Promise<string> {
+  const lines = [
+    `# Deepclean PR Summary: ${options.candidate.id}`,
+    "",
+    `Branch: ${options.branch}`,
+    `Candidate: ${options.candidate.id}${options.candidate.findingId ? ` / ${options.candidate.findingId}` : ""}`,
+    `Title: ${options.candidate.title}`,
+    `Outcome: ${options.outcome}`,
+    `Plan: ${options.planId}`,
+    "",
+    "## Changed Files",
+    ...options.changedFiles.map((file) => `- ${file}`),
+    "",
+    "## Expected Behavior",
+    options.candidate.suggestedDirection,
+    "",
+    "## Verification",
+    ...options.verificationResults.map((result) => `- ${result.passed ? "PASS" : "FAIL"} ${result.command}${typeof result.exitCode === "number" ? ` (exit ${result.exitCode})` : ""}`),
+    "",
+    "## Deepclean Revalidation",
+    options.revalidation ? `- ${options.revalidation.id}: ${options.revalidation.outcome}` : "- not run",
+    "",
+    "## Why This Is Safe",
+    options.candidate.fixReadiness?.minimumFixScope ?? "Patch is bounded to the selected Deepclean candidate and its allowed write scope.",
+    "",
+    "## Remaining Risk",
+    options.outcome === "partially-resolved"
+      ? "Candidate improved but Deepclean still sees follow-up work. Review remaining evidence before merging broad follow-ups."
+      : "No additional risk was reported by the candidate-first workflow.",
+  ];
+  const summaryPath = path.join(paths.fixesDir, `${options.attemptId}-pr-summary.md`);
+  await writeFile(summaryPath, `${lines.join("\n")}\n`, "utf8");
+  return summaryPath;
+}
+
+async function commitPushAndOpenPr(
+  context: CommandContext,
+  options: {
+    branch: string;
+    base?: string | undefined;
+    title: string;
+    bodyPath: string;
+    commitMessage: string;
+    changedFiles: string[];
+  },
+): Promise<{ ok: true; commitSha: string; url: string } | { ok: false; error: string }> {
+  const root = context.paths.root;
+  const add = await gitExec(root, ["add", "--", ...options.changedFiles]);
+  if (!add.ok) {
+    return add;
+  }
+  const commit = await gitExec(root, ["commit", "-m", options.commitMessage]);
+  if (!commit.ok) {
+    return commit;
+  }
+  const commitShaResult = await gitExec(root, ["rev-parse", "HEAD"]);
+  if (!commitShaResult.ok) {
+    return commitShaResult;
+  }
+  const push = await gitExec(root, ["push", "-u", "origin", options.branch]);
+  if (!push.ok) {
+    return push;
+  }
+  const args = ["pr", "create", "--title", options.title, "--body-file", options.bodyPath, "--head", options.branch];
+  if (options.base) {
+    args.push("--base", options.base);
+  }
+  const pr = await execFileAsync("gh", args, { cwd: root, timeout: 120_000 })
+    .then((result) => ({ ok: true as const, url: result.stdout.trim() }))
+    .catch((error) => ({ ok: false as const, error: error instanceof Error ? error.message : String(error) }));
+  if (!pr.ok) {
+    return pr;
+  }
+  return { ok: true, commitSha: commitShaResult.stdout.trim(), url: pr.url };
+}
+
+async function gitExec(root: string, args: string[]): Promise<{ ok: true; stdout: string } | { ok: false; error: string }> {
+  return execFileAsync("git", args, { cwd: root, timeout: 120_000 })
+    .then((result) => ({ ok: true as const, stdout: result.stdout }))
+    .catch((error) => ({ ok: false as const, error: error instanceof Error ? error.message : String(error) }));
+}
+
+async function checkoutWorkBranch(root: string, branch: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  const current = await execFileAsync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: root, timeout: 5000 })
+    .then((result) => result.stdout.trim())
+    .catch(() => undefined);
+  if (current === branch) {
+    return { ok: true };
+  }
+  const existing = await execFileAsync("git", ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`], { cwd: root, timeout: 5000 })
+    .then(() => true)
+    .catch(() => false);
+  const args = existing ? ["switch", branch] : ["switch", "-c", branch];
+  const result = await gitExec(root, args);
+  return result.ok ? { ok: true } : result;
+}
+
+async function changedFilesSince(root: string, beforeDirty: string[]): Promise<string[]> {
+  const before = new Set(beforeDirty);
+  const after = await dirtyFiles(root);
+  return after.filter((file) => !before.has(file));
+}
+
+function isPathAllowed(file: string, allowedWriteScope: string[]): boolean {
+  const normalized = normalizeRelativePath(file);
+  return allowedWriteScope.some((allowed) => pathMatchesAllowed(normalized, allowed));
+}
+
+function pathMatchesAllowed(file: string, allowed: string): boolean {
+  if (allowed.endsWith("/**")) {
+    return file.startsWith(allowed.slice(0, -2));
+  }
+  if (allowed.includes("*")) {
+    const escaped = allowed
+      .replace(/[.+?^${}()|[\]\\]/g, "\\$&")
+      .replace(/\*/g, ".*");
+    return new RegExp(`^${escaped}$`).test(file);
+  }
+  return file === allowed;
+}
+
+function normalizeRelativePath(value: string): string {
+  return value.split(path.sep).join("/").replace(/^\.?\//, "");
+}
+
+function splitList(value: string | undefined): string[] {
+  if (!value) {
+    return [];
+  }
+  return value.split(",").map((item) => item.trim()).filter(Boolean);
+}
+
+async function writeFixLifecycleEvents(
+  paths: StatePaths,
+  attempt: FixAttemptRecord,
+  command: "fix" | "work",
+  revalidation?: RevalidationRecord | undefined,
+): Promise<void> {
+  const now = attempt.updatedAt;
+  await writeLifecycleEvents(paths, [
+    {
+      schemaVersion,
+      recordType: "lifecycle_event",
+      id: timestampId("event"),
+      targetType: "fix_attempt",
+      targetId: attempt.id,
+      findingId: attempt.findingId,
+      kind: "fix-attempted",
+      command,
+      createdAt: now,
+      data: {
+        candidateId: attempt.candidateId,
+        dryRun: attempt.dryRun,
+        status: attempt.status,
+        outcome: attempt.outcome,
+        changedFiles: attempt.changedFiles,
+      },
+    },
+    ...(attempt.verificationResults.length > 0
+      ? [{
+        schemaVersion,
+        recordType: "lifecycle_event" as const,
+        id: timestampId("event"),
+        targetType: "fix_attempt" as const,
+        targetId: attempt.id,
+        findingId: attempt.findingId,
+        kind: attempt.verificationResults.every((result) => result.passed) ? "verification-passed" as const : "verification-failed" as const,
+        command,
+        createdAt: now,
+        data: { verificationResults: attempt.verificationResults },
+      }]
+      : []),
+    ...(revalidation
+      ? [{
+        schemaVersion,
+        recordType: "lifecycle_event" as const,
+        id: timestampId("event"),
+        targetType: "fix_attempt" as const,
+        targetId: attempt.id,
+        findingId: attempt.findingId,
+        kind: "revalidated" as const,
+        command,
+        createdAt: now,
+        data: { revalidationId: revalidation.id, outcome: revalidation.outcome },
+      }]
+      : []),
+  ]);
+}
+
+function nextFixWorkflowStep(options: {
+  dryRun: boolean;
+  outcome?: FixAttemptRecord["outcome"] | undefined;
+  options: { openPr: boolean; requirePrProof: boolean };
+  pr?: FixAttemptRecord["pr"] | undefined;
+}): string {
+  if (options.dryRun) {
+    return "Review the preview, then rerun with --apply and an explicit --verification command.";
+  }
+  if (options.pr?.url) {
+    return "PR opened. Review CI and merge when ready.";
+  }
+  if (options.outcome === "resolved" || options.outcome === "partially-resolved") {
+    return options.options.openPr
+      ? "Local proof passed, but PR creation did not complete. Inspect diagnostics."
+      : "Local proof passed. Use --pr to push and open a PR.";
+  }
+  return "Inspect the fix attempt artifact; Deepclean did not prove this candidate is PR-ready.";
 }
 
 function fixReadinessBlocker(candidate: CandidateRecord): { code: string; message: string } | undefined {
@@ -1671,17 +2384,25 @@ function fixReadinessBlocker(candidate: CandidateRecord): { code: string; messag
   return undefined;
 }
 
-async function latestPlanForTarget(paths: StatePaths, candidateId: string): Promise<{ id: string } | undefined> {
+async function latestPlanForTarget(paths: StatePaths, candidateId: string): Promise<{
+  id: string;
+  targetId: string;
+  createdAt: string;
+  content: string;
+  path: string;
+} | undefined> {
   const files = await filesWithExtension(paths.plansDir, "json");
-  const plans: Array<{ id: string; targetId: string; createdAt: string }> = [];
+  const plans: Array<{ id: string; targetId: string; createdAt: string; content: string; path: string }> = [];
   for (const file of files) {
     try {
-      const parsed = JSON.parse(await readFile(file, "utf8")) as { id?: unknown; targetId?: unknown; createdAt?: unknown };
+      const parsed = JSON.parse(await readFile(file, "utf8")) as { id?: unknown; targetId?: unknown; createdAt?: unknown; content?: unknown };
       if (typeof parsed.id === "string" && typeof parsed.targetId === "string") {
         plans.push({
           id: parsed.id,
           targetId: parsed.targetId,
           createdAt: typeof parsed.createdAt === "string" ? parsed.createdAt : "",
+          content: typeof parsed.content === "string" ? parsed.content : "",
+          path: file,
         });
       }
     } catch {
@@ -1746,7 +2467,8 @@ function verificationCommandsForFix(
   config: DeepcleanConfig,
   candidate: CandidateRecord,
 ): string[] {
-  const override = flagString(context.parsed.flags, "verification-command");
+  const override = flagString(context.parsed.flags, "verification")
+    ?? flagString(context.parsed.flags, "verification-command");
   if (override) {
     return [override];
   }
