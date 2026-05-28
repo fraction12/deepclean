@@ -1926,12 +1926,12 @@ async function runCandidateFixWorkflow(
       status = "failed";
     }
 
-    if (!dryRun && shouldRunVerification(status, outOfScopeFiles)) {
+    if (!dryRun && status !== "failed" && outOfScopeFiles.length === 0) {
       verificationResults = await runFixVerification(context.paths, attemptId, verificationCommands);
       status = verificationResults.every((result) => result.passed) ? "passed" : "failed";
     }
 
-    if (!dryRun && revalidationRequired && shouldRunRevalidation(outOfScopeFiles)) {
+    if (!dryRun && revalidationRequired && outOfScopeFiles.length === 0) {
       const record = await revalidateFixTarget(context, resolved.findingId);
       revalidation = record.revalidation;
       attemptDiagnostics.push(...record.diagnostics);
@@ -2476,17 +2476,6 @@ function buildFixWorkerPrompt(options: {
   ].join("\n");
 }
 
-function shouldRunVerification(
-  status: FixAttemptRecord["status"],
-  outOfScopeFiles: string[],
-): boolean {
-  return status !== "failed" && outOfScopeFiles.length === 0;
-}
-
-function shouldRunRevalidation(outOfScopeFiles: string[]): boolean {
-  return outOfScopeFiles.length === 0;
-}
-
 function shouldRetryFixAttempt(options: {
   dryRun: boolean;
   hasPatchPath: boolean;
@@ -2667,9 +2656,12 @@ async function commitPushAndOpenPr(
 }
 
 async function gitExec(root: string, args: string[]): Promise<{ ok: true; stdout: string } | { ok: false; error: string }> {
-  return execFileAsync("git", args, { cwd: root, timeout: 120_000 })
-    .then((result) => ({ ok: true as const, stdout: result.stdout }))
-    .catch((error) => ({ ok: false as const, error: error instanceof Error ? error.message : String(error) }));
+  try {
+    const result = await execFileAsync("git", args, { cwd: root, timeout: 120_000 });
+    return { ok: true, stdout: result.stdout };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
 }
 
 async function checkoutWorkBranch(root: string, branch: string): Promise<{ ok: true } | { ok: false; error: string }> {
