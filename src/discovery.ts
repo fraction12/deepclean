@@ -1,6 +1,10 @@
+import { execFile } from "node:child_process";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
+import { promisify } from "node:util";
 import { sourceExtensions } from "./defaults.js";
+
+const execFileAsync = promisify(execFile);
 
 export interface SourceFile {
   path: string;
@@ -48,7 +52,34 @@ export async function discoverSourceFiles(
   }
 
   await walk(root);
-  return files.sort((a, b) => a.path.localeCompare(b.path));
+  const ignoredPaths = await gitIgnoredPaths(root, files.map((file) => file.path));
+  return files
+    .filter((file) => !ignoredPaths.has(file.path))
+    .sort((a, b) => a.path.localeCompare(b.path));
+}
+
+async function gitIgnoredPaths(root: string, relativePaths: string[]): Promise<Set<string>> {
+  const ignored = new Set<string>();
+  for (let index = 0; index < relativePaths.length; index += 200) {
+    const chunk = relativePaths.slice(index, index + 200);
+    if (chunk.length === 0) {
+      continue;
+    }
+    try {
+      const { stdout } = await execFileAsync("git", ["check-ignore", "--", ...chunk], { cwd: root, timeout: 5000 });
+      for (const filePath of String(stdout).split(/\r?\n/).filter(Boolean)) {
+        ignored.add(normalizePath(filePath));
+      }
+    } catch (error) {
+      const maybeOutput = error as { stdout?: unknown };
+      if (typeof maybeOutput.stdout === "string" && maybeOutput.stdout.trim().length > 0) {
+        for (const filePath of maybeOutput.stdout.split(/\r?\n/).filter(Boolean)) {
+          ignored.add(normalizePath(filePath));
+        }
+      }
+    }
+  }
+  return ignored;
 }
 
 export function normalizePath(value: string): string {
