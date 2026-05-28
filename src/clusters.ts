@@ -1,3 +1,4 @@
+import { uniqueFileReferences } from "./file-references.js";
 import { clusterId } from "./ids.js";
 import {
   candidateCategories,
@@ -183,7 +184,7 @@ function clusterForComponent(
   options: { maxCandidates: number; maxFiles: number },
 ): ClusterRecord {
   const sorted = [...candidates].sort(compareCandidates);
-  const allFiles = uniqueFiles(sorted.flatMap((candidate) => candidate.files));
+  const allFiles = uniqueFileReferences(sorted.flatMap((candidate) => candidate.files));
   const files = allFiles.slice(0, 20);
   const category = mode(sorted.map((candidate) => candidate.category), candidateCategories);
   const focus = clusterFocus(sorted, files);
@@ -376,20 +377,6 @@ function aggregateStatus(candidates: CandidateRecord[]): ClusterRecord["status"]
     return "open";
   }
   return candidates[0]?.status ?? "open";
-}
-
-function uniqueFiles(files: FileReference[]): FileReference[] {
-  const seen = new Set<string>();
-  const result: FileReference[] = [];
-  for (const file of files) {
-    const key = `${file.path}:${file.startLine ?? ""}:${file.endLine ?? ""}`;
-    if (seen.has(key)) {
-      continue;
-    }
-    seen.add(key);
-    result.push(file);
-  }
-  return result;
 }
 
 function moduleArea(filePath: string): string {

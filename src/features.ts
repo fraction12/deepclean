@@ -2,6 +2,7 @@ import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { defaultExcludeDirs } from "./defaults.js";
 import { isTestPath, normalizePath, type SourceFile } from "./discovery.js";
+import { uniqueFileReferences } from "./file-references.js";
 import { stableId } from "./ids.js";
 import {
   schemaVersion,
@@ -467,47 +468,27 @@ async function discoverPackages(root: string, excludes: string[]): Promise<Packa
 
   async function walk(dir: string): Promise<void> {
     const entries = await readdir(dir, { withFileTypes: true });
-    for (const entry of entries) {
-      if (excludeSet.has(entry.name)) {
-        continue;
-      }
+    for (const entry of entries.filter((candidate) => !excludeSet.has(candidate.name))) {
       const absolutePath = path.join(dir, entry.name);
       if (entry.isDirectory()) {
         await walk(absolutePath);
-        continue;
-      }
-      if (!entry.isFile() || entry.name !== "package.json") {
-        continue;
-      }
-      try {
-        const parsed = JSON.parse(await readFile(absolutePath, "utf8")) as PackageJson;
-        const scripts = parsed.scripts ?? {};
-        records.push({
-          path: normalizePath(path.relative(root, absolutePath)),
-          scripts,
-        });
-      } catch {
-        // Ignore malformed package manifests here; config validation is handled elsewhere.
+      } else if (entry.isFile() && entry.name === "package.json") {
+        try {
+          const parsed = JSON.parse(await readFile(absolutePath, "utf8")) as PackageJson;
+          const scripts = parsed.scripts ?? {};
+          records.push({
+            path: normalizePath(path.relative(root, absolutePath)),
+            scripts,
+          });
+        } catch {
+          // Ignore malformed package manifests here; config validation is handled elsewhere.
+        }
       }
     }
   }
 
   await walk(root);
   return records.sort((a, b) => a.path.localeCompare(b.path));
-}
-
-function uniqueFileReferences(files: FileReference[]): FileReference[] {
-  const seen = new Set<string>();
-  const unique: FileReference[] = [];
-  for (const file of files) {
-    const key = `${file.path}:${file.startLine ?? ""}:${file.endLine ?? ""}`;
-    if (seen.has(key)) {
-      continue;
-    }
-    seen.add(key);
-    unique.push(file);
-  }
-  return unique;
 }
 
 function uniqueStrings(values: string[]): string[] {
