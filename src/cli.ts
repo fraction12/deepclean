@@ -1762,7 +1762,8 @@ async function runCandidateFixWorkflow(
     status = verificationResults.every((result) => result.passed) ? "passed" : "failed";
   }
 
-  if (!dryRun && (flagBoolean(context.parsed.flags, "revalidate") || options.requirePrProof)) {
+  const revalidationRequired = flagBoolean(context.parsed.flags, "revalidate") || options.createBranch || options.requirePrProof;
+  if (!dryRun && revalidationRequired) {
     const record = await revalidateFixTarget(context, resolved.findingId);
     revalidation = record.revalidation;
     diagnostics.push(...record.diagnostics);
@@ -1774,7 +1775,7 @@ async function runCandidateFixWorkflow(
     outOfScopeFiles,
     verificationResults,
     revalidation,
-    requireRevalidation: flagBoolean(context.parsed.flags, "revalidate") || options.requirePrProof,
+    requireRevalidation: revalidationRequired,
   });
   if (outcome === "needs_human" && status !== "failed" && !dryRun) {
     status = "failed";
@@ -1783,7 +1784,7 @@ async function runCandidateFixWorkflow(
   let prSummaryPath: string | undefined;
   let pr: FixAttemptRecord["pr"];
   const externalSideEffects: string[] = [];
-  const localSummaryAllowed = outcome === "resolved" || (!options.requirePrProof && outcome === "partially-resolved");
+  const localSummaryAllowed = outcome === "resolved";
   const prProofPassed = outcome === "resolved";
   if (options.requirePrProof && !prProofPassed) {
     diagnostics.push({

@@ -1710,7 +1710,7 @@ fs.writeFileSync(target, source.replace("export function", "// worker fix applie
     });
   });
 
-  test("work creates an isolated branch and PR-ready summary without opening a PR when --no-pr is used", async () => {
+  test("work blocks PR-ready summary when revalidation does not resolve the candidate", async () => {
     await withTempRepo(async (repo) => {
       const prepared = await prepareFixableRepo(repo);
       await rm(prepared.patchPath, { force: true });
@@ -1719,8 +1719,11 @@ fs.writeFileSync(target, source.replace("export function", "// worker fix applie
 const fs = require("node:fs");
 fs.readFileSync(0, "utf8");
 const target = "src/invoice.ts";
-const source = fs.readFileSync(target, "utf8");
-fs.writeFileSync(target, source.replace("export function", "// work fix applied\\nexport function"));
+fs.writeFileSync(target, \`
+export function calculateInvoice(items, coupon) {
+  return { subtotal: items.length, discount: coupon ? 1 : 0, tax: 0, total: items.length };
+}
+\`);
 `);
       const result = await runCli([
         "work",
@@ -1734,22 +1737,22 @@ fs.writeFileSync(target, source.replace("export function", "// work fix applied\
         "--allow-dirty",
         "--json",
       ], repo);
-      expect(result.code).toBe(0);
+      expect(result.code).toBe(3);
       const payload = JSON.parse(result.stdout) as {
         data: {
           attempt: { status: string; outcome?: string };
+          revalidation?: { outcome: string };
           prSummaryPath?: string;
           externalSideEffects: unknown[];
         };
       };
-      expect(payload.data.attempt.status).toBe("passed");
-      expect(payload.data.attempt.outcome).toBe("partially-resolved");
+      expect(payload.data.attempt.status).toBe("failed");
+      expect(payload.data.attempt.outcome).toBe("needs_human");
+      expect(payload.data.revalidation?.outcome).toBe("stale");
+      expect(payload.data.prSummaryPath).toBeUndefined();
       expect(payload.data.externalSideEffects).toEqual([]);
       const branch = await execFileAsync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: repo });
       expect(branch.stdout.trim()).toBe("chore/deepclean-candidate-001");
-      const summary = await readFile(payload.data.prSummaryPath ?? "", "utf8");
-      expect(summary).toContain("Deepclean PR Summary");
-      expect(summary).toContain("Verification");
     });
   });
 

@@ -76,7 +76,6 @@ const valueFlags = new Set([
   "branch",
   "base",
   "title",
-  "body",
   "verification",
   "verification-command",
   "allow-files",
