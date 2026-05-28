@@ -173,6 +173,7 @@ export const configSchema = z.object({
   fixExecution: z.object({
     enabled: z.boolean(),
     verificationCommands: z.array(z.string()),
+    maxAttempts: z.number().int().positive(),
     workerIdleTimeoutMs: z.number().int().positive(),
     workerHardTimeoutMs: z.number().int().positive(),
   }),
@@ -491,6 +492,9 @@ export const fixAttemptRecordSchema = z.object({
   status: z.enum(fixAttemptStatuses),
   outcome: z.enum(fixAttemptOutcomes).optional(),
   dryRun: z.boolean(),
+  attemptNumber: z.number().int().positive().optional(),
+  maxAttempts: z.number().int().positive().optional(),
+  previousAttemptIds: z.array(z.string()).optional(),
   allowedWriteScope: z.array(z.string()).optional(),
   outOfScopeFiles: z.array(z.string()).optional(),
   beforeEvidenceIds: z.array(z.string()).optional(),

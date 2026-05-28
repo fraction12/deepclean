@@ -75,15 +75,19 @@ The system SHALL refuse applied fixes for broad or ambiguous architecture candid
 - **WHEN** an agent runs `deepclean fix candidate-architecture-broad --apply`
 - **THEN** Deepclean refuses source mutation and produces a plan-only or slice-selection diagnostic
 
-### Requirement: Retry with failure evidence
-The system SHALL limit automated retries to at most one failed patch attempt using verification failure evidence.
+### Requirement: Bounded retry with remaining evidence
+The system SHALL support bounded automated retries that feed verification failures or remaining candidate evidence back into the same fix branch.
 
 #### Scenario: First patch fails verification
 - **WHEN** the first patch stays in scope but verification fails
-- **THEN** Deepclean may run one retry with the verification failure output included in the worker context and records both attempts
+- **THEN** Deepclean may run another attempt, up to `fixExecution.maxAttempts`, with the verification failure output included in the worker context and records every attempt
 
-#### Scenario: Retry fails
-- **WHEN** the retry also fails verification or exceeds scope
+#### Scenario: First patch leaves candidate still open
+- **WHEN** the first patch stays in scope, passes verification, but revalidation reports `still-open` or `partially-resolved`
+- **THEN** Deepclean may run another attempt in the same branch with prior attempt results and remaining revalidation evidence included in the worker context
+
+#### Scenario: Retry limit is exhausted
+- **WHEN** retries reach `fixExecution.maxAttempts` and the candidate is still not resolved
 - **THEN** Deepclean marks the workflow `needs_human`
 
 ### Requirement: Patch worker progress watchdog

@@ -1,5 +1,6 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
+import path from "node:path";
 import { execFileAsync } from "./shared/exec-file.mjs";
 import { packTarball } from "./shared/release-smoke-utils.mjs";
 
