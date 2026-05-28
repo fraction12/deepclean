@@ -1,5 +1,12 @@
 ## ADDED Requirements
 
+### Requirement: Fix execution config gate
+The system SHALL refuse all `fix` and `work` workflows unless `fixExecution.enabled` is true in the project Deepclean config.
+
+#### Scenario: Fix execution disabled
+- **WHEN** an agent runs `deepclean fix candidate-003 --dry-run --json` while `fixExecution.enabled` is false
+- **THEN** Deepclean refuses before planning, patching, branch creation, or PR side effects and returns a structured `fix_execution_disabled` diagnostic
+
 ### Requirement: Candidate-first fix execution
 The system SHALL execute fixes against exactly one selected candidate, stable finding, or approved bounded slice.
 

@@ -1597,6 +1597,7 @@ process.exit(0);
   test("fix dry-run previews a patch without changing source", async () => {
     await withTempRepo(async (repo) => {
       const prepared = await prepareFixableRepo(repo);
+      await enableFixExecution(repo);
       const before = await readFile(path.join(repo, "src", "invoice.ts"), "utf8");
       const result = await runCli(["fix", prepared.candidateId, "--patch", prepared.patchPath, "--dry-run", "--json"], repo);
       expect(result.code).toBe(0);
@@ -1609,6 +1610,17 @@ process.exit(0);
       expect(payload.data.externalSideEffects).toEqual([]);
       await expect(stat(payload.data.patchPreviewPath)).resolves.toBeTruthy();
       expect(await readFile(path.join(repo, "src", "invoice.ts"), "utf8")).toBe(before);
+    });
+  });
+
+  test("fix refuses when fix execution is disabled in config", async () => {
+    await withTempRepo(async (repo) => {
+      const prepared = await prepareFixableRepo(repo);
+      const result = await runCli(["fix", prepared.candidateId, "--patch", prepared.patchPath, "--dry-run", "--json"], repo);
+      expect(result.code).toBe(2);
+      const payload = JSON.parse(result.stdout) as { error: { code: string; message: string } };
+      expect(payload.error.code).toBe("fix_execution_disabled");
+      expect(payload.error.message).toContain("fixExecution.enabled");
     });
   });
 
@@ -1707,6 +1719,30 @@ fs.writeFileSync(target, source.replace("export function", "// worker fix applie
       expect(payload.data.externalSideEffects).toEqual([]);
       await expect(stat(payload.data.attempt.worker?.outputPath ?? "")).resolves.toBeTruthy();
       expect(await readFile(path.join(repo, "src", "invoice.ts"), "utf8")).toContain("worker fix applied");
+    });
+  });
+
+  test("work refuses before branch creation when fix execution is disabled in config", async () => {
+    await withTempRepo(async (repo) => {
+      const prepared = await prepareFixableRepo(repo);
+      const branchBefore = await execFileAsync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: repo });
+      const result = await runCli([
+        "work",
+        prepared.candidateId,
+        "--branch",
+        "chore/deepclean-candidate-001",
+        "--patch",
+        prepared.patchPath,
+        "--apply",
+        "--verification",
+        "true",
+        "--json",
+      ], repo);
+      expect(result.code).toBe(2);
+      const payload = JSON.parse(result.stdout) as { error: { code: string } };
+      expect(payload.error.code).toBe("fix_execution_disabled");
+      const branchAfter = await execFileAsync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: repo });
+      expect(branchAfter.stdout.trim()).toBe(branchBefore.stdout.trim());
     });
   });
 

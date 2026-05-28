@@ -1588,6 +1588,16 @@ async function runCandidateFixWorkflow(
     openPr: boolean;
   },
 ): Promise<FixWorkflowResult> {
+  const config = await ensureState(context.paths);
+  if (!config.fixExecution.enabled) {
+    return {
+      ok: false,
+      exitCode: 2,
+      code: "fix_execution_disabled",
+      message: "Fix execution is disabled in .deepclean/config.json. Set fixExecution.enabled to true before running `deepclean fix` or `deepclean work`.",
+    };
+  }
+
   if (target.startsWith("theme-")) {
     return {
       ok: false,
@@ -1597,7 +1607,6 @@ async function runCandidateFixWorkflow(
     };
   }
 
-  const config = await ensureState(context.paths);
   const state = await latestState(context.paths);
   const resolved = await resolveFixTargetFromCandidates(state.candidates, target);
   if (!resolved) {

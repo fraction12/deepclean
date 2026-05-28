@@ -23,5 +23,5 @@ The system SHALL use predictable exit codes and structured diagnostics for succe
 - **THEN** the command records an adapter diagnostic and exits successfully if enough evidence was collected to produce a valid partial scan
 
 #### Scenario: Fix is refused by policy
-- **WHEN** a fix command lacks verification, targets a broad candidate, or would edit out-of-scope files
+- **WHEN** fix execution is disabled, a fix command lacks verification, targets a broad candidate, or would edit out-of-scope files
 - **THEN** Deepclean exits with a policy refusal code and emits a structured diagnostic explaining the blocked gate
