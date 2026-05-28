@@ -114,30 +114,7 @@ export async function synthesizeWithCodex(options: SynthesizeWithCodexOptions): 
     );
 
     if (result.exitCode !== 0) {
-      const failureDiagnostics = [{
-        level: "warning" as const,
-        code: result.timedOut
-          ? "codex_synthesis_timeout"
-          : result.providerUnavailable
-            ? "codex_provider_unavailable"
-            : "codex_synthesis_failed",
-        message: codexFailureMessage(result),
-        adapter: "codex-synthesis",
-      }, ...diagnostics];
-      return {
-        candidates: [],
-        diagnostics: failureDiagnostics,
-        attempt: {
-          ...attemptBase,
-          rawCandidateCount: 0,
-          acceptedCandidateCount: 0,
-          rejectedCandidateCount: 0,
-          rejectedEvidenceIds: [],
-          notes: [],
-          validations: [],
-          diagnostics: failureDiagnostics,
-        },
-      };
+      return buildCodexFailureSynthesisResult(result, diagnostics, attemptBase);
     }
 
     const raw = await readFile(workspace.outputPath, "utf8");
@@ -265,6 +242,38 @@ export async function synthesizeWithCodex(options: SynthesizeWithCodexOptions): 
   } finally {
     await rm(tempDir, { recursive: true, force: true });
   }
+}
+
+function buildCodexFailureSynthesisResult(
+  result: Awaited<ReturnType<typeof runProcessWithRetries>>,
+  diagnostics: Diagnostic[],
+  attemptBase: ReturnType<typeof buildAttemptBase>,
+): SynthesisResult {
+  const failureDiagnostics = [{
+    level: "warning" as const,
+    code: result.timedOut
+      ? "codex_synthesis_timeout"
+      : result.providerUnavailable
+        ? "codex_provider_unavailable"
+        : "codex_synthesis_failed",
+    message: codexFailureMessage(result),
+    adapter: "codex-synthesis",
+  }, ...diagnostics];
+
+  return {
+    candidates: [],
+    diagnostics: failureDiagnostics,
+    attempt: {
+      ...attemptBase,
+      rawCandidateCount: 0,
+      acceptedCandidateCount: 0,
+      rejectedCandidateCount: 0,
+      rejectedEvidenceIds: [],
+      notes: [],
+      validations: [],
+      diagnostics: failureDiagnostics,
+    },
+  };
 }
 
 async function prepareCodexSynthesisInvocation(
