@@ -358,6 +358,16 @@ export async function latestRunId(paths: StatePaths): Promise<string | undefined
   return files.at(-1)?.replace(/\.json$/, "");
 }
 
+export async function readRuns(paths: StatePaths): Promise<RunRecord[]> {
+  const files = await jsonFiles(paths.runsDir);
+  const runs: RunRecord[] = [];
+  for (const file of files) {
+    const raw = await readFile(path.join(paths.runsDir, file), "utf8");
+    runs.push(runRecordSchema.parse(JSON.parse(raw)));
+  }
+  return runs.sort((a, b) => a.completedAt.localeCompare(b.completedAt) || a.id.localeCompare(b.id));
+}
+
 export async function readLatestCandidates(
   paths: StatePaths,
 ): Promise<CandidateRecord[]> {
@@ -441,6 +451,16 @@ export async function readLifecycleEvents(paths: StatePaths): Promise<LifecycleE
     events.push(lifecycleEventRecordSchema.parse(JSON.parse(raw)));
   }
   return events.sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
+}
+
+export async function readFixAttempts(paths: StatePaths): Promise<FixAttemptRecord[]> {
+  const files = await jsonFiles(paths.fixesDir);
+  const attempts: FixAttemptRecord[] = [];
+  for (const file of files) {
+    const raw = await readFile(path.join(paths.fixesDir, file), "utf8");
+    attempts.push(fixAttemptRecordSchema.parse(JSON.parse(raw)));
+  }
+  return attempts.sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
 }
 
 export async function readClusters(

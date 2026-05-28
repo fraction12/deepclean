@@ -35,6 +35,7 @@ import {
   renderMarkdownReport,
   renderMarkdownReportWithClusters,
 } from "./reporting.js";
+import { buildProgressSummary, renderProgressSummary } from "./progress.js";
 import {
   ensureState,
   latestRunId,
@@ -205,6 +206,7 @@ Commands:
   init                         Create or validate .deepclean state
   doctor                       Check environment, config, state, git, provider, and privacy readiness
   status                       Summarize current project-local Deepclean state
+    --progress-events <n>      Recent lifecycle/fix artifacts used for progress summary; default 200
   ci                           Run non-interactive scan and policy gates for CI
   map                          Write semantic feature records without producing candidates
   scan                         Collect local evidence and generate candidates
@@ -520,6 +522,10 @@ async function statusCommand(context: CommandContext): Promise<number> {
   const locks = initialized ? await readLockStatuses(context.paths, {
     staleAfterMs: numberFlag(context, "stale-lock-ms"),
   }) : [];
+  const progressEventLimit = numberFlag(context, "progress-events");
+  const progress = initialized
+    ? await buildProgressSummary(context.paths, progressEventLimit === undefined ? {} : { eventLimit: progressEventLimit })
+    : undefined;
   const statusCounts = countBy(candidates, (candidate) => candidate.status);
   const data = {
     root: context.paths.root,
@@ -556,6 +562,7 @@ async function statusCommand(context: CommandContext): Promise<number> {
     },
     pendingRevalidation: candidates.filter((candidate) => candidate.lifecycleState === "stale").length,
     artifacts: artifactCounts,
+    progress,
   };
 
   emit(context.json, ok("status", data, diagnostics));
@@ -566,6 +573,11 @@ async function statusCommand(context: CommandContext): Promise<number> {
     console.log(`queue: ${data.queue.open} open / ${data.queue.total} total`);
     console.log(`git: ${git.available ? git.dirty ? "dirty" : "clean" : "unavailable"}`);
     console.log(`locks: ${data.locks.active} active / ${data.locks.stale} stale`);
+    if (progress) {
+      for (const line of renderProgressSummary(progress)) {
+        console.log(line);
+      }
+    }
     printDiagnostics(diagnostics);
   }
   return 0;
