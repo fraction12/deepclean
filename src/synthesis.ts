@@ -94,12 +94,10 @@ export async function synthesizeWithCodex(options: {
 }): Promise<SynthesisResult> {
   const diagnostics: Diagnostic[] = [];
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "deepclean-codex-"));
-  const outputPath = path.join(tempDir, "codex-output.json");
-  const schemaPath = path.join(tempDir, "synthesis.schema.json");
   let attemptBase: ReturnType<typeof buildAttemptBase> | undefined;
 
   try {
-    await writeFile(schemaPath, JSON.stringify(jsonSchema(), null, 2), "utf8");
+    const workspace = await prepareSynthesisWorkspace(tempDir);
     const reviewerPack = await resolveReviewerPack(options.root, options.config);
     diagnostics.push(...reviewerPack.diagnostics);
     const prompt = buildPrompt(options, reviewerPack.rubrics);
@@ -120,9 +118,9 @@ export async function synthesizeWithCodex(options: {
       "read-only",
       "--skip-git-repo-check",
       "--output-schema",
-      schemaPath,
+      workspace.schemaPath,
       "-o",
-      outputPath,
+      workspace.outputPath,
     ];
 
     const model = options.runtime.model;
@@ -166,7 +164,7 @@ export async function synthesizeWithCodex(options: {
       };
     }
 
-    const raw = await readFile(outputPath, "utf8");
+    const raw = await readFile(workspace.outputPath, "utf8");
     const parsed = parseSynthesisOutput(raw);
     const maxCandidates = options.config.reviewSynthesis.maxCandidates;
     const sourceText = await sourceTextForDrafts(options.root, parsed.candidates);
@@ -291,6 +289,13 @@ export async function synthesizeWithCodex(options: {
   } finally {
     await rm(tempDir, { recursive: true, force: true });
   }
+}
+
+async function prepareSynthesisWorkspace(tempDir: string): Promise<{ outputPath: string; schemaPath: string }> {
+  const outputPath = path.join(tempDir, "codex-output.json");
+  const schemaPath = path.join(tempDir, "synthesis.schema.json");
+  await writeFile(schemaPath, JSON.stringify(jsonSchema(), null, 2), "utf8");
+  return { outputPath, schemaPath };
 }
 
 function buildPrompt(options: {
