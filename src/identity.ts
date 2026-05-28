@@ -58,61 +58,18 @@ export function attachStableIdentity(options: {
     };
     observations.push(observation);
 
-    if (!existing) {
-      const finding: FindingRecord = {
-        schemaVersion,
-        recordType: "finding",
-        id: findingId,
-        signature,
-        identityConfidence: "high",
-        title: candidate.title,
-        category: candidate.category,
-        status: candidate.status,
-        lifecycleState: "open",
-        priority: candidate.priority,
-        confidence: candidate.confidence,
-        impact: candidate.impact,
-        effort: candidate.effort,
-        risk: candidate.risk,
-        files: candidate.files,
-        evidenceIds: candidate.evidenceIds,
-        ...(candidate.decomposition ? { decomposition: candidate.decomposition } : {}),
-        observationIds: [observationId],
-        currentObservationId: observationId,
-        createdAt: options.observedAt,
-        updatedAt: options.observedAt,
-      };
-      findingsBySignature.set(signature.value, finding);
-      findingsById.set(finding.id, finding);
-      lifecycleEvents.push(lifecycleEvent({
-        kind: "created",
-        targetId: finding.id,
-        findingId: finding.id,
-        runId: options.runId,
-        toState: "open",
-        command: "scan",
-        createdAt: options.observedAt,
-      }));
-    } else {
-      findingsById.set(existing.id, {
-        ...existing,
-        title: candidate.title,
-        category: candidate.category,
-        status: candidate.status,
-        lifecycleState: "open",
-        priority: candidate.priority,
-        confidence: candidate.confidence,
-        impact: candidate.impact,
-        effort: candidate.effort,
-        risk: candidate.risk,
-        files: candidate.files,
-        evidenceIds: candidate.evidenceIds,
-        ...(candidate.decomposition ? { decomposition: candidate.decomposition } : {}),
-        observationIds: appendUnique(existing.observationIds, observationId),
-        currentObservationId: observationId,
-        updatedAt: options.observedAt,
-      });
-    }
+    upsertFindingForObservation({
+      candidate,
+      existing,
+      findingId,
+      signature,
+      observationId,
+      observedAt: options.observedAt,
+      runId: options.runId,
+      findingsBySignature,
+      findingsById,
+      lifecycleEvents,
+    });
 
     lifecycleEvents.push(lifecycleEvent({
       kind: "observed",
@@ -138,6 +95,76 @@ export function attachStableIdentity(options: {
     observations,
     lifecycleEvents,
   };
+}
+
+function upsertFindingForObservation(input: {
+  candidate: CandidateRecord;
+  existing?: FindingRecord;
+  findingId: string;
+  signature: FindingSignature;
+  observationId: string;
+  observedAt: string;
+  runId: string;
+  findingsBySignature: Map<string, FindingRecord>;
+  findingsById: Map<string, FindingRecord>;
+  lifecycleEvents: LifecycleEventRecord[];
+}): void {
+  if (!input.existing) {
+    const finding: FindingRecord = {
+      schemaVersion,
+      recordType: "finding",
+      id: input.findingId,
+      signature: input.signature,
+      identityConfidence: "high",
+      title: input.candidate.title,
+      category: input.candidate.category,
+      status: input.candidate.status,
+      lifecycleState: "open",
+      priority: input.candidate.priority,
+      confidence: input.candidate.confidence,
+      impact: input.candidate.impact,
+      effort: input.candidate.effort,
+      risk: input.candidate.risk,
+      files: input.candidate.files,
+      evidenceIds: input.candidate.evidenceIds,
+      ...(input.candidate.decomposition ? { decomposition: input.candidate.decomposition } : {}),
+      observationIds: [input.observationId],
+      currentObservationId: input.observationId,
+      createdAt: input.observedAt,
+      updatedAt: input.observedAt,
+    };
+    input.findingsBySignature.set(input.signature.value, finding);
+    input.findingsById.set(finding.id, finding);
+    input.lifecycleEvents.push(lifecycleEvent({
+      kind: "created",
+      targetId: finding.id,
+      findingId: finding.id,
+      runId: input.runId,
+      toState: "open",
+      command: "scan",
+      createdAt: input.observedAt,
+    }));
+    return;
+  }
+
+  input.findingsById.set(input.existing.id, {
+    ...input.existing,
+    title: input.candidate.title,
+    category: input.candidate.category,
+    status: input.candidate.status,
+    lifecycleState: "open",
+    priority: input.candidate.priority,
+    confidence: input.candidate.confidence,
+    impact: input.candidate.impact,
+    effort: input.candidate.effort,
+    risk: input.candidate.risk,
+    files: input.candidate.files,
+    evidenceIds: input.candidate.evidenceIds,
+    ...(input.candidate.decomposition ? { decomposition: input.candidate.decomposition } : {}),
+    observationIds: appendUnique(input.existing.observationIds, input.observationId),
+    currentObservationId: input.observationId,
+    updatedAt: input.observedAt,
+  });
 }
 
 export function signatureForCandidate(
