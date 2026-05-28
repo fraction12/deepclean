@@ -1737,16 +1737,27 @@ interface DirtyFileEntry {
   status: string;
 }
 
-async function runCandidateFixWorkflow(
+interface FixWorkflowOptions {
+  command: "fix" | "work";
+  requirePrProof: boolean;
+  createBranch: boolean;
+  openPr: boolean;
+}
+
+type FixWorkflowTargetContext = {
+  ok: true;
+  config: DeepcleanConfig;
+  state: Awaited<ReturnType<typeof latestState>>;
+  resolved: {
+    findingId: string;
+    candidate: CandidateRecord;
+  };
+};
+
+async function resolveFixWorkflowTarget(
   context: CommandContext,
   target: string,
-  options: {
-    command: "fix" | "work";
-    requirePrProof: boolean;
-    createBranch: boolean;
-    openPr: boolean;
-  },
-): Promise<FixWorkflowResult> {
+): Promise<FixWorkflowTargetContext | Extract<FixWorkflowResult, { ok: false }>> {
   const config = await ensureState(context.paths);
   if (!config.fixExecution.enabled) {
     return {
@@ -1767,7 +1778,7 @@ async function runCandidateFixWorkflow(
   }
 
   const state = await latestState(context.paths);
-  const resolved = await resolveFixTargetFromCandidates(state.candidates, target);
+  const resolved = resolveFixTargetFromCandidates(state.candidates, target);
   if (!resolved) {
     return {
       ok: false,
@@ -1785,6 +1796,20 @@ async function runCandidateFixWorkflow(
       message: `Candidate is too broad for guarded fix execution. Run \`deepclean split ${resolved.candidate.id}\` and target one child candidate.`,
     };
   }
+
+  return { ok: true, config, state, resolved };
+}
+
+async function runCandidateFixWorkflow(
+  context: CommandContext,
+  target: string,
+  options: FixWorkflowOptions,
+): Promise<FixWorkflowResult> {
+  const targetContext = await resolveFixWorkflowTarget(context, target);
+  if (!targetContext.ok) {
+    return targetContext;
+  }
+  const { config, state, resolved } = targetContext;
 
   const blocked = fixReadinessBlocker(resolved.candidate);
   if (blocked) {
