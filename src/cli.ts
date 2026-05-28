@@ -1591,6 +1591,11 @@ interface FixWorkerPreviousAttempt {
   verificationFailures: Array<{ command: string; outputPath?: string | undefined }>;
 }
 
+interface DirtyFileEntry {
+  file: string;
+  status: string;
+}
+
 async function runCandidateFixWorkflow(
   context: CommandContext,
   target: string,
@@ -2287,18 +2292,9 @@ async function collectProcessProgressSnapshot(
   if (!root) {
     return { outputLength: stdout.length + stderr.length, dirtySignature: "" };
   }
-  const files = await dirtyFiles(root);
-  const signatures = await Promise.all(files.map(async (file) => {
-    try {
-      const fileStat = await stat(path.join(root, file));
-      return `${file}:${fileStat.mtimeMs}:${fileStat.size}`;
-    } catch {
-      return `${file}:missing`;
-    }
-  }));
   return {
     outputLength: stdout.length + stderr.length,
-    dirtySignature: signatures.sort().join("|"),
+    dirtySignature: await dirtyContentSignature(root, await dirtyFileEntries(root)),
   };
 }
 
@@ -2416,24 +2412,12 @@ function shouldRetryFixAttempt(options: {
 }
 
 async function scopedDiffSignature(root: string, allowedWriteScope: string[]): Promise<string> {
-  const dirty = await dirtyFiles(root);
-  const allowedDirty = dirty.filter((file) => isPathAllowed(file, allowedWriteScope));
+  const allowedDirty = (await dirtyFileEntries(root))
+    .filter((entry) => isPathAllowed(entry.file, allowedWriteScope));
   if (allowedDirty.length === 0) {
     return "";
   }
-  const diff = await execFileAsync("git", ["diff", "--", ...allowedDirty], { cwd: root, timeout: 30_000 })
-    .then((result) => result.stdout)
-    .catch(() => "");
-  const untracked = await Promise.all(allowedDirty.map(async (file) => {
-    const filePath = path.join(root, file);
-    try {
-      const fileStat = await stat(filePath);
-      return `${file}:${fileStat.mtimeMs}:${fileStat.size}`;
-    } catch {
-      return `${file}:missing`;
-    }
-  }));
-  return `${diff}\n${untracked.sort().join("\n")}`;
+  return dirtyContentSignature(root, allowedDirty);
 }
 
 async function revalidateFixTarget(
@@ -2793,16 +2777,56 @@ function changedFilesFromPatch(patchContent: string): string[] {
 }
 
 async function dirtyFiles(root: string): Promise<string[]> {
+  return (await dirtyFileEntries(root)).map((entry) => entry.file);
+}
+
+async function dirtyFileEntries(root: string): Promise<DirtyFileEntry[]> {
   try {
     const { stdout } = await execFileAsync("git", ["status", "--short"], { cwd: root, timeout: 5000 });
     return stdout.split(/\r?\n/)
-      .map((line) => line.slice(3).trim())
-      .filter(Boolean)
-      .map((line) => line.split(" -> ").at(-1) ?? line)
-      .sort();
+      .map((line) => ({
+        status: line.slice(0, 2),
+        file: line.slice(3).trim(),
+      }))
+      .filter((entry) => entry.file.length > 0)
+      .map((entry) => ({
+        ...entry,
+        file: normalizeRelativePath(entry.file.split(" -> ").at(-1) ?? entry.file),
+      }))
+      .sort((a, b) => a.file.localeCompare(b.file));
   } catch {
     return [];
   }
+}
+
+async function dirtyContentSignature(root: string, entries: DirtyFileEntry[]): Promise<string> {
+  const normalized = entries
+    .map((entry) => ({ ...entry, file: normalizeRelativePath(entry.file) }))
+    .sort((a, b) => a.file.localeCompare(b.file));
+  const trackedFiles = normalized
+    .filter((entry) => entry.status !== "??")
+    .map((entry) => entry.file);
+  const unstagedDiff = trackedFiles.length > 0
+    ? await execFileAsync("git", ["diff", "--", ...trackedFiles], { cwd: root, timeout: 30_000 })
+      .then((result) => result.stdout)
+      .catch(() => "")
+    : "";
+  const stagedDiff = trackedFiles.length > 0
+    ? await execFileAsync("git", ["diff", "--cached", "--", ...trackedFiles], { cwd: root, timeout: 30_000 })
+      .then((result) => result.stdout)
+      .catch(() => "")
+    : "";
+  const untracked = await Promise.all(normalized
+    .filter((entry) => entry.status === "??")
+    .map(async (entry) => {
+      try {
+        const content = await readFile(path.join(root, entry.file));
+        return `${entry.file}:untracked:${content.toString("base64")}`;
+      } catch {
+        return `${entry.file}:missing`;
+      }
+    }));
+  return [unstagedDiff, stagedDiff, ...untracked.sort()].join("\n");
 }
 
 function verificationCommandsForFix(
