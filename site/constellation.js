@@ -1,7 +1,6 @@
 const canvas = document.querySelector("[data-constellation]");
 const hero = document.querySelector(".hero");
 const stageItems = Array.from(document.querySelectorAll("[data-stage]"));
-const labels = Array.from(document.querySelectorAll(".constellation-label"));
 const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 
 const colors = {
@@ -199,17 +198,6 @@ const updateStage = (activeIndex) => {
   const activeStage = clusters[activeIndex].stage;
   stageItems.forEach((item) => {
     item.classList.toggle("is-active", item.dataset.stage === activeStage);
-  });
-
-  labels.forEach((label, index) => {
-    const x = `${pointer.x * (index + 1) * 7}px`;
-    const y = `${pointer.y * (index + 1) * 5}px`;
-    label.style.setProperty("--parallax-x", x);
-    label.style.setProperty("--parallax-y", y);
-    label.style.borderColor =
-      index === activeIndex % labels.length
-        ? "rgba(24, 216, 245, 0.52)"
-        : "rgba(202, 219, 225, 0.2)";
   });
 };
 
