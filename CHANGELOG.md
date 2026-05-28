@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 0.1.0-alpha.3 - 2026-05-28
+
+- Added candidate-first fix/work workflows with config gating, owned-file scope checks, required verification, revalidation, PR proof, and structured fix outcomes.
+- Added broad-candidate splitting so large candidates can be decomposed into smaller child slices before source mutation.
+- Hardened worker execution with bounded retries, idle/hard timeouts, repository-progress detection, and recovery when a timed-out worker still landed in-scope changes.
+- Improved plan and fix-attempt safety by scoping plans to the current scan run and preventing stale candidate IDs from reusing older plans.
+- Made source discovery ignore gitignored/generated output so generated site artifacts no longer pollute candidate discovery.
+- Surfaced progress in `deepclean status` from existing run, lifecycle, split, and fix-attempt artifacts without adding a second progress ledger.
+- Continued self-dogfood cleanup across synthesis, candidate evidence, CLI wrapper, and release-smoke utility slices.
+
 ## 0.1.0-alpha.2 - 2026-05-27
 
 - Changed `scan` and CI-style scans to request Codex synthesis by default after local evidence collection, with `--evidence-only` as the deterministic-only escape hatch.
