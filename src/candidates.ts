@@ -205,20 +205,7 @@ function candidateForEvidence(
   switch (evidence.kind) {
     case "duplicate-cluster":
     case "external-duplicate":
-      return {
-        ...base,
-        title: evidence.title,
-        category: "duplication",
-        priority: evidence.confidence === "high" ? "P1" : "P2",
-        confidence: evidence.confidence,
-        impact: evidence.files.length >= 3 ? "cross-cutting" : "feature",
-        effort: "medium",
-        risk: "moderate",
-        whyItMatters: "Repeated code paths tend to drift after later AI edits, creating inconsistent behavior that tests may not cover.",
-        likelyRootCause: "Similar behavior was implemented in multiple places instead of being pulled into one domain-level module or shared component.",
-        suggestedDirection: "Inspect the duplicated call sites and decide whether the shared concept should become a single module, helper, component, or explicit abstraction.",
-        verification,
-      };
+      return duplicateCandidateForEvidence(evidence, base, verification);
     case "sarif-finding":
       return {
         ...base,
@@ -313,6 +300,27 @@ function candidateForEvidence(
     default:
       return undefined;
   }
+}
+
+function duplicateCandidateForEvidence(
+  evidence: EvidenceRecord,
+  base: CandidateEvidenceBase,
+  verification: string[],
+): CandidateRecord {
+  return {
+    ...base,
+    title: evidence.title,
+    category: "duplication",
+    priority: evidence.confidence === "high" ? "P1" : "P2",
+    confidence: evidence.confidence,
+    impact: evidence.files.length >= 3 ? "cross-cutting" : "feature",
+    effort: "medium",
+    risk: "moderate",
+    whyItMatters: "Repeated code paths tend to drift after later AI edits, creating inconsistent behavior that tests may not cover.",
+    likelyRootCause: "Similar behavior was implemented in multiple places instead of being pulled into one domain-level module or shared component.",
+    suggestedDirection: "Inspect the duplicated call sites and decide whether the shared concept should become a single module, helper, component, or explicit abstraction.",
+    verification,
+  };
 }
 
 function featureScopeForEvidence(evidence: EvidenceRecord): CandidateRecord["featureScope"] {
