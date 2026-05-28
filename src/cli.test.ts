@@ -1878,6 +1878,105 @@ export function calculateInvoice(items, coupon) {
     });
   });
 
+  test("work retries a still-open candidate with remaining evidence feedback", async () => {
+    await withTempRepo(async (repo) => {
+      const prepared = await prepareFixableRepo(repo);
+      await rm(prepared.patchPath, { force: true });
+      await enableFixExecution(repo);
+      await installFakeCodex(repo, `#!/usr/bin/env node
+const fs = require("node:fs");
+const prompt = fs.readFileSync(0, "utf8");
+const target = "src/invoice.ts";
+const source = fs.readFileSync(target, "utf8");
+if (prompt.includes("Attempt: 1 of")) {
+  fs.writeFileSync(target, source.replace("export function", "// first attempt only touched one symptom\\nexport function"));
+} else {
+  if (!prompt.includes("Previous attempts") || !prompt.includes("still-open")) {
+    process.stderr.write("missing retry context");
+    process.exit(1);
+  }
+  fs.writeFileSync(target, \`
+export function calculateInvoice(items, coupon) {
+  return { subtotal: items.length, discount: coupon ? 1 : 0, tax: 0, total: items.length };
+}
+\`);
+}
+`);
+      const result = await runCli([
+        "work",
+        prepared.candidateId,
+        "--branch",
+        "chore/deepclean-retry-candidate-001",
+        "--apply",
+        "--verification",
+        "test -f src/invoice.ts",
+        "--no-pr",
+        "--allow-dirty",
+        "--json",
+      ], repo);
+      expect(result.code).toBe(0);
+      const payload = JSON.parse(result.stdout) as {
+        data: {
+          attempt: { status: string; outcome?: string; attemptNumber?: number; maxAttempts?: number };
+          attempts: Array<{ id: string; status: string; outcome?: string; attemptNumber?: number }>;
+          revalidation?: { outcome: string };
+          prSummaryPath?: string;
+        };
+      };
+      expect(payload.data.attempts).toHaveLength(2);
+      expect(payload.data.attempts[0]?.outcome).toBe("still-open");
+      expect(payload.data.attempt.status).toBe("passed");
+      expect(payload.data.attempt.outcome).toBe("resolved");
+      expect(payload.data.attempt.attemptNumber).toBe(2);
+      expect(payload.data.attempt.maxAttempts).toBe(3);
+      expect(payload.data.revalidation?.outcome).toBe("stale");
+      expect(payload.data.prSummaryPath).toBeDefined();
+    });
+  });
+
+  test("work stops retrying when a follow-up attempt only touches file metadata", async () => {
+    await withTempRepo(async (repo) => {
+      const prepared = await prepareFixableRepo(repo);
+      await rm(prepared.patchPath, { force: true });
+      await enableFixExecution(repo);
+      await installFakeCodex(repo, `#!/usr/bin/env node
+const fs = require("node:fs");
+const prompt = fs.readFileSync(0, "utf8");
+const target = "src/invoice.ts";
+const source = fs.readFileSync(target, "utf8");
+if (prompt.includes("Attempt: 1 of")) {
+  fs.writeFileSync(target, source.replace("export function", "// first attempt only touched one symptom\\nexport function"));
+} else {
+  const now = new Date();
+  fs.utimesSync(target, now, now);
+}
+`);
+      const result = await runCli([
+        "work",
+        prepared.candidateId,
+        "--branch",
+        "chore/deepclean-retry-no-progress",
+        "--apply",
+        "--verification",
+        "test -f src/invoice.ts",
+        "--no-pr",
+        "--allow-dirty",
+        "--json",
+      ], repo);
+      expect(result.code).toBe(3);
+      const payload = JSON.parse(result.stdout) as {
+        data: {
+          attempt: { status: string; outcome?: string; diagnostics?: Array<{ code: string }> };
+          attempts: Array<{ id: string; status: string; outcome?: string; diagnostics?: Array<{ code: string }> }>;
+        };
+      };
+      expect(payload.data.attempts).toHaveLength(2);
+      expect(payload.data.attempt.status).toBe("failed");
+      expect(payload.data.attempt.outcome).toBe("needs_human");
+      expect(payload.data.attempt.diagnostics?.some((diagnostic) => diagnostic.code === "fix_no_retry_progress")).toBe(true);
+    });
+  });
+
   test("respects configurable local candidate caps", async () => {
     await withTempRepo(async (repo) => {
       await writeFixtureSource(repo);
@@ -2353,7 +2452,7 @@ async function prepareFixableRepo(repo: string): Promise<{ candidateId: string; 
 async function enableFixExecution(repo: string): Promise<void> {
   const configPath = path.join(repo, ".deepclean", "config.json");
   const config = JSON.parse(await readFile(configPath, "utf8")) as {
-    fixExecution?: { enabled?: boolean; verificationCommands?: string[]; workerIdleTimeoutMs?: number; workerHardTimeoutMs?: number };
+    fixExecution?: { enabled?: boolean; verificationCommands?: string[]; maxAttempts?: number; workerIdleTimeoutMs?: number; workerHardTimeoutMs?: number };
   };
   config.fixExecution = {
     ...config.fixExecution,

@@ -102,6 +102,7 @@ Apply locally only after enabling fix execution in `.deepclean/config.json` and 
 {
   "fixExecution": {
     "enabled": true,
+    "maxAttempts": 3,
     "verificationCommands": ["npm test", "npm run typecheck"]
   }
 }
