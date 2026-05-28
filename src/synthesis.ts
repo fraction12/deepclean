@@ -67,7 +67,7 @@ export interface SynthesisResult {
   attempt?: SynthesisAttemptRecord | undefined;
 }
 
-export async function synthesizeWithCodex(options: {
+type SynthesizeWithCodexOptions = {
   root: string;
   runId: string;
   createdAt: string;
@@ -91,43 +91,17 @@ export async function synthesizeWithCodex(options: {
     allowSourceInModel: boolean;
   };
   verificationProfile?: VerificationProfile | undefined;
-}): Promise<SynthesisResult> {
+};
+
+export async function synthesizeWithCodex(options: SynthesizeWithCodexOptions): Promise<SynthesisResult> {
   const diagnostics: Diagnostic[] = [];
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "deepclean-codex-"));
   let attemptBase: ReturnType<typeof buildAttemptBase> | undefined;
 
   try {
-    const workspace = await prepareSynthesisWorkspace(tempDir);
-    const reviewerPack = await resolveReviewerPack(options.root, options.config);
-    diagnostics.push(...reviewerPack.diagnostics);
-    const prompt = buildPrompt(options, reviewerPack.rubrics);
-    attemptBase = buildAttemptBase({
-      runId: options.runId,
-      createdAt: options.createdAt,
-      evidence: options.evidence,
-      includeSource: options.includeSource,
-      runtime: options.runtime,
-      promptBytes: Buffer.byteLength(prompt, "utf8"),
-      reviewerIds: reviewerPack.rubrics.map((rubric) => rubric.id),
-    });
-    const args = [
-      "exec",
-      "-C",
-      options.root,
-      "-s",
-      "read-only",
-      "--skip-git-repo-check",
-      "--output-schema",
-      workspace.schemaPath,
-      "-o",
-      workspace.outputPath,
-    ];
-
-    const model = options.runtime.model;
-    if (model) {
-      args.push("-m", model);
-    }
-    args.push("-");
+    const invocation = await prepareCodexSynthesisInvocation(options, tempDir, diagnostics);
+    attemptBase = invocation.attemptBase;
+    const { args, model, prompt, reviewerPack, workspace } = invocation;
 
     const result = await runProcessWithRetries(
       options.runtime.command,
@@ -289,6 +263,53 @@ export async function synthesizeWithCodex(options: {
   } finally {
     await rm(tempDir, { recursive: true, force: true });
   }
+}
+
+async function prepareCodexSynthesisInvocation(
+  options: SynthesizeWithCodexOptions,
+  tempDir: string,
+  diagnostics: Diagnostic[],
+): Promise<{
+  args: string[];
+  attemptBase: ReturnType<typeof buildAttemptBase>;
+  model: string | undefined;
+  prompt: string;
+  reviewerPack: Awaited<ReturnType<typeof resolveReviewerPack>>;
+  workspace: Awaited<ReturnType<typeof prepareSynthesisWorkspace>>;
+}> {
+  const workspace = await prepareSynthesisWorkspace(tempDir);
+  const reviewerPack = await resolveReviewerPack(options.root, options.config);
+  diagnostics.push(...reviewerPack.diagnostics);
+  const prompt = buildPrompt(options, reviewerPack.rubrics);
+  const attemptBase = buildAttemptBase({
+    runId: options.runId,
+    createdAt: options.createdAt,
+    evidence: options.evidence,
+    includeSource: options.includeSource,
+    runtime: options.runtime,
+    promptBytes: Buffer.byteLength(prompt, "utf8"),
+    reviewerIds: reviewerPack.rubrics.map((rubric) => rubric.id),
+  });
+  const args = [
+    "exec",
+    "-C",
+    options.root,
+    "-s",
+    "read-only",
+    "--skip-git-repo-check",
+    "--output-schema",
+    workspace.schemaPath,
+    "-o",
+    workspace.outputPath,
+  ];
+
+  const model = options.runtime.model;
+  if (model) {
+    args.push("-m", model);
+  }
+  args.push("-");
+
+  return { args, attemptBase, model, prompt, reviewerPack, workspace };
 }
 
 async function prepareSynthesisWorkspace(tempDir: string): Promise<{ outputPath: string; schemaPath: string }> {
