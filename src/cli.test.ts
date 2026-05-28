@@ -780,6 +780,38 @@ test("checkout", () => calculateCheckout([], false));
     });
   });
 
+  test("scan ignores gitignored generated source files", async () => {
+    await withTempRepo(async (repo) => {
+      await execFileAsync("git", ["init"], { cwd: repo });
+      await writeFixtureSource(repo);
+      await mkdir(path.join(repo, ".site-dist"), { recursive: true });
+      await writeFile(path.join(repo, ".gitignore"), ".site-dist/\n", "utf8");
+      await writeFile(path.join(repo, ".site-dist", "constellation.js"), `
+export function generatedConstellation() {
+  const subtotal = items.reduce((sum, item) => sum + item.price, 0);
+  const discount = coupon ? subtotal * 0.1 : 0;
+  const tax = (subtotal - discount) * 0.07;
+  const total = subtotal - discount + tax;
+  if (total < 0) throw new Error('invalid total');
+  return { subtotal, discount, tax, total };
+}
+`, "utf8");
+
+      const scan = await runCli(["scan", "--evidence-only", "--json"], repo);
+      expect(scan.code).toBe(0);
+      const scanPayload = JSON.parse(scan.stdout) as {
+        data: {
+          features: Array<{ ownedFiles: Array<{ path: string }> }>;
+          candidates: Array<{ files: Array<{ path: string }> }>;
+        };
+      };
+      const candidatePaths = scanPayload.data.candidates.flatMap((candidate) => candidate.files.map((file) => file.path));
+      const featurePaths = scanPayload.data.features.flatMap((feature) => feature.ownedFiles.map((file) => file.path));
+      expect(candidatePaths.some((file) => file.startsWith(".site-dist/"))).toBe(false);
+      expect(featurePaths.some((file) => file.startsWith(".site-dist/"))).toBe(false);
+    });
+  });
+
   test("links repeated scans to stable findings and lifecycle history", async () => {
     await withTempRepo(async (repo) => {
       await writeFixtureSource(repo);
