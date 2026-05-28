@@ -1764,7 +1764,7 @@ async function runCandidateFixWorkflow(
 
   const planResult = await ensureFixPlan(context.paths, state.runId, resolved.candidate, state.evidence, state.features);
   const allowedWriteScope = allowedWriteScopeForCandidate(resolved.candidate, state.features, context);
-  const dirtyBefore = await dirtyFiles(context.paths.root);
+  const dirtyBefore = (await dirtyFileEntries(context.paths.root)).map((entry) => entry.file);
   const patch = flagString(context.parsed.flags, "patch");
   const patchPath = patch ? path.resolve(context.paths.root, patch) : undefined;
   const allowedDirty = flagBoolean(context.parsed.flags, "allow-dirty");
@@ -2681,7 +2681,7 @@ async function checkoutWorkBranch(root: string, branch: string): Promise<{ ok: t
 
 async function changedFilesSince(root: string, beforeDirty: string[]): Promise<string[]> {
   const before = new Set(beforeDirty);
-  const after = await dirtyFiles(root);
+  const after = (await dirtyFileEntries(root)).map((entry) => entry.file);
   return after.filter((file) => !before.has(file));
 }
 
@@ -2704,7 +2704,8 @@ function pathMatchesAllowed(file: string, allowed: string): boolean {
 }
 
 function normalizeRelativePath(value: string): string {
-  return value.split(path.sep).join("/").replace(/^\.?\//, "");
+  const portablePath = value.split(path.sep).join("/");
+  return portablePath.replace(/^\.?\//, "");
 }
 
 function splitList(value: string | undefined): string[] {
@@ -2870,10 +2871,6 @@ function changedFilesFromPatch(patchContent: string): string[] {
   return [...files].sort();
 }
 
-async function dirtyFiles(root: string): Promise<string[]> {
-  return (await dirtyFileEntries(root)).map((entry) => entry.file);
-}
-
 async function dirtyFileEntries(root: string): Promise<DirtyFileEntry[]> {
   try {
     const { stdout } = await execFileAsync("git", ["status", "--short"], { cwd: root, timeout: 5000 });
@@ -2993,12 +2990,13 @@ async function resolveRevalidationTargets(
 }
 
 async function withWriteLock(context: CommandContext, fn: () => Promise<number>): Promise<number> {
-  return withStateWriteLock(context.paths, {
+  const lockOptions = {
     command: context.parsed.command ?? "unknown",
     wait: flagBoolean(context.parsed.flags, "wait-lock"),
     timeoutMs: numberFlag(context, "lock-timeout-ms") ?? 0,
     staleAfterMs: staleLockMsFromFlags(context),
-  }, fn);
+  };
+  return withStateWriteLock(context.paths, lockOptions, fn);
 }
 
 function requireCandidateId(context: CommandContext): string {
