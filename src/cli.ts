@@ -165,6 +165,12 @@ interface ScanPreparation {
   localCandidates: CandidateRecord[];
 }
 
+interface ScanSynthesisExecution {
+  runtime: ProviderRuntimeControls;
+  shouldSynthesize: boolean;
+  synthesisResult: Awaited<ReturnType<typeof synthesizeWithCodex>>;
+}
+
 interface ScanScope {
   incremental: boolean;
   since?: string;
@@ -1001,30 +1007,16 @@ async function executeScan(
     localCandidates,
   } = await prepareScanInputs(context);
   const synthesisRequested = options.synthesize ?? true;
-  const runtime = providerRuntimeControls(context, config);
-  if (synthesisRequested && runtime.offline) {
-    adapterResult.diagnostics.push({
-      level: "info",
-      code: "synthesis_skipped_by_policy",
-      message: "Provider synthesis was skipped because evidence-only/offline/local-only mode is active.",
-      adapter: "codex-synthesis",
-    });
-  }
-  const shouldSynthesize = synthesisRequested && !runtime.offline;
-  const synthesisResult = shouldSynthesize
-    ? await synthesizeWithCodex({
-      root: context.paths.root,
-      runId,
-      createdAt: completedAt,
-      evidence,
-      features,
-      config,
-      existingCandidates: localCandidates,
-      includeSource: runtime.allowSourceInModel,
-      runtime,
-      verificationProfile,
-    })
-    : { candidates: [], diagnostics: [] };
+  const { runtime, shouldSynthesize, synthesisResult } = await executeScanSynthesis(context, {
+    runId,
+    completedAt,
+    config,
+    verificationProfile,
+    features,
+    adapterResult,
+    evidence,
+    localCandidates,
+  }, synthesisRequested);
   const diagnostics = [...adapterResult.diagnostics, ...synthesisResult.diagnostics];
   const rankedCandidates = attachFeatureContextToCandidates(reassignCandidateIds(rankCandidates([
     ...localCandidates,
@@ -1098,6 +1090,49 @@ async function executeScan(
   };
 
   return { runId, diagnostics, data };
+}
+
+async function executeScanSynthesis(
+  context: CommandContext,
+  scan: Pick<ScanPreparation,
+    | "runId"
+    | "completedAt"
+    | "config"
+    | "verificationProfile"
+    | "features"
+    | "adapterResult"
+    | "evidence"
+    | "localCandidates"
+  >,
+  synthesisRequested: boolean,
+): Promise<ScanSynthesisExecution> {
+  const runtime = providerRuntimeControls(context, scan.config);
+  if (synthesisRequested && runtime.offline) {
+    scan.adapterResult.diagnostics.push({
+      level: "info",
+      code: "synthesis_skipped_by_policy",
+      message: "Provider synthesis was skipped because evidence-only/offline/local-only mode is active.",
+      adapter: "codex-synthesis",
+    });
+  }
+
+  const shouldSynthesize = synthesisRequested && !runtime.offline;
+  const synthesisResult = shouldSynthesize
+    ? await synthesizeWithCodex({
+      root: context.paths.root,
+      runId: scan.runId,
+      createdAt: scan.completedAt,
+      evidence: scan.evidence,
+      features: scan.features,
+      config: scan.config,
+      existingCandidates: scan.localCandidates,
+      includeSource: runtime.allowSourceInModel,
+      runtime,
+      verificationProfile: scan.verificationProfile,
+    })
+    : { candidates: [], diagnostics: [] };
+
+  return { runtime, shouldSynthesize, synthesisResult };
 }
 
 async function prepareScanInputs(context: CommandContext): Promise<ScanPreparation> {
