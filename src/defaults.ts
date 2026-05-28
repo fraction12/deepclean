@@ -139,6 +139,8 @@ export function defaultConfig(): DeepcleanConfig {
     fixExecution: {
       enabled: false,
       verificationCommands: [],
+      workerIdleTimeoutMs: 120_000,
+      workerHardTimeoutMs: 1_800_000,
     },
   };
 }

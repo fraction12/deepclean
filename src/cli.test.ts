@@ -1722,6 +1722,91 @@ fs.writeFileSync(target, source.replace("export function", "// worker fix applie
     });
   });
 
+  test("fix continues after an idle worker timeout when in-scope work landed", async () => {
+    await withTempRepo(async (repo) => {
+      const prepared = await prepareFixableRepo(repo);
+      await rm(prepared.patchPath, { force: true });
+      await enableFixExecution(repo);
+      await configureFixWorkerTimeouts(repo, { idleTimeoutMs: 500, hardTimeoutMs: 2000 });
+      await installFakeCodex(repo, `#!/usr/bin/env node
+const fs = require("node:fs");
+fs.readFileSync(0, "utf8");
+const target = "src/invoice.ts";
+const source = fs.readFileSync(target, "utf8");
+fs.writeFileSync(target, source.replace("export function", "// worker timeout fix applied\\nexport function"));
+setInterval(() => {
+  process.stdout.write("still working after patch\\n");
+}, 50);
+`);
+      const result = await runCli([
+        "fix",
+        prepared.candidateId,
+        "--apply",
+        "--verification",
+        "test -f src/invoice.ts",
+        "--allow-dirty",
+        "--json",
+      ], repo);
+      expect(result.code).toBe(0);
+      const payload = JSON.parse(result.stdout) as {
+        data: {
+          attempt: {
+            status: string;
+            worker?: { timedOut?: boolean; timeoutReason?: string };
+            diagnostics: Array<{ level: string; code: string }>;
+            changedFiles: string[];
+          };
+        };
+      };
+      expect(payload.data.attempt.status).toBe("passed");
+      expect(payload.data.attempt.worker?.timedOut).toBe(true);
+      expect(payload.data.attempt.worker?.timeoutReason).toBe("idle");
+      expect(payload.data.attempt.changedFiles).toEqual(["src/invoice.ts"]);
+      expect(payload.data.attempt.diagnostics.map((item) => item.code)).toContain("fix_worker_idle_timeout");
+      expect(payload.data.attempt.diagnostics.map((item) => item.code)).toContain("fix_worker_timeout_recovered");
+      expect(await readFile(path.join(repo, "src", "invoice.ts"), "utf8")).toContain("worker timeout fix applied");
+    });
+  });
+
+  test("fix fails after an idle worker timeout when no work landed", async () => {
+    await withTempRepo(async (repo) => {
+      const prepared = await prepareFixableRepo(repo);
+      await rm(prepared.patchPath, { force: true });
+      await enableFixExecution(repo);
+      await configureFixWorkerTimeouts(repo, { idleTimeoutMs: 25, hardTimeoutMs: 500 });
+      await installFakeCodex(repo, `#!/usr/bin/env node
+process.stdin.resume();
+setInterval(() => {}, 1000);
+`);
+      const result = await runCli([
+        "fix",
+        prepared.candidateId,
+        "--apply",
+        "--verification",
+        "test -f src/invoice.ts",
+        "--allow-dirty",
+        "--json",
+      ], repo);
+      expect(result.code).toBe(3);
+      const payload = JSON.parse(result.stdout) as {
+        data: {
+          attempt: {
+            status: string;
+            worker?: { timedOut?: boolean; timeoutReason?: string };
+            diagnostics: Array<{ level: string; code: string }>;
+            changedFiles: string[];
+          };
+        };
+      };
+      expect(payload.data.attempt.status).toBe("failed");
+      expect(payload.data.attempt.worker?.timedOut).toBe(true);
+      expect(payload.data.attempt.worker?.timeoutReason).toBe("idle");
+      expect(payload.data.attempt.changedFiles).toEqual([]);
+      expect(payload.data.attempt.diagnostics.map((item) => item.code)).toContain("fix_worker_idle_timeout");
+      expect(payload.data.attempt.diagnostics.map((item) => item.code)).toContain("fix_no_changed_files");
+    });
+  });
+
   test("work refuses before branch creation when fix execution is disabled in config", async () => {
     await withTempRepo(async (repo) => {
       const prepared = await prepareFixableRepo(repo);
@@ -2268,12 +2353,28 @@ async function prepareFixableRepo(repo: string): Promise<{ candidateId: string; 
 async function enableFixExecution(repo: string): Promise<void> {
   const configPath = path.join(repo, ".deepclean", "config.json");
   const config = JSON.parse(await readFile(configPath, "utf8")) as {
-    fixExecution?: { enabled?: boolean; verificationCommands?: string[] };
+    fixExecution?: { enabled?: boolean; verificationCommands?: string[]; workerIdleTimeoutMs?: number; workerHardTimeoutMs?: number };
   };
   config.fixExecution = {
     ...config.fixExecution,
     enabled: true,
     verificationCommands: config.fixExecution?.verificationCommands ?? [],
+  };
+  await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+}
+
+async function configureFixWorkerTimeouts(
+  repo: string,
+  options: { idleTimeoutMs: number; hardTimeoutMs: number },
+): Promise<void> {
+  const configPath = path.join(repo, ".deepclean", "config.json");
+  const config = JSON.parse(await readFile(configPath, "utf8")) as {
+    fixExecution?: { workerIdleTimeoutMs?: number; workerHardTimeoutMs?: number };
+  };
+  config.fixExecution = {
+    ...config.fixExecution,
+    workerIdleTimeoutMs: options.idleTimeoutMs,
+    workerHardTimeoutMs: options.hardTimeoutMs,
   };
   await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
 }

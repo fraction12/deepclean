@@ -173,6 +173,8 @@ export const configSchema = z.object({
   fixExecution: z.object({
     enabled: z.boolean(),
     verificationCommands: z.array(z.string()),
+    workerIdleTimeoutMs: z.number().int().positive(),
+    workerHardTimeoutMs: z.number().int().positive(),
   }),
 });
 
@@ -507,6 +509,8 @@ export const fixAttemptRecordSchema = z.object({
     command: z.string(),
     exitCode: z.number().int().nullable(),
     outputPath: z.string().optional(),
+    timedOut: z.boolean().optional(),
+    timeoutReason: z.enum(["idle", "hard"]).optional(),
   }).optional(),
   pr: z.object({
     branch: z.string(),

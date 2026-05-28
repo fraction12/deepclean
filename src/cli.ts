@@ -1725,7 +1725,8 @@ async function runCandidateFixWorkflow(
       root: context.paths.root,
       command: config.reviewSynthesis.command,
       model: config.reviewSynthesis.model,
-      timeoutMs: config.reviewSynthesis.timeoutMs,
+      idleTimeoutMs: config.fixExecution.workerIdleTimeoutMs,
+      hardTimeoutMs: config.fixExecution.workerHardTimeoutMs,
       attemptId,
       candidate: resolved.candidate,
       planContent: planResult.plan.content,
@@ -1737,7 +1738,7 @@ async function runCandidateFixWorkflow(
     });
     worker = workerResult.worker;
     diagnostics.push(...workerResult.diagnostics);
-    if (workerResult.exitCode !== 0) {
+    if (workerResult.exitCode !== 0 && !workerResult.timedOut) {
       status = "failed";
     }
   }
@@ -1749,6 +1750,13 @@ async function runCandidateFixWorkflow(
     ]).filter((file) => !file.startsWith(statePrefix));
   }
   const outOfScopeFiles = changedFiles.filter((file) => !isPathAllowed(file, allowedWriteScope));
+  if (!dryRun && worker?.timedOut && changedFiles.length > 0 && outOfScopeFiles.length === 0) {
+    diagnostics.push({
+      level: "warning",
+      code: "fix_worker_timeout_recovered",
+      message: "Patch worker timed out after making in-scope changes; Deepclean will continue with verification and revalidation.",
+    });
+  }
   if (!dryRun && changedFiles.length === 0 && status !== "failed") {
     diagnostics.push({
       level: "error",
@@ -1763,6 +1771,9 @@ async function runCandidateFixWorkflow(
       code: "fix_scope_failed",
       message: `Patch changed files outside candidate scope: ${outOfScopeFiles.join(", ")}`,
     });
+    status = "failed";
+  }
+  if (!dryRun && worker?.timedOut && changedFiles.length === 0) {
     status = "failed";
   }
 
@@ -1957,7 +1968,8 @@ async function runCodexPatchWorker(options: {
   root: string;
   command: string;
   model?: string | undefined;
-  timeoutMs: number;
+  idleTimeoutMs: number;
+  hardTimeoutMs: number;
   attemptId: string;
   candidate: CandidateRecord;
   planContent: string;
@@ -1968,6 +1980,8 @@ async function runCodexPatchWorker(options: {
   outputDir: string;
 }): Promise<{
   exitCode: number | null;
+  timedOut: boolean;
+  timeoutReason?: "idle" | "hard" | undefined;
   worker: NonNullable<FixAttemptRecord["worker"]>;
   diagnostics: Diagnostic[];
 }> {
@@ -1985,22 +1999,33 @@ async function runCodexPatchWorker(options: {
     args.push("-m", options.model);
   }
   args.push("-");
-  const result = await runProcess(options.command, args, prompt, options.timeoutMs, options.root);
+  const result = await runProcess(options.command, args, prompt, {
+    idleTimeoutMs: options.idleTimeoutMs,
+    hardTimeoutMs: options.hardTimeoutMs,
+    cwd: options.root,
+    progressRoot: options.root,
+  });
   await writeFile(outputPath, `${result.stdout}${result.stderr ? `\nSTDERR:\n${result.stderr}` : ""}`, "utf8");
   return {
     exitCode: result.exitCode,
+    timedOut: result.timedOut,
+    ...(result.timeoutReason ? { timeoutReason: result.timeoutReason } : {}),
     worker: {
       provider: "codex",
       command: options.command,
       exitCode: result.exitCode,
       outputPath,
+      ...(result.timedOut ? { timedOut: true } : {}),
+      ...(result.timeoutReason ? { timeoutReason: result.timeoutReason } : {}),
     },
     diagnostics: result.exitCode === 0
       ? []
       : [{
-        level: "error",
+        level: result.timedOut ? "warning" : "error",
         code: result.timedOut
-          ? "fix_worker_timeout"
+          ? result.timeoutReason === "hard"
+            ? "fix_worker_hard_timeout"
+            : "fix_worker_idle_timeout"
           : result.providerUnavailable
             ? "fix_worker_unavailable"
             : "fix_worker_failed",
@@ -2013,23 +2038,85 @@ async function runProcess(
   command: string,
   args: string[],
   stdin: string,
-  timeoutMs: number,
-  cwd?: string,
-): Promise<{ exitCode: number | null; stdout: string; stderr: string; timedOut: boolean; providerUnavailable: boolean }> {
+  options: {
+    idleTimeoutMs: number;
+    hardTimeoutMs: number;
+    cwd?: string | undefined;
+    progressRoot?: string | undefined;
+  },
+): Promise<{
+  exitCode: number | null;
+  stdout: string;
+  stderr: string;
+  timedOut: boolean;
+  timeoutReason?: "idle" | "hard" | undefined;
+  providerUnavailable: boolean;
+}> {
+  const idleTimeoutMs = Math.max(1, options.idleTimeoutMs);
+  const hardTimeoutMs = Math.max(idleTimeoutMs, options.hardTimeoutMs);
+  let stdout = "";
+  let stderr = "";
+  let progressSnapshot = await collectProcessProgressSnapshot(options.progressRoot, stdout, stderr);
+
   return new Promise((resolve) => {
     let timedOut = false;
+    let timeoutReason: "idle" | "hard" | undefined;
     let providerUnavailable = false;
+    let settled = false;
+    let idleTimer: ReturnType<typeof setTimeout> | undefined;
+    let hardTimer: ReturnType<typeof setTimeout> | undefined;
+    let killTimer: ReturnType<typeof setTimeout> | undefined;
+    let sawRepoProgress = false;
     const child = spawn(command, args, {
       stdio: ["pipe", "pipe", "pipe"],
       env: process.env,
-      cwd,
+      cwd: options.cwd,
     });
-    let stdout = "";
-    let stderr = "";
-    const timeout = setTimeout(() => {
+
+    const clearTimers = () => {
+      if (idleTimer) {
+        clearTimeout(idleTimer);
+      }
+      if (hardTimer) {
+        clearTimeout(hardTimer);
+      }
+      if (killTimer) {
+        clearTimeout(killTimer);
+      }
+    };
+
+    const terminate = (reason: "idle" | "hard") => {
+      if (settled || timedOut) {
+        return;
+      }
       timedOut = true;
+      timeoutReason = reason;
       child.kill("SIGTERM");
-    }, timeoutMs);
+      killTimer = setTimeout(() => {
+        child.kill("SIGKILL");
+      }, 5000);
+    };
+
+    const scheduleIdleCheck = () => {
+      idleTimer = setTimeout(() => {
+        void (async () => {
+          const current = await collectProcessProgressSnapshot(options.progressRoot, stdout, stderr);
+          const progressKind = processProgressKind(progressSnapshot, current, sawRepoProgress);
+          if (progressKind !== "none") {
+            if (progressKind === "repo") {
+              sawRepoProgress = true;
+            }
+            progressSnapshot = current;
+            scheduleIdleCheck();
+            return;
+          }
+          terminate("idle");
+        })();
+      }, idleTimeoutMs);
+    };
+
+    hardTimer = setTimeout(() => terminate("hard"), hardTimeoutMs);
+    scheduleIdleCheck();
 
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
@@ -2040,16 +2127,61 @@ async function runProcess(
       stderr += chunk;
     });
     child.on("error", (error) => {
-      clearTimeout(timeout);
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimers();
       providerUnavailable = typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
-      resolve({ exitCode: 1, stdout, stderr: error.message, timedOut, providerUnavailable });
+      resolve({ exitCode: 1, stdout, stderr: error.message, timedOut, timeoutReason, providerUnavailable });
     });
     child.on("close", (exitCode) => {
-      clearTimeout(timeout);
-      resolve({ exitCode, stdout, stderr, timedOut, providerUnavailable });
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimers();
+      resolve({ exitCode, stdout, stderr, timedOut, timeoutReason, providerUnavailable });
     });
     child.stdin.end(stdin);
   });
+}
+
+async function collectProcessProgressSnapshot(
+  root: string | undefined,
+  stdout: string,
+  stderr: string,
+): Promise<{ outputLength: number; dirtySignature: string }> {
+  if (!root) {
+    return { outputLength: stdout.length + stderr.length, dirtySignature: "" };
+  }
+  const files = await dirtyFiles(root);
+  const signatures = await Promise.all(files.map(async (file) => {
+    try {
+      const fileStat = await stat(path.join(root, file));
+      return `${file}:${fileStat.mtimeMs}:${fileStat.size}`;
+    } catch {
+      return `${file}:missing`;
+    }
+  }));
+  return {
+    outputLength: stdout.length + stderr.length,
+    dirtySignature: signatures.sort().join("|"),
+  };
+}
+
+function processProgressKind(
+  left: { outputLength: number; dirtySignature: string },
+  right: { outputLength: number; dirtySignature: string },
+  sawRepoProgress: boolean,
+): "repo" | "startup-output" | "none" {
+  if (left.dirtySignature !== right.dirtySignature) {
+    return "repo";
+  }
+  if (!sawRepoProgress && left.outputLength !== right.outputLength) {
+    return "startup-output";
+  }
+  return "none";
 }
 
 function buildFixWorkerPrompt(options: {
@@ -2069,6 +2201,7 @@ function buildFixWorkerPrompt(options: {
     "- Edit only files in Allowed write scope.",
     "- Do not commit, push, open PRs, publish, or run external actions.",
     "- Add or update focused tests only when they are in scope.",
+    "- After making the minimal patch, stop. Deepclean owns final verification and revalidation.",
     "- Stop if the plan is too broad or unsafe.",
     "",
     "Candidate JSON:",
