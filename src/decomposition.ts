@@ -72,7 +72,7 @@ export async function splitCandidate(options: {
     return undefined;
   }
 
-  const childIds = childInputs.map((_, index) => candidateId(options.candidates.length + index));
+  const childIds = allocateChildCandidateIds(options.candidates, childInputs.length);
   const rootCandidateId = options.candidate.decomposition?.rootCandidateId ?? options.candidate.id;
   const total = childInputs.length;
   const children = childInputs.map((input, index): CandidateRecord => ({
@@ -165,6 +165,25 @@ function splitStrategy(
     return "large-file-slices";
   }
   return "large-function-slices";
+}
+
+function allocateChildCandidateIds(candidates: CandidateRecord[], count: number): string[] {
+  const used = new Set(candidates.map((candidate) => candidate.id));
+  let nextIndex = candidates.reduce((max, candidate) => {
+    const match = /^candidate-(\d+)$/.exec(candidate.id);
+    return match ? Math.max(max, Number(match[1])) : max;
+  }, 0);
+  const ids: string[] = [];
+  while (ids.length < count) {
+    const id = candidateId(nextIndex);
+    nextIndex += 1;
+    if (used.has(id)) {
+      continue;
+    }
+    used.add(id);
+    ids.push(id);
+  }
+  return ids;
 }
 
 async function childInputsForStrategy(options: {
