@@ -2,19 +2,13 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { execFileAsync } from "./shared/exec-file.mjs";
+import { packTarball } from "./shared/release-smoke-utils.mjs";
 
 const root = process.cwd();
 const temp = await mkdtemp(path.join(os.tmpdir(), "deepclean-package-smoke-"));
 
 try {
-  const { stdout: packStdout } = await execFileAsync("npm", ["pack", "--json", "--pack-destination", temp], {
-    cwd: root,
-    maxBuffer: 1024 * 1024,
-  });
-  const pack = JSON.parse(packStdout)[0];
-  const tarball = path.join(temp, pack.filename);
-  const { stdout: tarList } = await execFileAsync("tar", ["-tzf", tarball], { maxBuffer: 1024 * 1024 });
-  const packedFiles = tarList.trim().split("\n");
+  const { tarball, packedFiles } = await packTarball(root, temp);
   const forbidden = packedFiles.filter((file) => (
     file.includes("/.deepclean/")
     || file.includes("report-202")
