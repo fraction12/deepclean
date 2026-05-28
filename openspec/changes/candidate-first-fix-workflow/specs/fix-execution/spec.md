@@ -56,6 +56,10 @@ The system SHALL revalidate the selected candidate after patching when requested
 ### Requirement: Fix outcome classification
 The system SHALL classify fix attempts as `resolved`, `partially-resolved`, `still-open`, `superseded`, or `needs_human`.
 
+#### Scenario: Candidate evidence disappears
+- **WHEN** verification passes and revalidation no longer finds current evidence for the selected candidate
+- **THEN** Deepclean records the outcome as `resolved`
+
 #### Scenario: Verification passes but candidate remains
 - **WHEN** verification passes but revalidation reports the selected candidate still exists
 - **THEN** Deepclean records the outcome as `still-open` and blocks PR-ready success output

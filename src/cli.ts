@@ -2151,6 +2151,7 @@ function classifyFixOutcome(options: {
     case "superseded":
       return "superseded";
     case "stale":
+      return "resolved";
     case "inconclusive":
       return "needs_human";
     case undefined:

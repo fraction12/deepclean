@@ -1746,7 +1746,7 @@ fs.writeFileSync(target, source.replace("export function", "// worker fix applie
     });
   });
 
-  test("work blocks PR-ready summary when revalidation does not resolve the candidate", async () => {
+  test("work prepares a PR-ready summary when revalidation no longer finds the candidate", async () => {
     await withTempRepo(async (repo) => {
       const prepared = await prepareFixableRepo(repo);
       await rm(prepared.patchPath, { force: true });
@@ -1773,20 +1773,21 @@ export function calculateInvoice(items, coupon) {
         "--allow-dirty",
         "--json",
       ], repo);
-      expect(result.code).toBe(3);
+      expect(result.code).toBe(0);
       const payload = JSON.parse(result.stdout) as {
         data: {
-          attempt: { status: string; outcome?: string };
+          attempt: { status: string; outcome?: string; pr?: { externalSideEffects: unknown[] } };
           revalidation?: { outcome: string };
           prSummaryPath?: string;
           externalSideEffects: unknown[];
         };
       };
-      expect(payload.data.attempt.status).toBe("failed");
-      expect(payload.data.attempt.outcome).toBe("needs_human");
+      expect(payload.data.attempt.status).toBe("passed");
+      expect(payload.data.attempt.outcome).toBe("resolved");
       expect(payload.data.revalidation?.outcome).toBe("stale");
-      expect(payload.data.prSummaryPath).toBeUndefined();
+      expect(payload.data.prSummaryPath).toBeDefined();
       expect(payload.data.externalSideEffects).toEqual([]);
+      expect(payload.data.attempt.pr?.externalSideEffects).toEqual([]);
       const branch = await execFileAsync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: repo });
       expect(branch.stdout.trim()).toBe("chore/deepclean-candidate-001");
     });
