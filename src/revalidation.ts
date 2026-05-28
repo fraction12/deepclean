@@ -44,6 +44,22 @@ export async function classifyRevalidation(options: {
     });
   }
 
+  if (options.finding.decomposition?.parentCandidateId) {
+    return revalidationRecord({
+      targetId: options.finding.id,
+      runId: options.runId,
+      outcome: "fixed",
+      evidenceIds: [],
+      previousObservationId: options.finding.currentObservationId,
+      diagnostics: [{
+        level: "info",
+        code: "child_candidate_absent_after_rescan",
+        message: "The decomposed child candidate was not rediscovered after verification; broader parent findings may remain open separately.",
+      }],
+      createdAt: options.createdAt,
+    });
+  }
+
   const filesExist = await anyFindingFilesExist(options.root, options.finding);
   if (!filesExist) {
     return revalidationRecord({

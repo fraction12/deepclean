@@ -31,6 +31,12 @@ export const impactLevels = ["local", "feature", "cross-cutting"] as const;
 export const riskLevels = ["safe", "moderate", "design-needed"] as const;
 export const clusterActionability = ["bounded", "too-broad"] as const;
 export const identityConfidenceLevels = ["low", "medium", "high"] as const;
+export const decompositionStrategies = [
+  "large-function-slices",
+  "large-file-slices",
+  "dependency-hotspot-slices",
+  "wrapper-slices",
+] as const;
 export const lifecycleEventKinds = [
   "created",
   "observed",
@@ -204,6 +210,19 @@ export const findingSignatureSchema = z.object({
 
 export type FindingSignature = z.infer<typeof findingSignatureSchema>;
 
+export const candidateDecompositionSchema = z.object({
+  parentCandidateId: z.string().optional(),
+  childCandidateIds: z.array(z.string()).optional(),
+  rootCandidateId: z.string().optional(),
+  strategy: z.enum(decompositionStrategies),
+  sequence: z.number().int().positive().optional(),
+  total: z.number().int().positive().optional(),
+  reason: z.string(),
+  createdAt: z.string(),
+});
+
+export type CandidateDecomposition = z.infer<typeof candidateDecompositionSchema>;
+
 export const evidenceRecordSchema = z.object({
   schemaVersion: z.literal(schemaVersion),
   recordType: z.literal("evidence"),
@@ -288,8 +307,9 @@ export const candidateRecordSchema = z.object({
     whyCurrentTestsMissIt: z.string(),
     confidenceDowngradeReasons: z.array(z.string()),
   }).optional(),
+  decomposition: candidateDecompositionSchema.optional(),
   provenance: z.object({
-    source: z.enum(["local-evidence", "model-synthesis"]),
+    source: z.enum(["local-evidence", "model-synthesis", "candidate-decomposition"]),
     provider: z.string().optional(),
     model: z.string().optional(),
     promptVersion: z.string().optional(),
@@ -367,6 +387,7 @@ export const findingRecordSchema = z.object({
   risk: z.enum(riskLevels),
   files: z.array(fileReferenceSchema),
   evidenceIds: z.array(z.string()),
+  decomposition: candidateDecompositionSchema.optional(),
   observationIds: z.array(z.string()),
   currentObservationId: z.string().optional(),
   createdAt: z.string(),

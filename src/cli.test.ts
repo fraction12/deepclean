@@ -1831,6 +1831,71 @@ setInterval(() => {}, 1000);
     });
   });
 
+  test("split decomposes a broad parent candidate into child candidates", async () => {
+    await withTempRepo(async (repo) => {
+      const parent = await prepareSplittableCandidate(repo);
+      const result = await runCli(["split", parent.id, "--json"], repo);
+      expect(result.code).toBe(0);
+      const payload = JSON.parse(result.stdout) as {
+        data: {
+          parent: { id: string; status: string; decomposition?: { childCandidateIds?: string[]; strategy: string } };
+          children: Array<{ id: string; decomposition?: { parentCandidateId?: string; sequence?: number; total?: number }; provenance: { source: string } }>;
+          strategy: string;
+          childCandidateIds: string[];
+        };
+      };
+      expect(payload.data.parent.status).toBe("superseded");
+      expect(payload.data.strategy).toBe("large-function-slices");
+      expect(payload.data.children.length).toBeGreaterThan(1);
+      expect(payload.data.childCandidateIds).toEqual(payload.data.children.map((child) => child.id));
+      for (const [index, child] of payload.data.children.entries()) {
+        expect(child.provenance.source).toBe("candidate-decomposition");
+        expect(child.decomposition?.parentCandidateId).toBe(parent.id);
+        expect(child.decomposition?.sequence).toBe(index + 1);
+        expect(child.decomposition?.total).toBe(payload.data.children.length);
+      }
+
+      const candidateFile = path.join(repo, ".deepclean", "candidates", await latestRunFile(repo));
+      const candidates = JSON.parse(await readFile(candidateFile, "utf8")) as CandidateRecord[];
+      const persistedParent = candidates.find((candidate) => candidate.id === parent.id);
+      expect(persistedParent?.status).toBe("superseded");
+      expect(candidates.filter((candidate) => candidate.decomposition?.parentCandidateId === parent.id)).toHaveLength(payload.data.children.length);
+
+      const findingFiles = await readdir(path.join(repo, ".deepclean", "findings"));
+      const findings = await Promise.all(findingFiles.map(async (file) => (
+        JSON.parse(await readFile(path.join(repo, ".deepclean", "findings", file), "utf8")) as FindingRecord
+      )));
+      expect(findings.some((finding) => finding.decomposition?.parentCandidateId === parent.id)).toBe(true);
+
+      const secondResult = await runCli(["split", parent.id, "--json"], repo);
+      expect(secondResult.code).toBe(0);
+      const secondPayload = JSON.parse(secondResult.stdout) as { data: { parent: { status: string }; childCandidateIds: string[] } };
+      expect(secondPayload.data.parent.status).toBe("superseded");
+      expect(secondPayload.data.childCandidateIds).toEqual(payload.data.childCandidateIds);
+    });
+  });
+
+  test("work refuses broad parent candidates before branch creation", async () => {
+    await withTempRepo(async (repo) => {
+      const parent = await prepareSplittableCandidate(repo);
+      await enableFixExecution(repo);
+      const result = await runCli([
+        "work",
+        parent.id,
+        "--branch",
+        "chore/deepclean-broad-parent",
+        "--apply",
+        "--verification",
+        "true",
+        "--json",
+      ], repo);
+      expect(result.code).toBe(2);
+      const payload = JSON.parse(result.stdout) as { error: { code: string; message: string } };
+      expect(payload.error.code).toBe("fix_target_needs_split");
+      expect(payload.error.message).toContain(`deepclean split ${parent.id}`);
+    });
+  });
+
   test("work prepares a PR-ready summary when revalidation no longer finds the candidate", async () => {
     await withTempRepo(async (repo) => {
       const prepared = await prepareFixableRepo(repo);
@@ -2447,6 +2512,20 @@ async function prepareFixableRepo(repo: string): Promise<{ candidateId: string; 
   const patchPath = path.join(repo, "fix.patch");
   await writeFile(patchPath, diff.stdout, "utf8");
   return { candidateId: candidate.id, findingId: candidate.findingId, patchPath };
+}
+
+async function prepareSplittableCandidate(repo: string): Promise<{ id: string }> {
+  await writeFixtureSource(repo);
+  const scan = await runCli(["scan", "--evidence-only", "--json"], repo);
+  expect(scan.code).toBe(0);
+  const scanPayload = JSON.parse(scan.stdout) as {
+    data: { candidates: Array<{ id: string; title: string; effort: string }> };
+  };
+  const candidate = scanPayload.data.candidates.find((item) => item.title.startsWith("Large function:") || item.effort === "large");
+  if (!candidate) {
+    throw new Error("No splittable candidate in fixture");
+  }
+  return { id: candidate.id };
 }
 
 async function enableFixExecution(repo: string): Promise<void> {

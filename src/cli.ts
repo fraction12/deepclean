@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { parseArgs, flagBoolean, flagString, type ParsedArgs } from "./args.js";
 import { candidatesFromEvidence, rankCandidates, reassignCandidateIds } from "./candidates.js";
 import { buildClusters, unclusteredCandidateIds } from "./clusters.js";
+import { isSplittableParentCandidate, splitCandidate } from "./decomposition.js";
 import { discoverSourceFiles, type SourceFile } from "./discovery.js";
 import { runEvidenceAdapters } from "./evidence.js";
 import {
@@ -108,6 +109,7 @@ const commands = [
   "scrub",
   "fix",
   "work",
+  "split",
   "cluster",
   "plan",
   "triage",
@@ -244,6 +246,7 @@ Commands:
     --verification <c>         Required verification command
     --pr                       Push and open a PR after local proof passes
     --no-pr                    Stop after local proof and PR-ready summary
+  split <candidate-or-finding> Decompose a broad parent into PR-sized child candidates
   cluster [theme-id]           Group related candidates into cleanup themes
   plan <candidate-or-theme>    Generate an agent-ready cleanup plan
   triage <candidate-id>        Update candidate status with --status and --note
@@ -341,6 +344,8 @@ export async function main(argv: string[], cwd = process.cwd()): Promise<number>
         return await withWriteLock(context, () => fixCommand(context));
       case "work":
         return await withWriteLock(context, () => workCommand(context));
+      case "split":
+        return await withWriteLock(context, () => splitCommand(context));
       case "cluster":
         return await withWriteLock(context, () => clusterCommand(context));
       case "plan":
@@ -725,6 +730,94 @@ async function workCommand(context: CommandContext): Promise<number> {
     }
   }
   return result.exitCode;
+}
+
+async function splitCommand(context: CommandContext): Promise<number> {
+  const target = requireCandidateId(context);
+  const state = await latestState(context.paths);
+  const resolved = resolveFixTargetFromCandidates(state.candidates, target);
+  if (!resolved) {
+    emit(context.json, fail("split", "candidate_not_found", `Finding or candidate not found: ${target}`));
+    return 1;
+  }
+
+  const createdAt = new Date().toISOString();
+  const result = await splitCandidate({
+    root: context.paths.root,
+    runId: state.runId,
+    candidate: resolved.candidate,
+    candidates: state.candidates,
+    evidence: state.evidence,
+    features: state.features,
+    createdAt,
+  });
+  if (!result) {
+    emit(context.json, fail("split", "candidate_not_splittable", `Candidate is already PR-sized or lacks enough evidence to split: ${target}`));
+    return 2;
+  }
+
+  const existingChildIds = new Set(result.children.map((child) => child.id));
+  const candidates = state.candidates.filter((candidate) => (
+    candidate.id !== resolved.candidate.id
+    && candidate.decomposition?.parentCandidateId !== resolved.candidate.id
+    && !existingChildIds.has(candidate.id)
+  ));
+  const parentIndex = state.candidates.findIndex((candidate) => candidate.id === resolved.candidate.id);
+  const updatedCandidates = [
+    ...candidates.slice(0, Math.max(0, parentIndex)),
+    result.parent,
+    ...candidates.slice(Math.max(0, parentIndex)),
+    ...result.children,
+  ];
+  const identity = attachStableIdentity({
+    runId: state.runId,
+    candidates: updatedCandidates,
+    evidence: state.evidence,
+    existingFindings: await readFindings(context.paths),
+    observedAt: createdAt,
+  });
+  await updateLatestCandidates(context.paths, identity.candidates);
+  await writeFindings(context.paths, identity.findings);
+  await writeCandidateObservations(context.paths, state.runId, identity.observations);
+  await writeLifecycleEvents(context.paths, [
+    ...identity.lifecycleEvents,
+    ...(result.parent.findingId
+      ? [{
+        schemaVersion,
+        recordType: "lifecycle_event" as const,
+        id: timestampId("event"),
+        targetType: "finding" as const,
+        targetId: result.parent.findingId,
+        findingId: result.parent.findingId,
+        runId: state.runId,
+        kind: "superseded" as const,
+        fromState: resolved.candidate.status,
+        toState: "superseded",
+        note: "Parent candidate was decomposed into PR-sized child candidates.",
+        command: "split",
+        createdAt,
+        data: {
+          parentCandidateId: result.parent.id,
+          childCandidateIds: result.children.map((child) => child.id),
+          strategy: result.strategy,
+        },
+      }]
+      : []),
+  ]);
+
+  emit(context.json, ok("split", {
+    parent: result.parent,
+    children: result.children,
+    strategy: result.strategy,
+    childCandidateIds: result.children.map((child) => child.id),
+  }));
+  if (!context.json && !context.quiet) {
+    console.log(`Split ${result.parent.id} into ${result.children.length} child candidates (${result.strategy}).`);
+    for (const child of result.children) {
+      console.log(`- ${child.id}: ${child.title}`);
+    }
+  }
+  return 0;
 }
 
 async function mapCommand(context: CommandContext): Promise<number> {
@@ -1633,6 +1726,15 @@ async function runCandidateFixWorkflow(
       exitCode: 1,
       code: "finding_not_found",
       message: `Finding or candidate not found: ${target}`,
+    };
+  }
+
+  if (isSplittableParentCandidate(resolved.candidate, state.evidence)) {
+    return {
+      ok: false,
+      exitCode: 2,
+      code: "fix_target_needs_split",
+      message: `Candidate is too broad for guarded fix execution. Run \`deepclean split ${resolved.candidate.id}\` and target one child candidate.`,
     };
   }
 
