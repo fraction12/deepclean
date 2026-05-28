@@ -52,10 +52,23 @@ export async function splitCandidate(options: {
 
   const existingChildren = existingChildCandidates(options.candidate, options.candidates);
   if (existingChildren.length > 0) {
+    const strategy = options.candidate.decomposition?.strategy ?? splitStrategy(options.candidate, supportingEvidence);
+    const rootCandidateId = options.candidate.decomposition?.rootCandidateId ?? options.candidate.id;
     return {
-      parent: options.candidate,
+      parent: {
+        ...options.candidate,
+        status: "superseded",
+        decomposition: {
+          childCandidateIds: existingChildren.map((child) => child.id),
+          rootCandidateId,
+          strategy,
+          reason: options.candidate.decomposition?.reason ?? "Parent candidate was decomposed into PR-sized child candidates.",
+          createdAt: options.candidate.decomposition?.createdAt ?? options.createdAt,
+        },
+        updatedAt: options.createdAt,
+      },
       children: existingChildren,
-      strategy: options.candidate.decomposition?.strategy ?? splitStrategy(options.candidate, supportingEvidence),
+      strategy,
     };
   }
 
@@ -216,7 +229,7 @@ async function childInputsForStrategy(options: {
 
 function wrapperChildInputs(parent: CandidateRecord, evidence: EvidenceRecord[]) {
   const record = evidence.find((item) => item.kind === "shallow-wrapper-cluster");
-  const wrappers = record ? wrapperRefs(record) : parent.files;
+  const wrappers = record ? fallbackFileRefs(wrapperRefs(record), record.files) : parent.files;
   return chunk(wrappers, 3).map((files, index) => ({
     title: `${parent.title} slice ${index + 1}`,
     files,
@@ -226,6 +239,10 @@ function wrapperChildInputs(parent: CandidateRecord, evidence: EvidenceRecord[])
     reason: "Shallow-wrapper clusters are safe to review in small groups.",
     suggestedDirection: "Inline wrappers that add no policy or domain meaning, and keep only wrappers that name a real concept or centralize behavior.",
   }));
+}
+
+function fallbackFileRefs(files: FileReference[], fallback: FileReference[]): FileReference[] {
+  return files.length > 0 ? files : fallback;
 }
 
 function dependencyChildInputs(

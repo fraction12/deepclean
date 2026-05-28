@@ -1866,6 +1866,12 @@ setInterval(() => {}, 1000);
         JSON.parse(await readFile(path.join(repo, ".deepclean", "findings", file), "utf8")) as FindingRecord
       )));
       expect(findings.some((finding) => finding.decomposition?.parentCandidateId === parent.id)).toBe(true);
+
+      const secondResult = await runCli(["split", parent.id, "--json"], repo);
+      expect(secondResult.code).toBe(0);
+      const secondPayload = JSON.parse(secondResult.stdout) as { data: { parent: { status: string }; childCandidateIds: string[] } };
+      expect(secondPayload.data.parent.status).toBe("superseded");
+      expect(secondPayload.data.childCandidateIds).toEqual(payload.data.childCandidateIds);
     });
   });
 
