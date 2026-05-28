@@ -1800,6 +1800,30 @@ async function resolveFixWorkflowTarget(
   return { ok: true, config, state, resolved };
 }
 
+function fixWorkflowVerificationBlocker(
+  options: FixWorkflowOptions,
+  dryRun: boolean,
+  verificationCommands: string[],
+): Extract<FixWorkflowResult, { ok: false }> | undefined {
+  if (!dryRun && verificationCommands.length === 0) {
+    return {
+      ok: false,
+      exitCode: 2,
+      code: "verification_required",
+      message: "--verification is required for applied candidate fixes unless the candidate or config supplies verification commands.",
+    };
+  }
+  if (options.requirePrProof && verificationCommands.length === 0) {
+    return {
+      ok: false,
+      exitCode: 2,
+      code: "verification_required",
+      message: "--verification is required before Deepclean can prepare or open a PR.",
+    };
+  }
+  return undefined;
+}
+
 async function runCandidateFixWorkflow(
   context: CommandContext,
   target: string,
@@ -1818,21 +1842,9 @@ async function runCandidateFixWorkflow(
 
   const dryRun = flagBoolean(context.parsed.flags, "dry-run") || !flagBoolean(context.parsed.flags, "apply");
   const verificationCommands = verificationCommandsForFix(context, config, resolved.candidate);
-  if (!dryRun && verificationCommands.length === 0) {
-    return {
-      ok: false,
-      exitCode: 2,
-      code: "verification_required",
-      message: "--verification is required for applied candidate fixes unless the candidate or config supplies verification commands.",
-    };
-  }
-  if (options.requirePrProof && verificationCommands.length === 0) {
-    return {
-      ok: false,
-      exitCode: 2,
-      code: "verification_required",
-      message: "--verification is required before Deepclean can prepare or open a PR.",
-    };
+  const verificationBlocker = fixWorkflowVerificationBlocker(options, dryRun, verificationCommands);
+  if (verificationBlocker) {
+    return verificationBlocker;
   }
 
   const planResult = await ensureFixPlan(context.paths, state.runId, resolved.candidate, state.evidence, state.features);
