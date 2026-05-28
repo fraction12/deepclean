@@ -3,7 +3,9 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { z } from "zod";
+import { uniqueFileReferences } from "./file-references.js";
 import { candidateId } from "./ids.js";
+import { collectProcessOutput } from "./process-output.js";
 import { buildCleanupSurfaces, reviewerRubrics } from "./reviewers.js";
 import { commandsForFiles, mergeVerificationCommands, type VerificationProfile } from "./verification.js";
 import {
@@ -482,7 +484,7 @@ function buildAttemptBase(options: {
     evidenceManifest: {
       evidenceCount: options.evidence.length,
       includedEvidenceIds: options.evidence.map((record) => record.id),
-      includedFileRefs: dedupeFileRefs(options.evidence.flatMap((record) => record.files)),
+      includedFileRefs: uniqueFileReferences(options.evidence.flatMap((record) => record.files)),
       omittedEvidenceIds: [],
       includeSource: options.includeSource,
       tokenBudget: options.runtime.tokenBudget,
@@ -592,20 +594,6 @@ function validationId(index: number): string {
   return `validation-${String(index + 1).padStart(3, "0")}`;
 }
 
-function dedupeFileRefs(files: FileReference[]): FileReference[] {
-  const seen = new Set<string>();
-  const result: FileReference[] = [];
-  for (const file of files) {
-    const key = `${file.path}:${file.startLine ?? ""}:${file.endLine ?? ""}`;
-    if (seen.has(key)) {
-      continue;
-    }
-    seen.add(key);
-    result.push(file);
-  }
-  return result;
-}
-
 function lineCount(source: string): number {
   if (source.length === 0) {
     return 0;
@@ -648,28 +636,21 @@ async function runProcess(
       stdio: ["pipe", "pipe", "pipe"],
       env: process.env,
     });
-    let stdout = "";
-    let stderr = "";
+    const output = collectProcessOutput(child);
     const timeout = setTimeout(() => {
       timedOut = true;
       child.kill("SIGTERM");
     }, timeoutMs);
 
-    child.stdout.setEncoding("utf8");
-    child.stderr.setEncoding("utf8");
-    child.stdout.on("data", (chunk: string) => {
-      stdout += chunk;
-    });
-    child.stderr.on("data", (chunk: string) => {
-      stderr += chunk;
-    });
     child.on("error", (error) => {
       clearTimeout(timeout);
+      const { stdout, stderr } = output.current();
       providerUnavailable = typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
       resolve({ exitCode: 1, stdout, stderr: error.message, timedOut, providerUnavailable });
     });
     child.on("close", (exitCode) => {
       clearTimeout(timeout);
+      const { stdout, stderr } = output.current();
       resolve({ exitCode, stdout, stderr, timedOut, providerUnavailable });
     });
     child.stdin.end(stdin);

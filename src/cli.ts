@@ -84,6 +84,7 @@ import {
   type SynthesisAttemptRecord,
 } from "./types.js";
 import { timestampId } from "./ids.js";
+import { collectProcessOutput } from "./process-output.js";
 import { synthesizeWithCodex } from "./synthesis.js";
 import { inferVerificationProfile } from "./verification.js";
 
@@ -2311,6 +2312,7 @@ async function runProcess(
       env: process.env,
       cwd: options.cwd,
     });
+    const output = collectProcessOutput(child);
 
     const clearTimers = () => {
       if (idleTimer) {
@@ -2339,6 +2341,7 @@ async function runProcess(
     const scheduleIdleCheck = () => {
       idleTimer = setTimeout(() => {
         void (async () => {
+          ({ stdout, stderr } = output.current());
           const current = await collectProcessProgressSnapshot(options.progressRoot, stdout, stderr);
           const progressKind = processProgressKind(progressSnapshot, current, sawRepoProgress);
           if (progressKind !== "none") {
@@ -2357,20 +2360,13 @@ async function runProcess(
     hardTimer = setTimeout(() => terminate("hard"), hardTimeoutMs);
     scheduleIdleCheck();
 
-    child.stdout.setEncoding("utf8");
-    child.stderr.setEncoding("utf8");
-    child.stdout.on("data", (chunk: string) => {
-      stdout += chunk;
-    });
-    child.stderr.on("data", (chunk: string) => {
-      stderr += chunk;
-    });
     child.on("error", (error) => {
       if (settled) {
         return;
       }
       settled = true;
       clearTimers();
+      ({ stdout, stderr } = output.current());
       providerUnavailable = typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
       resolve({ exitCode: 1, stdout, stderr: error.message, timedOut, timeoutReason, providerUnavailable });
     });
@@ -2380,6 +2376,7 @@ async function runProcess(
       }
       settled = true;
       clearTimers();
+      ({ stdout, stderr } = output.current());
       resolve({ exitCode, stdout, stderr, timedOut, timeoutReason, providerUnavailable });
     });
     child.stdin.end(stdin);
