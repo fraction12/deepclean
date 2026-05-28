@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
-import path from "node:path";
 import { execFileAsync } from "./shared/exec-file.mjs";
+import { packTarball } from "./shared/release-smoke-utils.mjs";
 
 const root = process.cwd();
 const temp = await mkdtemp(path.join(os.tmpdir(), "deepclean-release-check-"));
@@ -15,14 +15,7 @@ try {
     throw new Error(validate);
   }
 
-  const { stdout: packStdout } = await execFileAsync("npm", ["pack", "--json", "--pack-destination", temp], {
-    cwd: root,
-    maxBuffer: 1024 * 1024,
-  });
-  const pack = JSON.parse(packStdout)[0];
-  const tarball = path.join(temp, pack.filename);
-  const { stdout: tarList } = await execFileAsync("tar", ["-tzf", tarball], { maxBuffer: 1024 * 1024 });
-  const packedFiles = tarList.trim().split("\n");
+  const { packedFiles } = await packTarball(root, temp);
   const forbiddenPatterns = [
     "/.deepclean/",
     "/.codex/",
