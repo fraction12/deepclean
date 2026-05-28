@@ -1754,6 +1754,67 @@ fs.writeFileSync(target, source.replace("export function", "// worker fix applie
     });
   });
 
+  test("fix ignores stale plans from prior runs with reused candidate ids", async () => {
+    await withTempRepo(async (repo) => {
+      const prepared = await prepareFixableRepo(repo);
+      await rm(prepared.patchPath, { force: true });
+      await enableFixExecution(repo);
+
+      const plansDir = path.join(repo, ".deepclean", "plans");
+      for (const file of await readdir(plansDir)) {
+        await rm(path.join(plansDir, file), { force: true });
+      }
+      await writeFile(path.join(plansDir, "stale-plan.json"), `${JSON.stringify({
+        schemaVersion,
+        recordType: "plan",
+        id: "stale-plan",
+        runId: "run-stale",
+        targetType: "candidate",
+        targetId: prepared.candidateId,
+        title: "Stale plan",
+        summary: "Stale plan",
+        steps: [],
+        constraints: [],
+        verification: [],
+        createdAt: "2999-01-01T00:00:00.000Z",
+        content: "STALE PLAN SHOULD NOT BE USED",
+      }, null, 2)}\n`, "utf8");
+
+      await installFakeCodex(repo, `#!/usr/bin/env node
+const fs = require("node:fs");
+const prompt = fs.readFileSync(0, "utf8");
+if (prompt.includes("STALE PLAN SHOULD NOT BE USED")) {
+  process.stderr.write("stale plan reused");
+  process.exit(42);
+}
+const target = "src/invoice.ts";
+const source = fs.readFileSync(target, "utf8");
+fs.writeFileSync(target, source.replace("export function", "// fresh plan worker fix applied\\nexport function"));
+`);
+      const result = await runCli([
+        "fix",
+        prepared.candidateId,
+        "--apply",
+        "--verification",
+        "test -f src/invoice.ts",
+        "--allow-dirty",
+        "--json",
+      ], repo);
+      expect(result.code).toBe(0);
+      const payload = JSON.parse(result.stdout) as {
+        data: { planPath: string; attempt: { planId: string; status: string; changedFiles: string[] } };
+      };
+      expect(payload.data.attempt.status).toBe("passed");
+      expect(payload.data.attempt.planId).not.toBe("stale-plan");
+      expect(path.basename(payload.data.planPath)).not.toBe("stale-plan.json");
+      const plan = JSON.parse(await readFile(payload.data.planPath, "utf8")) as { runId: string; targetId: string; content: string };
+      expect(plan.runId).toBe((await latestRunFile(repo)).replace(/\.json$/, ""));
+      expect(plan.targetId).toBe(prepared.candidateId);
+      expect(plan.content).not.toContain("STALE PLAN SHOULD NOT BE USED");
+      expect(payload.data.attempt.changedFiles).toEqual(["src/invoice.ts"]);
+    });
+  });
+
   test("fix continues after an idle worker timeout when in-scope work landed", async () => {
     await withTempRepo(async (repo) => {
       const prepared = await prepareFixableRepo(repo);

@@ -2213,7 +2213,7 @@ async function ensureFixPlan(
   evidence: EvidenceRecord[],
   features: FeatureRecord[],
 ): Promise<{ plan: { id: string; content: string }; path: string }> {
-  const existing = await latestPlanForTarget(paths, candidate.id);
+  const existing = await latestPlanForTarget(paths, candidate.id, runId);
   if (existing?.content) {
     return { plan: existing, path: existing.path };
   }
@@ -2850,21 +2850,23 @@ function fixReadinessBlocker(candidate: CandidateRecord): { code: string; messag
   return undefined;
 }
 
-async function latestPlanForTarget(paths: StatePaths, candidateId: string): Promise<{
+async function latestPlanForTarget(paths: StatePaths, candidateId: string, runId: string): Promise<{
   id: string;
+  runId: string;
   targetId: string;
   createdAt: string;
   content: string;
   path: string;
 } | undefined> {
   const files = await filesWithExtension(paths.plansDir, "json");
-  const plans: Array<{ id: string; targetId: string; createdAt: string; content: string; path: string }> = [];
+  const plans: Array<{ id: string; runId: string; targetId: string; createdAt: string; content: string; path: string }> = [];
   for (const file of files) {
     try {
-      const parsed = JSON.parse(await readFile(file, "utf8")) as { id?: unknown; targetId?: unknown; createdAt?: unknown; content?: unknown };
-      if (typeof parsed.id === "string" && typeof parsed.targetId === "string") {
+      const parsed = JSON.parse(await readFile(file, "utf8")) as { id?: unknown; runId?: unknown; targetId?: unknown; createdAt?: unknown; content?: unknown };
+      if (typeof parsed.id === "string" && typeof parsed.runId === "string" && typeof parsed.targetId === "string") {
         plans.push({
           id: parsed.id,
+          runId: parsed.runId,
           targetId: parsed.targetId,
           createdAt: typeof parsed.createdAt === "string" ? parsed.createdAt : "",
           content: typeof parsed.content === "string" ? parsed.content : "",
@@ -2876,7 +2878,7 @@ async function latestPlanForTarget(paths: StatePaths, candidateId: string): Prom
     }
   }
   return plans
-    .filter((plan) => plan.targetId === candidateId)
+    .filter((plan) => plan.targetId === candidateId && plan.runId === runId)
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
     .at(-1);
 }
