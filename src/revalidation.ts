@@ -11,7 +11,7 @@ import {
 } from "./types.js";
 import { timestampId } from "./ids.js";
 
-export async function classifyRevalidation(options: {
+type ClassifyRevalidationOptions = {
   root: string;
   finding: FindingRecord | undefined;
   currentCandidates: CandidateRecord[];
@@ -22,7 +22,125 @@ export async function classifyRevalidation(options: {
   changedFiles?: string[];
   dirtyState?: { dirty: boolean; files: string[] } | undefined;
   forceNeedsHuman?: string | undefined;
-}): Promise<RevalidationRecord> {
+};
+
+export async function classifyRevalidation(options: ClassifyRevalidationOptions): Promise<RevalidationRecord> {
+  const preflightOutcome = classifyPreflightRevalidation(options);
+  if (preflightOutcome) {
+    return preflightOutcome;
+  }
+
+  const finding = options.finding!;
+  const matching = options.currentCandidates.find((candidate) => candidate.findingId === finding.id);
+  if (matching) {
+    return revalidationRecord({
+      targetId: finding.id,
+      priorLifecycleState: finding.lifecycleState,
+      runId: options.runId,
+      outcome: "still-open",
+      confidence: matching.confidence,
+      evidenceIds: matching.evidenceIds,
+      evidenceFreshness: "fresh",
+      previousObservationId: finding.currentObservationId,
+      rationale: "The same stable finding was rediscovered in the revalidation scan, so the original issue remains present.",
+      nextAction: "Keep the finding open and inspect the latest evidence before attempting another fix.",
+      diagnostics: [],
+      createdAt: options.createdAt,
+      verificationRunIds: options.verificationRunIds ?? [],
+      changedFiles: options.changedFiles ?? [],
+      dirtyState: options.dirtyState,
+    });
+  }
+
+  const filesExist = await anyFindingFilesExist(options.root, finding);
+  if (!filesExist) {
+    return revalidationRecord({
+      targetId: finding.id,
+      priorLifecycleState: finding.lifecycleState,
+      runId: options.runId,
+      outcome: "stale",
+      confidence: "low",
+      evidenceIds: finding.evidenceIds,
+      evidenceFreshness: "stale",
+      previousObservationId: finding.currentObservationId,
+      rationale: "The original file anchors no longer exist, so Deepclean cannot prove whether the original concern was resolved or merely moved.",
+      nextAction: "Rescan the repository and inspect replacement findings before closing this concern.",
+      diagnostics: [{
+        level: "warning",
+        code: "target_anchors_missing",
+        message: "None of the finding's primary files exist at their recorded paths.",
+      }],
+      createdAt: options.createdAt,
+      verificationRunIds: options.verificationRunIds ?? [],
+      changedFiles: options.changedFiles ?? [],
+      dirtyState: options.dirtyState,
+    });
+  }
+
+  const related = relatedCandidates(finding, options.currentCandidates);
+  const replacement = related.find((candidate) => candidate.impact === "cross-cutting" || candidate.priority < finding.priority);
+  if (replacement?.findingId) {
+    return revalidationRecord({
+      targetId: finding.id,
+      priorLifecycleState: finding.lifecycleState,
+      runId: options.runId,
+      outcome: "superseded",
+      confidence: replacement.confidence,
+      evidenceIds: replacement.evidenceIds,
+      evidenceFreshness: "fresh",
+      previousObservationId: finding.currentObservationId,
+      supersededByFindingId: replacement.findingId,
+      replacementFindingId: replacement.findingId,
+      rationale: `The original concern is now better represented by replacement finding ${replacement.findingId}.`,
+      nextAction: `Continue work from replacement finding ${replacement.findingId}.`,
+      diagnostics: [],
+      createdAt: options.createdAt,
+      verificationRunIds: options.verificationRunIds ?? [],
+      changedFiles: options.changedFiles ?? [],
+      dirtyState: options.dirtyState,
+    });
+  }
+
+  if (related.length > 0) {
+    return revalidationRecord({
+      targetId: finding.id,
+      priorLifecycleState: finding.lifecycleState,
+      runId: options.runId,
+      outcome: "partially-resolved",
+      confidence: strongestConfidence(related.map((candidate) => candidate.confidence)),
+      evidenceIds: unique(related.flatMap((candidate) => candidate.evidenceIds)),
+      evidenceFreshness: "fresh",
+      previousObservationId: finding.currentObservationId,
+      rationale: "The exact finding was not rediscovered, but related evidence remains on the same files and category.",
+      nextAction: "Treat the original fix as partial and plan from the remaining related evidence.",
+      diagnostics: [],
+      createdAt: options.createdAt,
+      verificationRunIds: options.verificationRunIds ?? [],
+      changedFiles: options.changedFiles ?? [],
+      dirtyState: options.dirtyState,
+    });
+  }
+
+  return revalidationRecord({
+    targetId: finding.id,
+    priorLifecycleState: finding.lifecycleState,
+    runId: options.runId,
+    outcome: "resolved",
+    confidence: finding.confidence === "low" ? "medium" : finding.confidence,
+    evidenceIds: finding.evidenceIds,
+    evidenceFreshness: "reused",
+    previousObservationId: finding.currentObservationId,
+    rationale: "The original file anchors still exist, but neither the original finding nor related replacement evidence was rediscovered.",
+    nextAction: "Keep the proof record with the fix or handoff; passed verification alone was not used as resolution.",
+    diagnostics: [],
+    createdAt: options.createdAt,
+    verificationRunIds: options.verificationRunIds ?? [],
+    changedFiles: options.changedFiles ?? [],
+    dirtyState: options.dirtyState,
+  });
+}
+
+function classifyPreflightRevalidation(options: ClassifyRevalidationOptions): RevalidationRecord | undefined {
   if (!options.finding) {
     return revalidationRecord({
       runId: options.runId,
@@ -67,113 +185,7 @@ export async function classifyRevalidation(options: {
     });
   }
 
-  const matching = options.currentCandidates.find((candidate) => candidate.findingId === options.finding?.id);
-  if (matching) {
-    return revalidationRecord({
-      targetId: options.finding.id,
-      priorLifecycleState: options.finding.lifecycleState,
-      runId: options.runId,
-      outcome: "still-open",
-      confidence: matching.confidence,
-      evidenceIds: matching.evidenceIds,
-      evidenceFreshness: "fresh",
-      previousObservationId: options.finding.currentObservationId,
-      rationale: "The same stable finding was rediscovered in the revalidation scan, so the original issue remains present.",
-      nextAction: "Keep the finding open and inspect the latest evidence before attempting another fix.",
-      diagnostics: [],
-      createdAt: options.createdAt,
-      verificationRunIds: options.verificationRunIds ?? [],
-      changedFiles: options.changedFiles ?? [],
-      dirtyState: options.dirtyState,
-    });
-  }
-
-  const filesExist = await anyFindingFilesExist(options.root, options.finding);
-  if (!filesExist) {
-    return revalidationRecord({
-      targetId: options.finding.id,
-      priorLifecycleState: options.finding.lifecycleState,
-      runId: options.runId,
-      outcome: "stale",
-      confidence: "low",
-      evidenceIds: options.finding.evidenceIds,
-      evidenceFreshness: "stale",
-      previousObservationId: options.finding.currentObservationId,
-      rationale: "The original file anchors no longer exist, so Deepclean cannot prove whether the original concern was resolved or merely moved.",
-      nextAction: "Rescan the repository and inspect replacement findings before closing this concern.",
-      diagnostics: [{
-        level: "warning",
-        code: "target_anchors_missing",
-        message: "None of the finding's primary files exist at their recorded paths.",
-      }],
-      createdAt: options.createdAt,
-      verificationRunIds: options.verificationRunIds ?? [],
-      changedFiles: options.changedFiles ?? [],
-      dirtyState: options.dirtyState,
-    });
-  }
-
-  const related = relatedCandidates(options.finding, options.currentCandidates);
-  const replacement = related.find((candidate) => candidate.impact === "cross-cutting" || candidate.priority < options.finding!.priority);
-  if (replacement?.findingId) {
-    return revalidationRecord({
-      targetId: options.finding.id,
-      priorLifecycleState: options.finding.lifecycleState,
-      runId: options.runId,
-      outcome: "superseded",
-      confidence: replacement.confidence,
-      evidenceIds: replacement.evidenceIds,
-      evidenceFreshness: "fresh",
-      previousObservationId: options.finding.currentObservationId,
-      supersededByFindingId: replacement.findingId,
-      replacementFindingId: replacement.findingId,
-      rationale: `The original concern is now better represented by replacement finding ${replacement.findingId}.`,
-      nextAction: `Continue work from replacement finding ${replacement.findingId}.`,
-      diagnostics: [],
-      createdAt: options.createdAt,
-      verificationRunIds: options.verificationRunIds ?? [],
-      changedFiles: options.changedFiles ?? [],
-      dirtyState: options.dirtyState,
-    });
-  }
-
-  if (related.length > 0) {
-    return revalidationRecord({
-      targetId: options.finding.id,
-      priorLifecycleState: options.finding.lifecycleState,
-      runId: options.runId,
-      outcome: "partially-resolved",
-      confidence: strongestConfidence(related.map((candidate) => candidate.confidence)),
-      evidenceIds: unique(related.flatMap((candidate) => candidate.evidenceIds)),
-      evidenceFreshness: "fresh",
-      previousObservationId: options.finding.currentObservationId,
-      rationale: "The exact finding was not rediscovered, but related evidence remains on the same files and category.",
-      nextAction: "Treat the original fix as partial and plan from the remaining related evidence.",
-      diagnostics: [],
-      createdAt: options.createdAt,
-      verificationRunIds: options.verificationRunIds ?? [],
-      changedFiles: options.changedFiles ?? [],
-      dirtyState: options.dirtyState,
-    });
-  }
-
-  return revalidationRecord({
-    targetId: options.finding.id,
-    priorLifecycleState: options.finding.lifecycleState,
-    runId: options.runId,
-    outcome: "resolved",
-    confidence: options.finding.confidence === "low" ? "medium" : options.finding.confidence,
-    evidenceIds: options.finding.evidenceIds,
-    evidenceFreshness: "reused",
-    previousObservationId: options.finding.currentObservationId,
-    rationale: "The original file anchors still exist, but neither the original finding nor related replacement evidence was rediscovered.",
-    nextAction: "Keep the proof record with the fix or handoff; passed verification alone was not used as resolution.",
-    diagnostics: [],
-    createdAt: options.createdAt,
-    verificationRunIds: options.verificationRunIds ?? [],
-    changedFiles: options.changedFiles ?? [],
-    dirtyState: options.dirtyState,
-  });
+  return undefined;
 }
 
 function revalidationRecord(input: {
