@@ -611,71 +611,27 @@ async function statusCommand(context: CommandContext): Promise<number> {
     features,
     records,
   } = await readStatusInputs(context.paths);
-  const git = await gitDoctor(context.paths.root);
-  if (!git.available) {
-    diagnostics.push({
-      level: "warning",
-      code: "git_unavailable",
-      message: git.error ?? "Git is unavailable for this repository.",
-    });
-  }
-  const artifactCounts = await stateArtifactCounts(context.paths);
-  const locks = initialized ? await readLockStatuses(context.paths, {
-    staleAfterMs: numberFlag(context, "stale-lock-ms"),
-  }) : [];
-  const progressEventLimit = numberFlag(context, "progress-events");
-  const progress = initialized
-    ? await buildProgressSummary(context.paths, progressEventLimit === undefined ? {} : { eventLimit: progressEventLimit })
-    : undefined;
-  const statusCounts = countBy(candidates, (candidate) => candidate.status);
-  const lifecycleCounts = countBy(candidates, (candidate) => candidate.lifecycleState ?? "unknown");
-  const latestRun = records.runs.find((run) => run.id === latest) ?? records.runs.at(-1);
-  const latestReport = latest
-    ? records.reports.filter((report) => report.runId === latest).at(-1) ?? records.reports.at(-1)
-    : records.reports.at(-1);
-  const candidateById = new Map(candidates.map((candidate) => [candidate.id, candidate]));
-  const candidateByFindingId = new Map(candidates.flatMap((candidate) => (
-    candidate.findingId ? [[candidate.findingId, candidate] as const] : []
-  )));
-  const latestRevalidationByFinding = latestRevalidationsByFinding(records.revalidations);
-  const staleArtifacts = buildStaleArtifacts({
-    paths: context.paths,
-    latestRunId: latest,
-    latestReport,
-    candidates,
-    candidateById,
-    candidateByFindingId,
-    latestRevalidationByFinding,
-    reports: records.reports,
-    plans: records.plans,
-    handoffs: records.handoffs,
-    fixAttempts: records.fixAttempts,
-  });
-  const blockers = buildBlockedItems({
-    candidates,
-    fixAttempts: records.fixAttempts,
-  });
-  const activeItems = buildActiveStatusItems(candidates, new Set(blockers.map((item) => item.id))).slice(0, 10);
-  const recentProgress = buildRecentProgressEvents(context.paths, records, candidates, progressEventLimit ?? 20);
-  const latestArtifacts = buildLatestArtifactIndex(context.paths, {
+  const {
+    git,
+    artifactCounts,
+    locks,
+    progress,
+    statusCounts,
+    lifecycleCounts,
     latestRun,
     latestReport,
-    candidates,
-    plans: records.plans,
-    handoffs: records.handoffs,
-    revalidations: records.revalidations,
-    fixAttempts: records.fixAttempts,
-    lifecycleEvents: records.lifecycleEvents,
-  });
-  const nextAction = chooseStatusNextAction({
-    initialized,
-    latestRunId: latest,
-    locks,
     staleArtifacts,
-    activeItems,
     blockers,
-    pendingRevalidation: candidates.filter((candidate) => candidate.lifecycleState === "stale" || candidate.status === "stale").length,
-    latestReport,
+    activeItems,
+    recentProgress,
+    latestArtifacts,
+    nextAction,
+  } = await buildStatusDerivedState(context, {
+    diagnostics,
+    initialized,
+    latest,
+    candidates,
+    records,
   });
   if (!initialized) {
     diagnostics.push({
@@ -833,6 +789,23 @@ interface StatusInputs {
 
 type StatusIntegrity = StateIntegritySummary | { valid: boolean; diagnostics: Diagnostic[] };
 
+interface StatusDerivedState {
+  git: Awaited<ReturnType<typeof gitDoctor>>;
+  artifactCounts: Awaited<ReturnType<typeof stateArtifactCounts>>;
+  locks: Awaited<ReturnType<typeof readLockStatuses>>;
+  progress: Awaited<ReturnType<typeof buildProgressSummary>> | undefined;
+  statusCounts: Record<string, number>;
+  lifecycleCounts: Record<string, number>;
+  latestRun: RunRecord | undefined;
+  latestReport: ReportRecord | undefined;
+  staleArtifacts: StatusStaleArtifact[];
+  blockers: StatusBlockedItem[];
+  activeItems: StatusCandidateItem[];
+  recentProgress: StatusProgressEvent[];
+  latestArtifacts: ReturnType<typeof buildLatestArtifactIndex>;
+  nextAction: ReturnType<typeof chooseStatusNextAction>;
+}
+
 interface StatusCandidateItem {
   id: string;
   findingId?: string;
@@ -927,6 +900,96 @@ async function readStatusInputs(paths: StatePaths): Promise<StatusInputs> {
     evidence,
     features,
     records,
+  };
+}
+
+async function buildStatusDerivedState(
+  context: CommandContext,
+  inputs: Pick<StatusInputs, "diagnostics" | "initialized" | "latest" | "candidates" | "records">,
+): Promise<StatusDerivedState> {
+  const { diagnostics, initialized, latest, candidates, records } = inputs;
+  const git = await gitDoctor(context.paths.root);
+  if (!git.available) {
+    diagnostics.push({
+      level: "warning",
+      code: "git_unavailable",
+      message: git.error ?? "Git is unavailable for this repository.",
+    });
+  }
+  const artifactCounts = await stateArtifactCounts(context.paths);
+  const locks = initialized ? await readLockStatuses(context.paths, {
+    staleAfterMs: numberFlag(context, "stale-lock-ms"),
+  }) : [];
+  const progressEventLimit = numberFlag(context, "progress-events");
+  const progress = initialized
+    ? await buildProgressSummary(context.paths, progressEventLimit === undefined ? {} : { eventLimit: progressEventLimit })
+    : undefined;
+  const statusCounts = countBy(candidates, (candidate) => candidate.status);
+  const lifecycleCounts = countBy(candidates, (candidate) => candidate.lifecycleState ?? "unknown");
+  const latestRun = records.runs.find((run) => run.id === latest) ?? records.runs.at(-1);
+  const latestReport = latest
+    ? records.reports.filter((report) => report.runId === latest).at(-1) ?? records.reports.at(-1)
+    : records.reports.at(-1);
+  const candidateById = new Map(candidates.map((candidate) => [candidate.id, candidate]));
+  const candidateByFindingId = new Map(candidates.flatMap((candidate) => (
+    candidate.findingId ? [[candidate.findingId, candidate] as const] : []
+  )));
+  const latestRevalidationByFinding = latestRevalidationsByFinding(records.revalidations);
+  const staleArtifacts = buildStaleArtifacts({
+    paths: context.paths,
+    latestRunId: latest,
+    latestReport,
+    candidates,
+    candidateById,
+    candidateByFindingId,
+    latestRevalidationByFinding,
+    reports: records.reports,
+    plans: records.plans,
+    handoffs: records.handoffs,
+    fixAttempts: records.fixAttempts,
+  });
+  const blockers = buildBlockedItems({
+    candidates,
+    fixAttempts: records.fixAttempts,
+  });
+  const activeItems = buildActiveStatusItems(candidates, new Set(blockers.map((item) => item.id))).slice(0, 10);
+  const recentProgress = buildRecentProgressEvents(context.paths, records, candidates, progressEventLimit ?? 20);
+  const latestArtifacts = buildLatestArtifactIndex(context.paths, {
+    latestRun,
+    latestReport,
+    candidates,
+    plans: records.plans,
+    handoffs: records.handoffs,
+    revalidations: records.revalidations,
+    fixAttempts: records.fixAttempts,
+    lifecycleEvents: records.lifecycleEvents,
+  });
+  const nextAction = chooseStatusNextAction({
+    initialized,
+    latestRunId: latest,
+    locks,
+    staleArtifacts,
+    activeItems,
+    blockers,
+    pendingRevalidation: candidates.filter((candidate) => candidate.lifecycleState === "stale" || candidate.status === "stale").length,
+    latestReport,
+  });
+
+  return {
+    git,
+    artifactCounts,
+    locks,
+    progress,
+    statusCounts,
+    lifecycleCounts,
+    latestRun,
+    latestReport,
+    staleArtifacts,
+    blockers,
+    activeItems,
+    recentProgress,
+    latestArtifacts,
+    nextAction,
   };
 }
 
