@@ -183,6 +183,14 @@ interface ScanPreparation {
   localCandidates: CandidateRecord[];
 }
 
+interface RevalidationPreparation {
+  target: string;
+  resolvedTarget: Awaited<ReturnType<typeof resolveRevalidationTargets>>;
+  scan: ScanExecutionResult;
+  afterFindings: FindingRecord[];
+  records: RevalidationRecord[];
+}
+
 interface ScanScope {
   incremental: boolean;
   since?: string;
@@ -2378,49 +2386,11 @@ async function historyCommand(context: CommandContext): Promise<number> {
 }
 
 async function revalidateCommand(context: CommandContext): Promise<number> {
-  const target = requireCandidateId(context);
-  await ensureLifecycleStateMigration(context.paths);
-  const beforeFindings = await readFindings(context.paths);
-  const resolvedTarget = await resolveRevalidationTargets(context.paths, target, beforeFindings);
-  if (resolvedTarget.findings.length === 0 && target !== "all" && !resolvedTarget.forceNeedsHuman) {
-    emit(context.json, fail("revalidate", "finding_not_found", `Finding or theme not found: ${target}`));
+  const preparation = await prepareRevalidation(context);
+  if (!preparation) {
     return 1;
   }
-
-  const dirtyBefore = await dirtyFileEntries(context.paths.root);
-  const revalidationContext = scopedRevalidationContext(context, resolvedTarget.findings);
-  const scan = await executeScan(revalidationContext, { synthesize: false });
-  const now = new Date().toISOString();
-  const [fixAttempts, afterFindings] = await Promise.all([
-    readFixAttempts(context.paths),
-    readFindings(context.paths),
-  ]);
-  const records: RevalidationRecord[] = [];
-  for (const finding of resolvedTarget.findings) {
-    records.push(await classifyRevalidation({
-      root: context.paths.root,
-      finding,
-      currentCandidates: scan.data.candidates,
-      runId: scan.runId,
-      createdAt: now,
-      currentEvidence: scan.data.candidates.length > 0 ? await readEvidence(context.paths, scan.runId).catch(() => []) : [],
-      verificationRunIds: verificationRunIdsForFinding(finding.id, fixAttempts),
-      changedFiles: scan.data.scope.changedPaths,
-      dirtyState: { dirty: dirtyBefore.length > 0, files: dirtyBefore.map((entry) => entry.file) },
-      forceNeedsHuman: resolvedTarget.forceNeedsHuman,
-    }));
-  }
-  if (target === "all" && resolvedTarget.findings.length === 0) {
-    records.push(await classifyRevalidation({
-      root: context.paths.root,
-      finding: undefined,
-      currentCandidates: scan.data.candidates,
-      runId: scan.runId,
-      createdAt: now,
-      changedFiles: scan.data.scope.changedPaths,
-      dirtyState: { dirty: dirtyBefore.length > 0, files: dirtyBefore.map((entry) => entry.file) },
-    }));
-  }
+  const { target, resolvedTarget, scan, afterFindings, records } = preparation;
 
   for (const record of records) {
     await writeRevalidation(context.paths, record);
@@ -2496,6 +2466,54 @@ async function revalidateCommand(context: CommandContext): Promise<number> {
     }
   }
   return 0;
+}
+
+async function prepareRevalidation(context: CommandContext): Promise<RevalidationPreparation | undefined> {
+  const target = requireCandidateId(context);
+  await ensureLifecycleStateMigration(context.paths);
+  const beforeFindings = await readFindings(context.paths);
+  const resolvedTarget = await resolveRevalidationTargets(context.paths, target, beforeFindings);
+  if (resolvedTarget.findings.length === 0 && target !== "all" && !resolvedTarget.forceNeedsHuman) {
+    emit(context.json, fail("revalidate", "finding_not_found", `Finding or theme not found: ${target}`));
+    return undefined;
+  }
+
+  const dirtyBefore = await dirtyFileEntries(context.paths.root);
+  const revalidationContext = scopedRevalidationContext(context, resolvedTarget.findings);
+  const scan = await executeScan(revalidationContext, { synthesize: false });
+  const now = new Date().toISOString();
+  const [fixAttempts, afterFindings] = await Promise.all([
+    readFixAttempts(context.paths),
+    readFindings(context.paths),
+  ]);
+  const records: RevalidationRecord[] = [];
+  for (const finding of resolvedTarget.findings) {
+    records.push(await classifyRevalidation({
+      root: context.paths.root,
+      finding,
+      currentCandidates: scan.data.candidates,
+      runId: scan.runId,
+      createdAt: now,
+      currentEvidence: scan.data.candidates.length > 0 ? await readEvidence(context.paths, scan.runId).catch(() => []) : [],
+      verificationRunIds: verificationRunIdsForFinding(finding.id, fixAttempts),
+      changedFiles: scan.data.scope.changedPaths,
+      dirtyState: { dirty: dirtyBefore.length > 0, files: dirtyBefore.map((entry) => entry.file) },
+      forceNeedsHuman: resolvedTarget.forceNeedsHuman,
+    }));
+  }
+  if (target === "all" && resolvedTarget.findings.length === 0) {
+    records.push(await classifyRevalidation({
+      root: context.paths.root,
+      finding: undefined,
+      currentCandidates: scan.data.candidates,
+      runId: scan.runId,
+      createdAt: now,
+      changedFiles: scan.data.scope.changedPaths,
+      dirtyState: { dirty: dirtyBefore.length > 0, files: dirtyBefore.map((entry) => entry.file) },
+    }));
+  }
+
+  return { target, resolvedTarget, scan, afterFindings, records };
 }
 
 async function clusterCommand(context: CommandContext): Promise<number> {
