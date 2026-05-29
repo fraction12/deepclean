@@ -52,11 +52,21 @@ export const lifecycleEventKinds = [
   "verification-failed",
 ] as const;
 export const lifecycleStates = [
-  "open",
+  "new",
+  "ready",
+  "design-needed",
+  "split",
+  "attempted",
+  "resolved",
+  "partially-resolved",
+  "still-open",
+  "needs-human",
   "suppressed",
   "stale",
-  "fixed",
   "superseded",
+  // Legacy states kept for compatibility with older persisted state.
+  "open",
+  "fixed",
   "inconclusive",
 ] as const;
 export const revalidationOutcomes = [
@@ -388,6 +398,10 @@ export const findingRecordSchema = z.object({
   files: z.array(fileReferenceSchema),
   evidenceIds: z.array(z.string()),
   decomposition: candidateDecompositionSchema.optional(),
+  parentFindingId: z.string().optional(),
+  childFindingIds: z.array(z.string()).default([]),
+  supersededByFindingId: z.string().optional(),
+  supersedesFindingIds: z.array(z.string()).default([]),
   observationIds: z.array(z.string()),
   currentObservationId: z.string().optional(),
   createdAt: z.string(),
@@ -403,14 +417,35 @@ export const candidateObservationRecordSchema = z.object({
   findingId: z.string(),
   candidateId: z.string(),
   runId: z.string(),
+  displayId: z.string().optional(),
   signature: findingSignatureSchema,
   identityConfidence: z.enum(identityConfidenceLevels),
   baselineStatus: z.enum(baselineStatuses).optional(),
+  files: z.array(fileReferenceSchema).default([]),
+  evidenceIds: z.array(z.string()).default([]),
+  rank: z.number().int().positive().optional(),
   evidenceFreshness: z.enum(evidenceFreshnessStates),
   observedAt: z.string(),
 });
 
 export type CandidateObservationRecord = z.infer<typeof candidateObservationRecordSchema>;
+
+export const identityMatchRecordSchema = z.object({
+  schemaVersion: z.literal(schemaVersion),
+  recordType: z.literal("identity_match"),
+  id: z.string(),
+  runId: z.string(),
+  candidateId: z.string(),
+  signature: findingSignatureSchema,
+  matchedFindingId: z.string().optional(),
+  confidence: z.enum(identityConfidenceLevels),
+  reason: z.string(),
+  unsafeMergeRefused: z.boolean().default(false),
+  possiblePredecessorFindingIds: z.array(z.string()).default([]),
+  createdAt: z.string(),
+});
+
+export type IdentityMatchRecord = z.infer<typeof identityMatchRecordSchema>;
 
 export const lifecycleEventRecordSchema = z.object({
   schemaVersion: z.literal(schemaVersion),
