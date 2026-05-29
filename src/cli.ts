@@ -19,7 +19,7 @@ import {
   mapSemanticFeatures,
 } from "./features.js";
 import { attachStableIdentity } from "./identity.js";
-import { fail, ok } from "./json.js";
+import { asRecord, fail, ok } from "./json.js";
 import {
   LockContentionError,
   lockRecoveryCommand,
@@ -1461,13 +1461,6 @@ function chooseStatusNextAction(options: {
 
 function reportJsonPath(paths: StatePaths, report: ReportRecord): string {
   return path.join(paths.reportsDir, `${report.id}.json`);
-}
-
-function asRecord(value: unknown): Record<string, unknown> {
-  if (typeof value === "object" && value !== null && !Array.isArray(value)) {
-    return value as Record<string, unknown>;
-  }
-  return {};
 }
 
 function errorMessage(error: unknown): string {
