@@ -1,6 +1,9 @@
 import path from "node:path";
 import ts from "typescript";
 import { normalizePath, type SourceFile } from "./discovery.js";
+import type { DeepcleanConfig } from "./types.js";
+
+export type ArchitecturePolicy = DeepcleanConfig["architecture"];
 
 export interface ArchitectureGraphNode {
   imports: Set<string>;
@@ -23,6 +26,7 @@ export interface ArchitectureGraphNodeSummary {
   topLevel: string;
   incoming: number;
   outgoing: number;
+  layer?: string;
 }
 
 export interface ArchitectureDirectorySummary {
@@ -31,6 +35,25 @@ export interface ArchitectureDirectorySummary {
   internalEdges: number;
   incomingEdges: number;
   outgoingEdges: number;
+}
+
+export interface ArchitecturePolicyViolation {
+  from: string;
+  to: string;
+  fromLayer: string;
+  toLayer: string;
+  allowedLayers: string[];
+}
+
+export interface ArchitectureLayerSummary {
+  name: string;
+  fileCount: number;
+  incomingEdges: number;
+  outgoingEdges: number;
+}
+
+export interface ArchitectureCycle {
+  files: string[];
 }
 
 export function buildLocalImportGraph(files: SourceFile[]): ArchitectureGraph {
@@ -64,14 +87,123 @@ export function buildLocalImportGraph(files: SourceFile[]): ArchitectureGraph {
   return { nodes, edges };
 }
 
-export function summarizeGraphNodes(graph: ArchitectureGraph): ArchitectureGraphNodeSummary[] {
+export function summarizeGraphNodes(
+  graph: ArchitectureGraph,
+  policy?: ArchitecturePolicy,
+): ArchitectureGraphNodeSummary[] {
   return [...graph.nodes.entries()].map(([filePath, node]) => ({
     path: filePath,
     directory: moduleDirectory(filePath),
     topLevel: filePath.split("/")[0] ?? ".",
     incoming: node.importedBy.size,
     outgoing: node.imports.size,
+    ...(policy ? optionalLayer(filePath, policy) : {}),
   }));
+}
+
+export function summarizeLayers(graph: ArchitectureGraph, policy: ArchitecturePolicy): ArchitectureLayerSummary[] {
+  const summaries = new Map<string, ArchitectureLayerSummary>();
+  for (const layer of policy.layers) {
+    summaries.set(layer.name, {
+      name: layer.name,
+      fileCount: 0,
+      incomingEdges: 0,
+      outgoingEdges: 0,
+    });
+  }
+  for (const filePath of graph.nodes.keys()) {
+    const layer = layerForPath(filePath, policy);
+    if (layer) {
+      const summary = summaries.get(layer);
+      if (summary) {
+        summary.fileCount += 1;
+      }
+    }
+  }
+  for (const edge of graph.edges) {
+    const fromLayer = layerForPath(edge.from, policy);
+    const toLayer = layerForPath(edge.to, policy);
+    if (!fromLayer || !toLayer || fromLayer === toLayer) {
+      continue;
+    }
+    const fromSummary = summaries.get(fromLayer);
+    const toSummary = summaries.get(toLayer);
+    if (fromSummary) {
+      fromSummary.outgoingEdges += 1;
+    }
+    if (toSummary) {
+      toSummary.incomingEdges += 1;
+    }
+  }
+  return [...summaries.values()].filter((summary) => summary.fileCount > 0 || summary.incomingEdges > 0 || summary.outgoingEdges > 0);
+}
+
+export function detectArchitecturePolicyViolations(
+  graph: ArchitectureGraph,
+  policy: ArchitecturePolicy,
+): ArchitecturePolicyViolation[] {
+  if (policy.layers.length === 0 || policy.rules.length === 0) {
+    return [];
+  }
+  const rules = new Map(policy.rules.map((rule) => [rule.from, rule.allow]));
+  const violations: ArchitecturePolicyViolation[] = [];
+  for (const edge of graph.edges) {
+    const fromLayer = layerForPath(edge.from, policy);
+    const toLayer = layerForPath(edge.to, policy);
+    if (!fromLayer || !toLayer) {
+      continue;
+    }
+    const allowedLayers = rules.get(fromLayer);
+    if (!allowedLayers || allowedLayers.includes("*") || allowedLayers.includes(toLayer)) {
+      continue;
+    }
+    violations.push({
+      from: edge.from,
+      to: edge.to,
+      fromLayer,
+      toLayer,
+      allowedLayers,
+    });
+    if (violations.length >= policy.maxPolicyViolations) {
+      break;
+    }
+  }
+  return violations.sort((a, b) => `${a.from}:${a.to}`.localeCompare(`${b.from}:${b.to}`));
+}
+
+export function detectDependencyCycles(graph: ArchitectureGraph, maxCycles: number): ArchitectureCycle[] {
+  if (maxCycles <= 0) {
+    return [];
+  }
+  const adjacency = new Map<string, string[]>();
+  for (const filePath of graph.nodes.keys()) {
+    adjacency.set(filePath, []);
+  }
+  for (const edge of graph.edges) {
+    adjacency.get(edge.from)?.push(edge.to);
+  }
+  for (const targets of adjacency.values()) {
+    targets.sort();
+  }
+
+  const cycles: ArchitectureCycle[] = [];
+  const seen = new Set<string>();
+  for (const start of [...graph.nodes.keys()].sort()) {
+    dfsCycle(start, start, adjacency, [], new Set(), seen, cycles, maxCycles);
+    if (cycles.length >= maxCycles) {
+      break;
+    }
+  }
+  return cycles.sort((a, b) => a.files.join(">").localeCompare(b.files.join(">")));
+}
+
+export function layerForPath(filePath: string, policy: ArchitecturePolicy): string | undefined {
+  for (const layer of policy.layers) {
+    if (layer.pathPatterns.some((pattern) => pathMatchesPattern(filePath, pattern))) {
+      return layer.name;
+    }
+  }
+  return undefined;
 }
 
 export function summarizeDirectories(
@@ -141,6 +273,79 @@ export function symmetricGraphEdgeKeys(edges: ArchitectureGraphEdge[]): Set<stri
     keys.add(graphEdgeKey({ from: edge.to, to: edge.from }));
   }
   return keys;
+}
+
+function optionalLayer(filePath: string, policy: ArchitecturePolicy): { layer: string } | Record<string, never> {
+  const layer = layerForPath(filePath, policy);
+  return layer ? { layer } : {};
+}
+
+function dfsCycle(
+  start: string,
+  current: string,
+  adjacency: Map<string, string[]>,
+  stack: string[],
+  visiting: Set<string>,
+  seen: Set<string>,
+  cycles: ArchitectureCycle[],
+  maxCycles: number,
+): void {
+  if (cycles.length >= maxCycles) {
+    return;
+  }
+  const pathStack = [...stack, current];
+  visiting.add(current);
+  for (const next of adjacency.get(current) ?? []) {
+    if (next === start && pathStack.length > 1) {
+      const cycle = [...pathStack, start];
+      const key = canonicalCycleKey(cycle);
+      if (!seen.has(key)) {
+        seen.add(key);
+        cycles.push({ files: cycle });
+      }
+      if (cycles.length >= maxCycles) {
+        break;
+      }
+      continue;
+    }
+    if (visiting.has(next) || next < start) {
+      continue;
+    }
+    dfsCycle(start, next, adjacency, pathStack, new Set(visiting), seen, cycles, maxCycles);
+  }
+}
+
+function canonicalCycleKey(cycle: string[]): string {
+  const nodes = cycle.slice(0, -1);
+  const rotations = nodes.map((_, index) => [...nodes.slice(index), ...nodes.slice(0, index)].join(">"));
+  const reversed = [...nodes].reverse();
+  rotations.push(...reversed.map((_, index) => [...reversed.slice(index), ...reversed.slice(0, index)].join(">")));
+  return rotations.sort()[0] ?? nodes.join(">");
+}
+
+function pathMatchesPattern(filePath: string, pattern: string): boolean {
+  return globToRegex(normalizePath(pattern)).test(filePath);
+}
+
+function globToRegex(pattern: string): RegExp {
+  let source = "";
+  for (let index = 0; index < pattern.length; index += 1) {
+    const char = pattern[index];
+    const next = pattern[index + 1];
+    if (char === "*" && next === "*") {
+      source += ".*";
+      index += 1;
+    } else if (char === "*") {
+      source += "[^/]*";
+    } else {
+      source += escapeRegex(char ?? "");
+    }
+  }
+  return new RegExp(`^${source}$`);
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
 }
 
 export function collectImports(file: SourceFile): string[] {

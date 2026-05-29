@@ -643,6 +643,12 @@ function mergeConfig(defaults: DeepcleanConfig, value: Partial<DeepcleanConfig>)
       ...defaults.clusters,
       ...value.clusters,
     },
+    architecture: {
+      ...defaults.architecture,
+      ...value.architecture,
+      layers: value.architecture?.layers ?? defaults.architecture.layers,
+      rules: value.architecture?.rules ?? defaults.architecture.rules,
+    },
     reviewers: {
       ...defaults.reviewers,
       ...value.reviewers,

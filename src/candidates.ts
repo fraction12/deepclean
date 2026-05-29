@@ -124,6 +124,10 @@ function localCandidateKindLimit(kind: string, caps?: CandidateCaps): number | u
       return 16;
     case "dependency-hotspot":
       return 24;
+    case "dependency-cycle":
+      return 12;
+    case "architecture-boundary-violation":
+      return 24;
     case "large-function":
       return 24;
     case "large-file":
@@ -148,6 +152,8 @@ function localCandidateAreaLimit(kind: string, caps?: CandidateCaps): number | u
     case "duplicate-cluster":
       return 4;
     case "dependency-hotspot":
+    case "dependency-cycle":
+    case "architecture-boundary-violation":
     case "large-function":
     case "large-file":
     case "test-gap":
@@ -255,6 +261,38 @@ function candidateForEvidence(
         whyItMatters: "Files with high fan-in or fan-out become expensive to change because unrelated features may depend on their shape.",
         likelyRootCause: "Responsibilities may be concentrated in a broad helper, orchestration module, or feature file that needs clearer boundaries.",
         suggestedDirection: "Review callers and imports, then separate stable domain logic from feature-specific coordination if the coupling is accidental.",
+        verification,
+      };
+    case "dependency-cycle":
+      return {
+        ...base,
+        title: evidence.title,
+        category: "architecture",
+        priority: evidence.confidence === "high" ? "P1" : "P2",
+        confidence: evidence.confidence,
+        impact: evidence.files.length >= 3 ? "cross-cutting" : "feature",
+        effort: "medium",
+        risk: "design-needed",
+        readiness: "split-needed",
+        whyItMatters: "Dependency cycles make local changes harder to reason about because modules cannot be understood or extracted independently.",
+        likelyRootCause: "Two or more modules likely share responsibilities or depend on each other's implementation details instead of a stable lower-level contract.",
+        suggestedDirection: "Pick the smallest edge in the cycle, introduce a stable owner or interface, and remove one import while preserving behavior.",
+        verification,
+      };
+    case "architecture-boundary-violation":
+      return {
+        ...base,
+        title: evidence.title,
+        category: "architecture",
+        priority: "P1",
+        confidence: evidence.confidence,
+        impact: "feature",
+        effort: "medium",
+        risk: "moderate",
+        readiness: "fix-ready",
+        whyItMatters: "Configured layer boundaries encode architecture intent; violations let higher-level or unrelated code depend on implementation details.",
+        likelyRootCause: "A module imported across a disallowed layer instead of depending on an allowed public contract or moving ownership to the right layer.",
+        suggestedDirection: "Replace the violating import with an allowed dependency direction, move the shared contract, or update policy only if the rule is wrong.",
         verification,
       };
     case "large-file":
@@ -376,6 +414,10 @@ function evidenceKindScore(kind: string): number {
       return 80;
     case "dependency-hotspot":
       return 75;
+    case "architecture-boundary-violation":
+      return 74;
+    case "dependency-cycle":
+      return 73;
     case "large-function":
       return 70;
     case "large-file":

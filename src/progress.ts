@@ -1,11 +1,12 @@
 import {
   readFixAttempts,
   readLifecycleEvents,
+  readRevalidations,
   readRuns,
   type StatePaths,
 } from "./state.js";
 import { asRecord } from "./json.js";
-import type { FixAttemptRecord, LifecycleEventRecord, RunRecord } from "./types.js";
+import type { FixAttemptRecord, LifecycleEventRecord, RevalidationRecord, RunRecord } from "./types.js";
 
 export type ProgressNet = "positive" | "weak" | "neutral";
 
@@ -44,6 +45,16 @@ export interface ProgressBlockerSummary {
   latestOutcome?: string;
 }
 
+export interface ProgressFitnessDelta {
+  metric: string;
+  unit: string;
+  before: number;
+  after: number;
+  delta: number;
+  revalidationId: string;
+  targetId?: string;
+}
+
 export interface ProgressSummary {
   eventLimit: number;
   eventCount: number;
@@ -65,6 +76,7 @@ export interface ProgressSummary {
     inconclusive: number;
   };
   blockers: ProgressBlockerSummary[];
+  fitnessDeltas: ProgressFitnessDelta[];
   notes: string[];
 }
 
@@ -73,30 +85,34 @@ export async function buildProgressSummary(
   options: { eventLimit?: number } = {},
 ): Promise<ProgressSummary> {
   const eventLimit = Math.max(1, Math.floor(options.eventLimit ?? 200));
-  const [runs, lifecycleEvents, fixAttempts] = await Promise.all([
+  const [runs, lifecycleEvents, fixAttempts, revalidations] = await Promise.all([
     readRuns(paths),
     readLifecycleEvents(paths),
     readFixAttempts(paths),
+    readRevalidations(paths),
   ]);
   const recentEvents = lifecycleEvents.slice(-eventLimit);
   const recentAttempts = fixAttempts.slice(-eventLimit);
+  const recentRevalidations = revalidations.slice(-eventLimit);
 
   const runsSummary = summarizeRuns(runs);
   const fixes = summarizeFixes(recentAttempts);
   const splits = summarizeSplits(recentEvents);
   const revalidation = summarizeRevalidations(recentEvents);
   const blockers = summarizeBlockers(recentAttempts);
+  const fitnessDeltas = summarizeFitnessDeltas(recentRevalidations);
   const notes = progressNotes({ runs: runsSummary, fixes, splits, blockers });
   const latestEventAt = recentEvents.at(-1)?.createdAt;
   const summary: ProgressSummary = {
     eventLimit,
     eventCount: recentEvents.length,
-    net: classifyNet({ runs: runsSummary, fixes, splits, revalidation }),
+    net: classifyNet({ runs: runsSummary, fixes, splits, revalidation, fitnessDeltas }),
     runs: runsSummary,
     fixes,
     splits,
     revalidation,
     blockers,
+    fitnessDeltas,
     notes,
   };
   if (latestEventAt) {
@@ -125,6 +141,9 @@ export function renderProgressSummary(summary: ProgressSummary): string[] {
   if (proof.length > 0) {
     lines.push(`proof: ${proof.join(", ")}`);
   }
+  if (summary.fitnessDeltas.length > 0) {
+    lines.push(`fitness: ${summary.fitnessDeltas.slice(0, 3).map(renderFitnessDelta).join(", ")}`);
+  }
   if (summary.blockers.length > 0) {
     const blocker = summary.blockers[0]!;
     lines.push(`blocked: ${blocker.candidateId} still needs attention after ${blocker.attempts} attempt${plural(blocker.attempts)}`);
@@ -133,6 +152,25 @@ export function renderProgressSummary(summary: ProgressSummary): string[] {
     lines.push(`caution: ${note}`);
   }
   return lines;
+}
+
+function summarizeFitnessDeltas(revalidations: RevalidationRecord[]): ProgressFitnessDelta[] {
+  return revalidations
+    .filter((record) => record.progress && record.progress.delta > 0)
+    .map((record) => {
+      const progress = record.progress!;
+      return {
+        metric: progress.metric,
+        unit: progress.unit,
+        before: progress.before,
+        after: progress.after,
+        delta: progress.delta,
+        revalidationId: record.id,
+        ...(record.targetId ? { targetId: record.targetId } : {}),
+      };
+    })
+    .sort((a, b) => b.delta - a.delta || a.metric.localeCompare(b.metric))
+    .slice(0, 8);
 }
 
 function summarizeRuns(runs: RunRecord[]): ProgressRunSummary {
@@ -238,10 +276,12 @@ function classifyNet(input: {
   fixes: ProgressFixSummary;
   splits: ProgressSplitSummary;
   revalidation: ProgressSummary["revalidation"];
+  fitnessDeltas: ProgressFitnessDelta[];
 }): ProgressNet {
   if (
     input.fixes.resolved > 0 ||
     input.revalidation.fixed > 0 ||
+    input.fitnessDeltas.length > 0 ||
     input.splits.children > 0 ||
     (input.runs.candidateDelta ?? 0) < 0
   ) {
@@ -290,6 +330,10 @@ function proofParts(summary: ProgressSummary): string[] {
     parts.push(`${summary.fixes.verificationFailed} verification failure${plural(summary.fixes.verificationFailed)}`);
   }
   return parts;
+}
+
+function renderFitnessDelta(delta: ProgressFitnessDelta): string {
+  return `${delta.metric} ${delta.before}->${delta.after} ${delta.unit}`;
 }
 
 function formatDelta(value: number | undefined): string {
