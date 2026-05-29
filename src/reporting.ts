@@ -123,8 +123,9 @@ function agentQueueMarkdown(candidates: CandidateRecord[]): string[] {
   for (const candidate of top) {
     const source = candidate.provenance.source === "model-synthesis" ? "synthesized" : "local";
     lines.push(
-      `- ${candidate.id} ${candidate.priority} ${candidate.title} (${source}, ${candidate.confidence})`,
+      `- ${candidate.id} ${candidate.priority} ${candidate.title} (${source}, ${candidate.confidence}, ${candidate.readiness ?? "fix-ready"})`,
       `  Feature scope: ${candidate.featureScope}; Features: ${candidate.affectedFeatureIds.join(", ") || "unmapped"}`,
+      `  Proof needed: ${candidate.proofRequired?.join("; ") || "confirm cited evidence and expected behavior"}`,
       `  Files: ${candidate.files.slice(0, 4).map(formatFile).join(", ") || "n/a"}`,
       `  Verification: ${candidate.verification.join(", ")}`,
     );
@@ -161,9 +162,7 @@ function buildReportRecommendations(
     ? {
       id: firstCandidate.id,
       type: "candidate" as const,
-      reason: firstFeature
-        ? `Highest-ranked PR-sized cleanup slice inside ${firstFeature.title}; keep the plan inside that feature boundary unless the candidate is marked cross-feature.`
-        : "Highest-ranked PR-sized cleanup slice; generate a focused plan before making changes.",
+      reason: startHereCandidateReason(firstCandidate, firstFeature),
       featureId: firstFeature?.featureId,
       featureTitle: firstFeature?.title,
     }
@@ -181,6 +180,16 @@ function buildReportRecommendations(
     warnings,
     suggestedPlanTargets: [...topCandidateIds.slice(0, 4), ...topThemeIds.slice(0, 1)],
   };
+}
+
+function startHereCandidateReason(candidate: CandidateRecord, feature?: FeatureRecord | undefined): string {
+  const readiness = candidate.readiness ?? "fix-ready";
+  if (readiness !== "fix-ready") {
+    return `Highest-ranked open candidate is ${readiness}; inspect proof, non-goals, and split/design boundaries before handoff.`;
+  }
+  return feature
+    ? `Highest-ranked PR-sized cleanup slice inside ${feature.title}; keep the plan inside that feature boundary unless the candidate is marked cross-feature.`
+    : "Highest-ranked PR-sized cleanup slice; generate a focused plan before making changes.";
 }
 
 function featureMapMarkdown(candidates: CandidateRecord[], features: FeatureRecord[]): string[] {
@@ -236,9 +245,15 @@ function agentReadinessScore(candidate: CandidateRecord): number {
   const impactScore = candidate.impact === "feature" ? 14 : candidate.impact === "local" ? 10 : 5;
   const effortScore = candidate.effort === "small" ? 14 : candidate.effort === "medium" ? 8 : -8;
   const riskScore = candidate.risk === "safe" ? 10 : candidate.risk === "moderate" ? 5 : -18;
+  const readinessScore = candidate.readiness === "fix-ready" ? 16
+    : candidate.readiness === "split-needed" ? 4
+      : candidate.readiness === "design-needed" ? -10
+        : candidate.readiness === "needs-human" ? -15
+          : candidate.readiness === "defer" ? -20
+            : 0;
   const evidenceScore = Math.min(candidate.evidenceIds.length, 4) * 6;
   const synthesisScore = candidate.provenance.source === "model-synthesis" ? 20 : 0;
-  const readinessScore = candidate.fixReadiness ? 8 : 0;
+  const fixReadinessScore = candidate.fixReadiness ? 8 : 0;
   const weakMetricPenalty = isWeakMetricCandidate(candidate) ? -25 : 0;
   return priorityScore
     + confidenceScore
@@ -248,6 +263,7 @@ function agentReadinessScore(candidate: CandidateRecord): number {
     + evidenceScore
     + synthesisScore
     + readinessScore
+    + fixReadinessScore
     + weakMetricPenalty;
 }
 
@@ -281,12 +297,15 @@ function candidateMarkdown(candidate: CandidateRecord): string[] {
     `- Revalidation: ${candidate.lifecycleState ?? "ready"}`,
     `- Category: ${candidate.category}`,
     `- Confidence: ${candidate.confidence}`,
+    `- Readiness: ${candidate.readiness ?? "fix-ready"}`,
     `- Impact: ${candidate.impact}`,
     `- Effort: ${candidate.effort}`,
     `- Risk: ${candidate.risk}`,
     `- Feature scope: ${candidate.featureScope}`,
     `- Features: ${candidate.affectedFeatureIds.join(", ") || "unmapped"}`,
     `- Files: ${candidate.files.map((file) => formatFile(file)).join(", ") || "n/a"}`,
+    `- Owned files: ${candidate.ownedFiles?.map((file) => formatFile(file)).join(", ") || "n/a"}`,
+    `- Context files: ${candidate.contextFiles?.map((file) => formatFile(file)).join(", ") || "n/a"}`,
     "",
     `Why it matters: ${candidate.whyItMatters}`,
     "",
@@ -294,9 +313,34 @@ function candidateMarkdown(candidate: CandidateRecord): string[] {
     "",
     `Suggested direction: ${candidate.suggestedDirection}`,
     "",
+    `Expected behavior: ${candidate.expectedBehavior ?? "Preserve current behavior while narrowing the cleanup boundary."}`,
+    "",
+    `Proof required: ${candidate.proofRequired?.join("; ") || "Run verification and confirm cited evidence no longer applies."}`,
+    "",
+    `Non-goals: ${candidate.nonGoals?.join("; ") || "Do not broaden into unrelated cleanup."}`,
+    "",
+    `Do not touch: ${candidate.doNotTouch?.join("; ") || "Unrelated public APIs, generated files, and adjacent refactors."}`,
+    "",
+    ...splitChildrenMarkdown(candidate),
     `Verification: ${candidate.verification.join(", ")}`,
     "",
   ];
+}
+
+function splitChildrenMarkdown(candidate: CandidateRecord): string[] {
+  if (!candidate.splitChildren || candidate.splitChildren.length === 0) {
+    return [];
+  }
+  const lines = ["Split children:"];
+  for (const child of candidate.splitChildren) {
+    lines.push(
+      `- ${child.title}`,
+      `  Owned files: ${child.ownedFiles.map(formatFile).join(", ") || "n/a"}`,
+      `  Proof: ${child.proofRequired.join("; ")}`,
+    );
+  }
+  lines.push("");
+  return lines;
 }
 
 export function buildHandoff(
@@ -324,6 +368,7 @@ export function renderHandoff(
   const testFirst = candidate.fixReadiness?.suggestedRegressionTest
     || "Add or identify the smallest behavior-level regression check before moving code.";
   const minimalFix = candidate.fixReadiness?.minimumFixScope || candidate.suggestedDirection;
+  const ownedFiles = candidate.ownedFiles && candidate.ownedFiles.length > 0 ? candidate.ownedFiles : candidate.files;
   return [
     `TASK: ${candidate.title}`,
     "",
@@ -332,13 +377,25 @@ export function renderHandoff(
     `Category: ${candidate.category}`,
     `Priority: ${candidate.priority}`,
     `Confidence: ${candidate.confidence}`,
+    `Readiness: ${candidate.readiness ?? "fix-ready"}`,
     `Impact: ${candidate.impact}`,
     `Effort: ${candidate.effort}`,
     `Risk: ${candidate.risk}`,
     `Feature scope: ${candidate.featureScope}`,
     `Features: ${candidate.affectedFeatureIds.join(", ") || "unmapped"}`,
     "",
+    `Owned files: ${ownedFiles.map(formatFile).join(", ") || "n/a"}`,
+    `Context files: ${candidate.contextFiles?.map(formatFile).join(", ") || "n/a"}`,
+    "",
     ...featureBoundaryMarkdown(features),
+    "Expected behavior:",
+    candidate.expectedBehavior ?? "Preserve current user-visible behavior while changing only the cleanup boundary.",
+    "",
+    "Proof required:",
+    ...(candidate.proofRequired && candidate.proofRequired.length > 0
+      ? candidate.proofRequired.map((proof) => `- ${proof}`)
+      : ["- Re-run verification and confirm cited evidence is resolved or downgraded."]),
+    "",
     "Why:",
     candidate.whyItMatters,
     "",
@@ -358,6 +415,8 @@ export function renderHandoff(
     candidate.suggestedDirection,
     "",
     "Do not:",
+    ...(candidate.nonGoals ?? []).map((nonGoal) => `- ${nonGoal}`),
+    ...(candidate.doNotTouch ?? []).map((boundary) => `- Do not touch ${boundary}.`),
     "- Do not rewrite broad helper modules beyond this candidate.",
     ...(candidate.featureScope === "cross-feature"
       ? ["- Do not edit across multiple feature boundaries until the work is split into a smaller feature-local slice."]

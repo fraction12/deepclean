@@ -3,6 +3,7 @@ import type { CandidateRecord, EvidenceRecord, FileReference } from "./types.js"
 
 export interface ReviewerRubric {
   id: string;
+  version?: string | undefined;
   title: string;
   basis?: string[];
   purpose: string;
@@ -222,10 +223,13 @@ export const reviewerRubrics: ReviewerRubric[] = [
     lookFor: [
       "findings that can be turned into a thin vertical slice with clear acceptance criteria",
       "cleanup work that is AFK-agent ready versus work needing human design judgment",
+      "findings that explicitly choose fix-ready, split-needed, design-needed, needs-human, or defer",
       "candidate dependencies that should block or sequence later cleanup plans",
       "missing agent brief details: established facts, unresolved questions, constraints, verification, and expected output",
       "themes that should be split because they cross too many modules or require multiple decisions",
       "slices with a clear stop line, explicit non-goals, and behavior-preserving verification",
+      "proof required to call the cleanup resolved and files the next agent owns",
+      "do-not-touch boundaries where nearby refactors, public API changes, or unrelated generated code are risky",
       "small boundary extractions that make future work harder to break without rewriting the surrounding system",
     ],
     reject: [
@@ -237,6 +241,7 @@ export const reviewerRubrics: ReviewerRubric[] = [
     output: [
       "state whether the candidate is agent-ready or design-needed",
       "name the narrowest useful slice a future agent can take",
+      "include owned files, context files, non-goals, proof, and do-not-touch guidance",
       "include sequencing and blockers when the cleanup should not start immediately",
     ],
   },
@@ -270,6 +275,7 @@ export const reviewerRubrics: ReviewerRubric[] = [
       "candidates supported by multiple evidence types or a strong graph/duplication signal",
       "clear impact, root cause, and future-agent handoff value",
       "bounded cleanup work rather than broad modernization",
+      "a defensible split vs fix vs design-needed decision",
       "proof that the cleanup improves reliability or future-change safety, not just aesthetics",
       "explicit non-goals that keep future agents from over-refactoring",
     ],

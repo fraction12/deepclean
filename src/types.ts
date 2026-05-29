@@ -29,6 +29,13 @@ export const confidenceLevels = ["low", "medium", "high"] as const;
 export const effortLevels = ["small", "medium", "large"] as const;
 export const impactLevels = ["local", "feature", "cross-cutting"] as const;
 export const riskLevels = ["safe", "moderate", "design-needed"] as const;
+export const candidateReadinessLevels = [
+  "fix-ready",
+  "split-needed",
+  "design-needed",
+  "needs-human",
+  "defer",
+] as const;
 export const clusterActionability = ["bounded", "too-broad"] as const;
 export const identityConfidenceLevels = ["low", "medium", "high"] as const;
 export const decompositionStrategies = [
@@ -240,6 +247,19 @@ export const candidateDecompositionSchema = z.object({
 
 export type CandidateDecomposition = z.infer<typeof candidateDecompositionSchema>;
 
+export const childSliceSchema = z.object({
+  title: z.string(),
+  ownedFiles: z.array(fileReferenceSchema),
+  contextFiles: z.array(fileReferenceSchema).default([]),
+  expectedBehavior: z.string(),
+  proofRequired: z.array(z.string()),
+  verification: z.array(z.string()),
+  nonGoals: z.array(z.string()),
+  doNotTouch: z.array(z.string()),
+});
+
+export type ChildSlice = z.infer<typeof childSliceSchema>;
+
 export const evidenceRecordSchema = z.object({
   schemaVersion: z.literal(schemaVersion),
   recordType: z.literal("evidence"),
@@ -310,13 +330,22 @@ export const candidateRecordSchema = z.object({
   impact: z.enum(impactLevels),
   effort: z.enum(effortLevels),
   risk: z.enum(riskLevels),
+  readiness: z.enum(candidateReadinessLevels).optional(),
   files: z.array(fileReferenceSchema),
+  ownedFiles: z.array(fileReferenceSchema).optional(),
+  contextFiles: z.array(fileReferenceSchema).optional(),
   evidenceIds: z.array(z.string()),
   affectedFeatureIds: z.array(z.string()).default([]),
   featureScope: z.enum(["feature-local", "shared-context", "cross-feature", "unmapped"]).default("unmapped"),
   whyItMatters: z.string(),
   likelyRootCause: z.string(),
   suggestedDirection: z.string(),
+  expectedBehavior: z.string().optional(),
+  proofRequired: z.array(z.string()).optional(),
+  nonGoals: z.array(z.string()).optional(),
+  doNotTouch: z.array(z.string()).optional(),
+  splitChildren: z.array(childSliceSchema).optional(),
+  confidenceDowngradeReasons: z.array(z.string()).optional(),
   verification: z.array(z.string()),
   fixReadiness: z.object({
     minimumFixScope: z.string(),
@@ -333,6 +362,7 @@ export const candidateRecordSchema = z.object({
     synthesisAttemptId: z.string().optional(),
     validationId: z.string().optional(),
     reviewers: z.array(z.string()).optional(),
+    reviewerRubricVersions: z.record(z.string(), z.string()).optional(),
     runtime: z.record(z.string(), z.unknown()).optional(),
   }),
   createdAt: z.string(),
@@ -352,6 +382,7 @@ export const synthesisAttemptRecordSchema = z.object({
   promptBytes: z.number().int().nonnegative(),
   runtime: z.record(z.string(), z.unknown()),
   reviewerIds: z.array(z.string()),
+  reviewerRubricVersions: z.record(z.string(), z.string()).optional(),
   evidenceManifest: z.object({
     evidenceCount: z.number().int().nonnegative(),
     includedEvidenceIds: z.array(z.string()),
@@ -374,6 +405,8 @@ export const synthesisAttemptRecordSchema = z.object({
     evidenceIds: z.array(z.string()),
     fileRefs: z.array(fileReferenceSchema),
     diagnostics: z.array(diagnosticSchema),
+    readiness: z.enum(candidateReadinessLevels).optional(),
+    confidenceDowngradeReasons: z.array(z.string()).optional(),
     fixReadiness: z.object({
       minimumFixScope: z.string(),
       suggestedRegressionTest: z.string(),

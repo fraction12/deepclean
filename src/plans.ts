@@ -210,12 +210,20 @@ function renderPlan(
     lines.push(
       `- ${candidate.id} ${candidate.priority} ${candidate.title}`,
       `  Symptom: ${candidate.title}`,
+      `  Readiness: ${candidate.readiness ?? "fix-ready"}`,
       `  Risk: ${candidate.whyItMatters}`,
       `  Proof: ${proofForCandidate(candidate, context.evidence)}`,
+      `  Proof required: ${candidate.proofRequired?.join("; ") || "run verification and confirm the cited evidence is resolved"}`,
+      `  Owned files: ${candidate.ownedFiles?.map(formatFile).join(", ") || "n/a"}`,
+      `  Context files: ${candidate.contextFiles?.map(formatFile).join(", ") || "n/a"}`,
       `  Minimal fix: ${slice.minimalFix}`,
       `  Verification: ${candidate.verification.join(", ") || "n/a"}`,
       `  Non-goals: ${slice.nonGoals.join("; ")}`,
+      `  Do not touch: ${slice.doNotTouch.join("; ")}`,
     );
+    if (candidate.splitChildren && candidate.splitChildren.length > 0) {
+      lines.push(`  Split children: ${candidate.splitChildren.map((child) => child.title).join("; ")}`);
+    }
   }
 
   lines.push("", "Evidence:");
@@ -253,8 +261,10 @@ function candidateSlice(candidate: CandidateRecord): {
   testsFirst: string;
   stopLine: string;
   nonGoals: string[];
+  doNotTouch: string[];
 } {
-  const fileList = uniqueFileReferences(candidate.files, 4).map(formatFile).join(", ") || "the cited files";
+  const ownedFiles = candidate.ownedFiles && candidate.ownedFiles.length > 0 ? candidate.ownedFiles : candidate.files;
+  const fileList = uniqueFileReferences(ownedFiles, 4).map(formatFile).join(", ") || "the cited files";
   const minimalFix = candidate.fixReadiness?.minimumFixScope || candidate.suggestedDirection;
   const featureScope = candidate.featureScope === "cross-feature"
     ? " Split cross-feature work into one feature-local slice before editing."
@@ -266,10 +276,12 @@ function candidateSlice(candidate: CandidateRecord): {
       || "Add or identify the smallest behavior-level regression check before moving code.",
     stopLine: `Only touch ${fileList} plus directly necessary tests/callers.${featureScope}`,
     nonGoals: [
+      ...(candidate.nonGoals ?? []),
       "do not rewrite unrelated helpers",
       "do not change public behavior or response shapes",
       "do not broaden into neighboring cleanup themes",
     ],
+    doNotTouch: candidate.doNotTouch ?? ["unrelated public APIs", "generated files", "adjacent refactors"],
   };
 }
 
