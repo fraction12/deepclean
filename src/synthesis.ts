@@ -7,6 +7,7 @@ import { uniqueFileReferences } from "./file-references.js";
 import { candidateId } from "./ids.js";
 import { collectProcessOutput } from "./process-output.js";
 import { buildCleanupSurfaces, reviewerRubrics } from "./reviewers.js";
+import { isRejectingDiagnostic } from "./synthesis-validation.js";
 import { commandsForFiles, mergeVerificationCommands, type VerificationProfile } from "./verification.js";
 import {
   candidateCategories,
@@ -234,7 +235,11 @@ async function buildValidatedSynthesisCandidates(options: {
     if (validation.status === "rejected") {
       continue;
     }
-    seenStableIdentities.add(stableDraftIdentity(draft));
+    seenStableIdentities.add(stableIdentity({
+      title: draft.title,
+      category: draft.category,
+      files: draft.files,
+    }));
 
     const verification = commandsForFiles(synthesisOptions.verificationProfile ?? {
       defaultCommands: [],
@@ -612,7 +617,11 @@ function validateDraftCandidate(options: {
     });
   }
 
-  if (options.seenStableIdentities.has(stableDraftIdentity(options.draft))) {
+  if (options.seenStableIdentities.has(stableIdentity({
+    title: options.draft.title,
+    category: options.draft.category,
+    files: options.draft.files,
+  }))) {
     diagnostics.push({
       level: "warning",
       code: "synthesis_duplicate_candidate",
@@ -716,19 +725,6 @@ function validateDraftCandidate(options: {
   };
 }
 
-function isRejectingDiagnostic(diagnostic: Diagnostic): boolean {
-  return [
-    "synthesis_candidate_without_evidence",
-    "synthesis_duplicate_candidate",
-    "synthesis_candidate_without_files",
-    "synthesis_file_not_in_cited_evidence",
-    "synthesis_invalid_line_range",
-    "synthesis_line_range_out_of_bounds",
-    "synthesis_quote_not_found",
-    "synthesis_candidate_without_proof",
-  ].includes(diagnostic.code);
-}
-
 function isBroadDraft(draft: SynthesisOutput["candidates"][number]): boolean {
   return draft.readiness === "split-needed"
     || draft.impact === "cross-cutting"
@@ -748,14 +744,6 @@ function confidenceAfterValidation(
     return "medium";
   }
   return confidence === "medium" ? "low" : "low";
-}
-
-function stableDraftIdentity(draft: SynthesisOutput["candidates"][number]): string {
-  return stableIdentity({
-    title: draft.title,
-    category: draft.category,
-    files: draft.files,
-  });
 }
 
 function stableCandidateIdentity(candidate: CandidateRecord): string {
