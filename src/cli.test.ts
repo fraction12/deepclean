@@ -1134,11 +1134,20 @@ fs.writeFileSync(outputPath, JSON.stringify({
     impact: "feature",
     effort: "medium",
     risk: "moderate",
+    readiness: "fix-ready",
     files: [{ path: "src/checkout.ts", startLine: 1, endLine: 1 }],
+    ownedFiles: [{ path: "src/checkout.ts", startLine: 1, endLine: 1 }],
+    contextFiles: [],
     evidenceIds,
     whyItMatters: "The cleanup should be prioritized from evidence.",
     likelyRootCause: "The same responsibility is spread across files.",
     suggestedDirection: "Create one focused module for the shared behavior.",
+    expectedBehavior: "Checkout calculation behavior stays the same.",
+    proofRequired: ["A regression test covers shared checkout calculation behavior."],
+    nonGoals: ["Do not rewrite invoice behavior in this slice."],
+    doNotTouch: ["public CLI output"],
+    splitChildren: [],
+    confidenceDowngradeReasons: [],
     verification: ["npm test"],
     fixReadiness: {
       minimumFixScope: "One shared calculation module.",
@@ -1561,7 +1570,13 @@ fs.writeFileSync(outputPath, JSON.stringify({
               runtime?: Record<string, unknown>;
               synthesisAttemptId?: string;
               validationId?: string;
+              reviewerRubricVersions?: Record<string, string>;
             };
+            readiness?: string;
+            ownedFiles?: Array<{ path: string }>;
+            proofRequired?: string[];
+            nonGoals?: string[];
+            doNotTouch?: string[];
             fixReadiness?: { minimumFixScope: string };
           }>;
         };
@@ -1575,6 +1590,12 @@ fs.writeFileSync(outputPath, JSON.stringify({
       expect(payload.data.candidates[0]?.provenance.model).toBe("gpt-test");
       expect(payload.data.candidates[0]?.provenance.synthesisAttemptId).toBe(payload.data.synthesis.attemptId);
       expect(payload.data.candidates[0]?.provenance.validationId).toBe("validation-001");
+      expect(payload.data.candidates[0]?.provenance.reviewerRubricVersions?.["architecture-deepening"]).toContain("beta-synthesis-quality");
+      expect(payload.data.candidates[0]?.readiness).toBe("fix-ready");
+      expect(payload.data.candidates[0]?.ownedFiles?.map((file) => file.path)).toEqual(["src/checkout.ts", "src/invoice.ts"]);
+      expect(payload.data.candidates[0]?.proofRequired?.[0]).toContain("regression coverage");
+      expect(payload.data.candidates[0]?.nonGoals).toContain("Do not change pricing rules.");
+      expect(payload.data.candidates[0]?.doNotTouch).toContain("unrelated checkout UI");
       expect(payload.data.candidates[0]?.fixReadiness?.minimumFixScope).toContain("pricing");
       expect(payload.data.synthesis.runtime["timeoutMs"]).toBe(5000);
       expect(payload.data.synthesis.runtime["retries"]).toBe(1);
@@ -1586,11 +1607,18 @@ fs.writeFileSync(outputPath, JSON.stringify({
       expect(payload.data.candidates[0]?.provenance.runtime?.["timeoutMs"]).toBe(5000);
       const attempt = JSON.parse(
         await readFile(path.join(repo, ".deepclean", "synthesis", `${payload.data.runId}.json`), "utf8"),
-      ) as { rawCandidateCount: number; acceptedCandidateCount: number; validations: Array<{ status: string; candidateId?: string }> };
+      ) as {
+        rawCandidateCount: number;
+        acceptedCandidateCount: number;
+        reviewerRubricVersions?: Record<string, string>;
+        validations: Array<{ status: string; candidateId?: string; readiness?: string }>;
+      };
       expect(attempt.rawCandidateCount).toBe(1);
       expect(attempt.acceptedCandidateCount).toBe(1);
+      expect(attempt.reviewerRubricVersions?.["architecture-deepening"]).toContain("beta-synthesis-quality");
       expect(attempt.validations[0]?.status).toBe("accepted");
       expect(attempt.validations[0]?.candidateId).toBe(payload.data.candidates[0]?.id);
+      expect(attempt.validations[0]?.readiness).toBe("fix-ready");
 
       const explain = await runCli(["explain", payload.data.candidates[0]?.id ?? "", "--json"], repo);
       expect(explain.code).toBe(0);
@@ -1604,6 +1632,19 @@ fs.writeFileSync(outputPath, JSON.stringify({
       expect(explainPayload.data.validation?.status).toBe("accepted");
       expect(explainPayload.data.synthesisAttempt?.acceptedCandidateCount).toBe(1);
       expect(explainPayload.data.fixReadiness?.suggestedRegressionTest).toContain("checkout");
+
+      const report = await runCli(["report", "--json"], repo);
+      const reportPayload = JSON.parse(report.stdout) as { data: { paths: { markdownPath: string } } };
+      const markdown = await readFile(reportPayload.data.paths.markdownPath, "utf8");
+      expect(markdown).toContain("Readiness: fix-ready");
+      expect(markdown).toContain("Proof required:");
+      expect(markdown).toContain("Owned files:");
+
+      const handoff = await runCli(["handoff", payload.data.candidates[0]?.id ?? "", "--json"], repo);
+      const handoffPayload = JSON.parse(handoff.stdout) as { data: { handoff: { content: string } } };
+      expect(handoffPayload.data.handoff.content).toContain("Readiness: fix-ready");
+      expect(handoffPayload.data.handoff.content).toContain("Proof required:");
+      expect(handoffPayload.data.handoff.content).toContain("Owned files:");
     });
   });
 
@@ -2541,11 +2582,20 @@ fs.writeFileSync(outputPath, JSON.stringify({
     impact: "feature",
     effort: "medium",
     risk: "moderate",
+    readiness: "fix-ready",
     files: [{ path: "src/checkout.ts", startLine: 1, endLine: 1 }],
+    ownedFiles: [{ path: "src/checkout.ts", startLine: 1, endLine: 1 }],
+    contextFiles: [],
     evidenceIds: ["ev-not-present"],
     whyItMatters: "This should not persist.",
     likelyRootCause: "Unsupported evidence.",
     suggestedDirection: "Reject it.",
+    expectedBehavior: "No persisted candidate.",
+    proofRequired: ["Valid evidence must support the candidate."],
+    nonGoals: ["Do not accept unsupported model output."],
+    doNotTouch: ["source files"],
+    splitChildren: [],
+    confidenceDowngradeReasons: ["No cited evidence is present."],
     verification: ["npm test"],
     fixReadiness: {
       minimumFixScope: "No fix should run.",
@@ -2575,6 +2625,160 @@ fs.writeFileSync(outputPath, JSON.stringify({
       expect(attempt.rejectedCandidateCount).toBe(1);
       expect(attempt.validations[0]?.status).toBe("rejected");
       expect(attempt.validations[0]?.diagnostics[0]?.code).toBe("synthesis_candidate_without_evidence");
+    });
+  });
+
+  test("scan downgrades broad synthesized candidates without safe slices", async () => {
+    await withTempRepo(async (repo) => {
+      await writeFixtureSource(repo);
+      await installFakeCodex(repo, `#!/usr/bin/env node
+const fs = require("node:fs");
+const stdin = fs.readFileSync(0, "utf8");
+const evidenceIds = [...stdin.matchAll(/"id": "(ev-[^"]+)"/g)].map((match) => match[1]);
+const outputPath = process.argv[process.argv.indexOf("-o") + 1];
+fs.writeFileSync(outputPath, JSON.stringify({
+  candidates: [{
+    title: "Repo-wide pricing cleanup needs design",
+    category: "architecture",
+    priority: "P1",
+    confidence: "high",
+    impact: "cross-cutting",
+    effort: "large",
+    risk: "moderate",
+    readiness: "split-needed",
+    files: [{ path: "src/checkout.ts", startLine: 1, endLine: 1 }, { path: "src/invoice.ts", startLine: 1, endLine: 1 }],
+    ownedFiles: [{ path: "src/checkout.ts", startLine: 1, endLine: 1 }],
+    contextFiles: [{ path: "src/invoice.ts", startLine: 1, endLine: 1 }],
+    evidenceIds,
+    whyItMatters: "The model found a real but broad pricing concern.",
+    likelyRootCause: "Pricing behavior lacks a named boundary.",
+    suggestedDirection: "Design bounded pricing slices before editing.",
+    expectedBehavior: "Pricing output remains unchanged.",
+    proofRequired: ["A bounded child slice has its own regression proof."],
+    nonGoals: ["Do not rewrite all pricing callers at once."],
+    doNotTouch: ["unrelated checkout flows"],
+    splitChildren: [],
+    confidenceDowngradeReasons: [],
+    verification: ["npm test"],
+    fixReadiness: {
+      minimumFixScope: "Design one bounded pricing child slice.",
+      suggestedRegressionTest: "Add a focused pricing regression for the selected child slice.",
+      whyCurrentTestsMissIt: "The broad concern is not tied to one proof path yet.",
+      confidenceDowngradeReasons: []
+    },
+    supportingQuotes: []
+  }],
+  rejectedEvidenceIds: [],
+  notes: []
+}));
+`);
+
+      const result = await runCli(["scan", "--synthesize", "--json"], repo);
+      expect(result.code).toBe(0);
+      const payload = JSON.parse(result.stdout) as {
+        data: {
+          runId: string;
+          synthesis: { candidateCount: number; acceptedCandidateCount?: number; rejectedCandidateCount?: number };
+          candidates: Array<{ title: string; readiness?: string; confidence: string; risk: string; confidenceDowngradeReasons?: string[] }>;
+        };
+        diagnostics: Array<{ code: string }>;
+      };
+      const candidate = payload.data.candidates.find((item) => item.title === "Repo-wide pricing cleanup needs design");
+      expect(payload.data.synthesis.candidateCount).toBe(1);
+      expect(payload.data.synthesis.acceptedCandidateCount).toBe(1);
+      expect(payload.data.synthesis.rejectedCandidateCount).toBe(0);
+      expect(candidate?.readiness).toBe("design-needed");
+      expect(candidate?.risk).toBe("design-needed");
+      expect(candidate?.confidence).toBe("medium");
+      expect(candidate?.confidenceDowngradeReasons?.join(" ")).toContain("too broad");
+      expect(payload.diagnostics.some((item) => item.code === "synthesis_broad_candidate_needs_design")).toBe(true);
+      expect(payload.diagnostics.some((item) => item.code === "synthesis_split_candidate_without_children")).toBe(true);
+      const attempt = JSON.parse(
+        await readFile(path.join(repo, ".deepclean", "synthesis", `${payload.data.runId}.json`), "utf8"),
+      ) as { validations: Array<{ status: string; readiness?: string; diagnostics: Array<{ code: string }> }> };
+      expect(attempt.validations[0]?.status).toBe("accepted");
+      expect(attempt.validations[0]?.readiness).toBe("design-needed");
+      expect(attempt.validations[0]?.diagnostics.map((item) => item.code)).toContain("synthesis_split_candidate_without_children");
+    });
+  });
+
+  test("scan rejects duplicate synthesized candidates and keeps bounded split children", async () => {
+    await withTempRepo(async (repo) => {
+      await writeFixtureSource(repo);
+      await installFakeCodex(repo, `#!/usr/bin/env node
+const fs = require("node:fs");
+const stdin = fs.readFileSync(0, "utf8");
+const evidenceIds = [...stdin.matchAll(/"id": "(ev-[^"]+)"/g)].map((match) => match[1]);
+const outputPath = process.argv[process.argv.indexOf("-o") + 1];
+const candidate = {
+  title: "Pricing duplication should be split",
+  category: "duplication",
+  priority: "P2",
+  confidence: "medium",
+  impact: "feature",
+  effort: "medium",
+  risk: "moderate",
+  readiness: "split-needed",
+  files: [{ path: "src/checkout.ts", startLine: 1, endLine: 1 }],
+  ownedFiles: [{ path: "src/checkout.ts", startLine: 1, endLine: 1 }],
+  contextFiles: [{ path: "src/invoice.ts", startLine: 1, endLine: 1 }],
+  evidenceIds,
+  whyItMatters: "Duplicate pricing logic is safer as bounded child work.",
+  likelyRootCause: "Checkout and invoice copied the same calculation.",
+  suggestedDirection: "Split the cleanup into one child for checkout and one later child for invoice.",
+  expectedBehavior: "Pricing totals stay identical.",
+  proofRequired: ["Checkout calculation regression passes."],
+  nonGoals: ["Do not edit invoice in the first child."],
+  doNotTouch: ["billing API shape"],
+  splitChildren: [{
+    title: "Extract checkout pricing helper",
+    ownedFiles: [{ path: "src/checkout.ts", startLine: 1, endLine: 1 }],
+    contextFiles: [{ path: "src/invoice.ts", startLine: 1, endLine: 1 }],
+    expectedBehavior: "Checkout pricing totals stay identical.",
+    proofRequired: ["Checkout regression covers subtotal, discount, tax, and total."],
+    verification: ["npm test"],
+    nonGoals: ["Do not edit invoice."],
+    doNotTouch: ["billing API shape"]
+  }],
+  confidenceDowngradeReasons: ["Only one child is ready now."],
+  verification: ["npm test"],
+  fixReadiness: {
+    minimumFixScope: "Extract only the checkout pricing helper.",
+    suggestedRegressionTest: "Add checkout pricing coverage.",
+    whyCurrentTestsMissIt: "Current tests do not pin the copied pricing behavior.",
+    confidenceDowngradeReasons: ["Only one child is ready now."]
+  },
+  supportingQuotes: []
+};
+fs.writeFileSync(outputPath, JSON.stringify({
+  candidates: [candidate, candidate],
+  rejectedEvidenceIds: [],
+  notes: []
+}));
+`);
+
+      const result = await runCli(["scan", "--synthesize", "--json"], repo);
+      expect(result.code).toBe(0);
+      const payload = JSON.parse(result.stdout) as {
+        data: {
+          runId: string;
+          synthesis: { candidateCount: number; rejectedCandidateCount?: number };
+          candidates: Array<{ title: string; readiness?: string; splitChildren?: Array<{ title: string }>; confidence: string }>;
+        };
+        diagnostics: Array<{ code: string }>;
+      };
+      const candidate = payload.data.candidates.find((item) => item.title === "Pricing duplication should be split");
+      expect(payload.data.synthesis.candidateCount).toBe(1);
+      expect(payload.data.synthesis.rejectedCandidateCount).toBe(1);
+      expect(candidate?.readiness).toBe("split-needed");
+      expect(candidate?.splitChildren?.[0]?.title).toBe("Extract checkout pricing helper");
+      expect(candidate?.confidence).toBe("low");
+      expect(payload.diagnostics.some((item) => item.code === "synthesis_duplicate_candidate")).toBe(true);
+      const attempt = JSON.parse(
+        await readFile(path.join(repo, ".deepclean", "synthesis", `${payload.data.runId}.json`), "utf8"),
+      ) as { validations: Array<{ status: string; diagnostics: Array<{ code: string }> }> };
+      expect(attempt.validations.map((item) => item.status)).toEqual(["accepted", "rejected"]);
+      expect(attempt.validations[1]?.diagnostics[0]?.code).toBe("synthesis_duplicate_candidate");
     });
   });
 
@@ -2912,11 +3116,20 @@ fs.writeFileSync(outputPath, JSON.stringify({
     impact: "feature",
     effort: "medium",
     risk: "moderate",
+    readiness: "fix-ready",
     files: [{ path: "src/checkout.ts", startLine: 1, endLine: 1 }, { path: "src/invoice.ts", startLine: 1, endLine: 1 }],
+    ownedFiles: [{ path: "src/checkout.ts", startLine: 1, endLine: 1 }, { path: "src/invoice.ts", startLine: 1, endLine: 1 }],
+    contextFiles: [],
     evidenceIds,
     whyItMatters: "Spread validation creates drift risk.",
     likelyRootCause: "Fast implementation duplicated the same pricing concept.",
     suggestedDirection: "Create one pricing calculation module and route both callers through it.",
+    expectedBehavior: "Checkout and invoice pricing outputs stay unchanged.",
+    proofRequired: ["Checkout and invoice regression coverage passes with shared pricing behavior."],
+    nonGoals: ["Do not change pricing rules."],
+    doNotTouch: ["unrelated checkout UI"],
+    splitChildren: [],
+    confidenceDowngradeReasons: [],
     verification: ["npm test", "npm run typecheck"],
     fixReadiness: {
       minimumFixScope: "One pricing calculation module plus its callers.",

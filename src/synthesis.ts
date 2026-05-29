@@ -10,6 +10,7 @@ import { buildCleanupSurfaces, reviewerRubrics } from "./reviewers.js";
 import { commandsForFiles, mergeVerificationCommands, type VerificationProfile } from "./verification.js";
 import {
   candidateCategories,
+  candidateReadinessLevels,
   confidenceLevels,
   effortLevels,
   impactLevels,
@@ -25,7 +26,25 @@ import {
   type SynthesisAttemptRecord,
 } from "./types.js";
 
-const promptVersion = "codex-synthesis-v4-proof-backed-slices";
+const promptVersion = "codex-synthesis-v5-readiness-boundaries";
+const reviewerRubricVersion = "2026-05-29.beta-synthesis-quality-v1";
+
+const synthesizedFileRefSchema = z.object({
+  path: z.string(),
+  startLine: z.number().int().positive().optional(),
+  endLine: z.number().int().positive().optional(),
+});
+
+const childSliceOutputSchema = z.object({
+  title: z.string().min(1),
+  ownedFiles: z.array(synthesizedFileRefSchema).min(1),
+  contextFiles: z.array(synthesizedFileRefSchema).default([]),
+  expectedBehavior: z.string().min(1),
+  proofRequired: z.array(z.string().min(1)).min(1),
+  verification: z.array(z.string().min(1)).min(1),
+  nonGoals: z.array(z.string().min(1)),
+  doNotTouch: z.array(z.string().min(1)),
+});
 
 const synthesisOutputSchema = z.object({
   candidates: z.array(z.object({
@@ -36,21 +55,26 @@ const synthesisOutputSchema = z.object({
     impact: z.enum(impactLevels),
     effort: z.enum(effortLevels),
     risk: z.enum(riskLevels),
-    files: z.array(z.object({
-      path: z.string(),
-      startLine: z.number().int().positive().optional(),
-      endLine: z.number().int().positive().optional(),
-    })).min(1),
+    readiness: z.enum(candidateReadinessLevels),
+    files: z.array(synthesizedFileRefSchema).min(1),
+    ownedFiles: z.array(synthesizedFileRefSchema).min(1),
+    contextFiles: z.array(synthesizedFileRefSchema),
     evidenceIds: z.array(z.string()).min(1),
     whyItMatters: z.string().min(1),
     likelyRootCause: z.string().min(1),
     suggestedDirection: z.string().min(1),
+    expectedBehavior: z.string().min(1),
+    proofRequired: z.array(z.string().min(1)).min(1),
+    nonGoals: z.array(z.string().min(1)),
+    doNotTouch: z.array(z.string().min(1)),
+    splitChildren: z.array(childSliceOutputSchema).default([]),
+    confidenceDowngradeReasons: z.array(z.string().min(1)),
     verification: z.array(z.string()).min(1),
     fixReadiness: z.object({
       minimumFixScope: z.string().min(1),
       suggestedRegressionTest: z.string().min(1),
       whyCurrentTestsMissIt: z.string().min(1),
-      confidenceDowngradeReasons: z.array(z.string()),
+      confidenceDowngradeReasons: z.array(z.string().min(1)),
     }),
     supportingQuotes: z.array(z.object({
       path: z.string(),
@@ -195,6 +219,7 @@ async function buildValidatedSynthesisCandidates(options: {
   const candidates: CandidateRecord[] = [];
   const validations: SynthesisAttemptRecord["validations"] = [];
   const diagnostics: Diagnostic[] = [];
+  const seenStableIdentities = new Set(synthesisOptions.existingCandidates.map(stableCandidateIdentity));
 
   for (const draft of parsed.candidates.slice(0, maxCandidates)) {
     const validation = validateDraftCandidate({
@@ -202,12 +227,14 @@ async function buildValidatedSynthesisCandidates(options: {
       draft,
       evidence: synthesisOptions.evidence,
       sourceText,
+      seenStableIdentities,
     });
     validations.push(validation);
     diagnostics.push(...validation.diagnostics);
     if (validation.status === "rejected") {
       continue;
     }
+    seenStableIdentities.add(stableDraftIdentity(draft));
 
     const verification = commandsForFiles(synthesisOptions.verificationProfile ?? {
       defaultCommands: [],
@@ -215,6 +242,12 @@ async function buildValidatedSynthesisCandidates(options: {
       frontendCommands: [],
       adminCommands: [],
     }, draft.files, draft.verification);
+    const confidenceDowngradeReasons = uniqueStrings([
+      ...draft.confidenceDowngradeReasons,
+      ...draft.fixReadiness.confidenceDowngradeReasons,
+      ...(validation.confidenceDowngradeReasons ?? []),
+    ]);
+    const readiness = validation.readiness ?? draft.readiness;
 
     candidates.push({
       schemaVersion,
@@ -225,19 +258,35 @@ async function buildValidatedSynthesisCandidates(options: {
       category: draft.category,
       status: "open",
       priority: draft.priority,
-      confidence: draft.confidence,
+      confidence: confidenceAfterValidation(draft.confidence, confidenceDowngradeReasons),
       impact: draft.impact,
       effort: draft.effort,
-      risk: draft.risk,
+      risk: readiness === "design-needed" ? "design-needed" : draft.risk,
+      readiness,
       files: draft.files,
+      ownedFiles: uniqueFileReferences(draft.ownedFiles),
+      contextFiles: uniqueFileReferences(draft.contextFiles),
       evidenceIds: validation.evidenceIds,
       affectedFeatureIds: [],
       featureScope: "unmapped",
       whyItMatters: draft.whyItMatters,
       likelyRootCause: draft.likelyRootCause,
       suggestedDirection: draft.suggestedDirection,
+      expectedBehavior: draft.expectedBehavior,
+      proofRequired: draft.proofRequired,
+      nonGoals: draft.nonGoals,
+      doNotTouch: draft.doNotTouch,
+      splitChildren: draft.splitChildren.map((child) => ({
+        ...child,
+        ownedFiles: uniqueFileReferences(child.ownedFiles),
+        contextFiles: uniqueFileReferences(child.contextFiles),
+      })),
+      confidenceDowngradeReasons,
       verification: mergeVerificationCommands(verification, draft.verification),
-      fixReadiness: draft.fixReadiness,
+      fixReadiness: {
+        ...draft.fixReadiness,
+        confidenceDowngradeReasons,
+      },
       provenance: {
         source: "model-synthesis",
         provider: "codex",
@@ -246,6 +295,7 @@ async function buildValidatedSynthesisCandidates(options: {
         synthesisAttemptId: attemptBase.id,
         validationId: validation.id,
         reviewers: reviewerPack.rubrics.map((rubric) => rubric.id),
+        reviewerRubricVersions: reviewerRubricVersions(reviewerPack.rubrics),
         runtime: {
           effort: synthesisOptions.runtime.effort,
           timeoutMs: synthesisOptions.runtime.timeoutMs,
@@ -326,6 +376,7 @@ async function prepareCodexSynthesisInvocation(
     runtime: options.runtime,
     promptBytes: Buffer.byteLength(prompt, "utf8"),
     reviewerIds: reviewerPack.rubrics.map((rubric) => rubric.id),
+    reviewerRubricVersions: reviewerRubricVersions(reviewerPack.rubrics),
   });
   const args = [
     "exec",
@@ -425,7 +476,10 @@ Matt Pocock skills influence:
 - Favor deep modules with small interfaces, behavior-level feedback loops, domain vocabulary, and independently grabbable agent slices.
 
 Reviewer pack:
-${JSON.stringify(rubrics, null, 2)}
+${JSON.stringify(rubrics.map((rubric) => ({
+  ...rubric,
+  version: rubric.version ?? reviewerRubricVersion,
+})), null, 2)}
 
 Project verification commands:
 ${JSON.stringify(options.verificationProfile ?? {}, null, 2)}
@@ -444,6 +498,12 @@ Hard rules:
 - no security claims unless directly supported by evidence
 - verification commands should be practical for a future agent, usually npm test and npm run typecheck
 - every candidate should be traceable to one or more cleanup surfaces when possible
+- classify readiness as fix-ready, split-needed, design-needed, needs-human, or defer
+- use fix-ready only for one-PR work with owned files, context files, expected behavior, proof required, non-goals, and do-not-touch boundaries
+- use split-needed when the concern is real and broad but has safe child slices; include splitChildren with bounded owned files and proof for each child
+- use design-needed when safe child slices are missing, product/domain decisions are unresolved, or proof cannot be made local and deterministic
+- use needs-human for candidates blocked on owner judgment; use defer for valid but low-value or low-confidence cleanup
+- include confidenceDowngradeReasons whenever evidence is thin, local verification is unclear, or the candidate is broader than a small patch
 - include fixReadiness for each candidate: minimum fix scope, suggested regression test, why current tests may miss it, and confidence downgrade reasons
 - fixReadiness.minimumFixScope must read like a small work order, not a theme: name the boundary to extract/rename/consolidate, the likely files, and the stop line
 - suggestedDirection must include non-goals when broad nearby cleanup is tempting
@@ -493,6 +553,7 @@ function buildAttemptBase(options: {
   };
   promptBytes: number;
   reviewerIds: string[];
+  reviewerRubricVersions?: Record<string, string> | undefined;
 }): Omit<SynthesisAttemptRecord, "rawCandidateCount" | "acceptedCandidateCount" | "rejectedCandidateCount" | "rejectedEvidenceIds" | "notes" | "validations" | "diagnostics"> {
   return {
     schemaVersion,
@@ -516,6 +577,7 @@ function buildAttemptBase(options: {
       allowSourceInModel: options.runtime.allowSourceInModel,
     },
     reviewerIds: options.reviewerIds,
+    reviewerRubricVersions: options.reviewerRubricVersions,
     evidenceManifest: {
       evidenceCount: options.evidence.length,
       includedEvidenceIds: options.evidence.map((record) => record.id),
@@ -534,15 +596,27 @@ function validateDraftCandidate(options: {
   draft: SynthesisOutput["candidates"][number];
   evidence: EvidenceRecord[];
   sourceText: Map<string, string>;
+  seenStableIdentities: Set<string>;
 }): SynthesisAttemptRecord["validations"][number] {
   const diagnostics: Diagnostic[] = [];
   const evidenceById = new Map(options.evidence.map((record) => [record.id, record]));
   const supportedIds = [...new Set(options.draft.evidenceIds.filter((id) => evidenceById.has(id)))];
+  const confidenceDowngradeReasons: string[] = [];
+  let readiness = options.draft.readiness;
   if (supportedIds.length === 0) {
     diagnostics.push({
       level: "warning",
       code: "synthesis_candidate_without_evidence",
       message: `Rejected model candidate without valid evidence IDs: ${options.draft.title}`,
+      adapter: "codex-synthesis",
+    });
+  }
+
+  if (options.seenStableIdentities.has(stableDraftIdentity(options.draft))) {
+    diagnostics.push({
+      level: "warning",
+      code: "synthesis_duplicate_candidate",
+      message: `Rejected duplicate or superseded model candidate: ${options.draft.title}`,
       adapter: "codex-synthesis",
     });
   }
@@ -598,15 +672,117 @@ function validateDraftCandidate(options: {
     }
   }
 
+  if (isBroadDraft(options.draft) && options.draft.splitChildren.length === 0) {
+    readiness = "design-needed";
+    confidenceDowngradeReasons.push("Candidate is too broad for a safe one-PR handoff and did not include bounded child slices.");
+    diagnostics.push({
+      level: "warning",
+      code: "synthesis_broad_candidate_needs_design",
+      message: `Downgraded broad model candidate to design-needed because it lacks safe split children: ${options.draft.title}`,
+      adapter: "codex-synthesis",
+    });
+  }
+
+  if (options.draft.readiness === "split-needed" && options.draft.splitChildren.length === 0) {
+    readiness = "design-needed";
+    confidenceDowngradeReasons.push("Candidate requested splitting but did not provide bounded child recommendations.");
+    diagnostics.push({
+      level: "warning",
+      code: "synthesis_split_candidate_without_children",
+      message: `Marked split-needed candidate design-needed because no child slices were provided: ${options.draft.title}`,
+      adapter: "codex-synthesis",
+    });
+  }
+
+  if (readiness === "fix-ready" && options.draft.proofRequired.length === 0) {
+    diagnostics.push({
+      level: "warning",
+      code: "synthesis_candidate_without_proof",
+      message: `Rejected fix-ready model candidate without proof requirements: ${options.draft.title}`,
+      adapter: "codex-synthesis",
+    });
+  }
+
   return {
     id: options.id,
-    status: diagnostics.length === 0 ? "accepted" : "rejected",
+    status: diagnostics.some(isRejectingDiagnostic) ? "rejected" : "accepted",
     draftTitle: options.draft.title,
     evidenceIds: supportedIds,
     fileRefs: options.draft.files,
     diagnostics,
+    readiness,
+    confidenceDowngradeReasons: uniqueStrings(confidenceDowngradeReasons),
     fixReadiness: options.draft.fixReadiness,
   };
+}
+
+function isRejectingDiagnostic(diagnostic: Diagnostic): boolean {
+  return [
+    "synthesis_candidate_without_evidence",
+    "synthesis_duplicate_candidate",
+    "synthesis_candidate_without_files",
+    "synthesis_file_not_in_cited_evidence",
+    "synthesis_invalid_line_range",
+    "synthesis_line_range_out_of_bounds",
+    "synthesis_quote_not_found",
+    "synthesis_candidate_without_proof",
+  ].includes(diagnostic.code);
+}
+
+function isBroadDraft(draft: SynthesisOutput["candidates"][number]): boolean {
+  return draft.readiness === "split-needed"
+    || draft.impact === "cross-cutting"
+    || draft.effort === "large"
+    || uniqueStrings(draft.files.map((file) => candidateArea(file.path))).length > 2
+    || draft.files.length > 4;
+}
+
+function confidenceAfterValidation(
+  confidence: SynthesisOutput["candidates"][number]["confidence"],
+  downgradeReasons: string[],
+): SynthesisOutput["candidates"][number]["confidence"] {
+  if (downgradeReasons.length === 0) {
+    return confidence;
+  }
+  if (confidence === "high") {
+    return "medium";
+  }
+  return confidence === "medium" ? "low" : "low";
+}
+
+function stableDraftIdentity(draft: SynthesisOutput["candidates"][number]): string {
+  return stableIdentity({
+    title: draft.title,
+    category: draft.category,
+    files: draft.files,
+  });
+}
+
+function stableCandidateIdentity(candidate: CandidateRecord): string {
+  return stableIdentity({
+    title: candidate.title,
+    category: candidate.category,
+    files: candidate.files,
+  });
+}
+
+function stableIdentity(values: { title: string; category: string; files: FileReference[] }): string {
+  const normalizedTitle = values.title.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const paths = uniqueStrings(values.files.map((file) => file.path)).sort().slice(0, 6).join(",");
+  return `${values.category}:${normalizedTitle}:${paths}`;
+}
+
+function candidateArea(filePath: string): string {
+  const parts = filePath.split("/");
+  return parts.length <= 1 ? filePath : parts.slice(0, 2).join("/");
+}
+
+function reviewerRubricVersions(rubrics: typeof reviewerRubrics): Record<string, string> {
+  return Object.fromEntries(rubrics.map((rubric) => [rubric.id, rubric.version ?? reviewerRubricVersion]));
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values.filter((value) => value.length > 0))];
 }
 
 async function sourceTextForDrafts(root: string, drafts: SynthesisOutput["candidates"]): Promise<Map<string, string>> {
@@ -786,11 +962,20 @@ function jsonSchema(): Record<string, unknown> {
             "impact",
             "effort",
             "risk",
+            "readiness",
             "files",
+            "ownedFiles",
+            "contextFiles",
             "evidenceIds",
             "whyItMatters",
             "likelyRootCause",
             "suggestedDirection",
+            "expectedBehavior",
+            "proofRequired",
+            "nonGoals",
+            "doNotTouch",
+            "splitChildren",
+            "confidenceDowngradeReasons",
             "verification",
             "fixReadiness",
             "supportingQuotes",
@@ -803,24 +988,27 @@ function jsonSchema(): Record<string, unknown> {
             impact: { enum: [...impactLevels] },
             effort: { enum: [...effortLevels] },
             risk: { enum: [...riskLevels] },
+            readiness: { enum: [...candidateReadinessLevels] },
             files: {
               type: "array",
               minItems: 1,
-              items: {
-                type: "object",
-                additionalProperties: false,
-                required: ["path", "startLine", "endLine"],
-                properties: {
-                  path: { type: "string" },
-                  startLine: { type: "integer", minimum: 1 },
-                  endLine: { type: "integer", minimum: 1 },
-                },
-              },
+              items: fileRefJsonSchema(),
             },
+            ownedFiles: { type: "array", minItems: 1, items: fileRefJsonSchema() },
+            contextFiles: { type: "array", items: fileRefJsonSchema() },
             evidenceIds: { type: "array", items: { type: "string" }, minItems: 1 },
             whyItMatters: { type: "string" },
             likelyRootCause: { type: "string" },
             suggestedDirection: { type: "string" },
+            expectedBehavior: { type: "string" },
+            proofRequired: { type: "array", items: { type: "string" }, minItems: 1 },
+            nonGoals: { type: "array", items: { type: "string" } },
+            doNotTouch: { type: "array", items: { type: "string" } },
+            splitChildren: {
+              type: "array",
+              items: childSliceJsonSchema(),
+            },
+            confidenceDowngradeReasons: { type: "array", items: { type: "string" } },
             verification: { type: "array", items: { type: "string" }, minItems: 1 },
             fixReadiness: {
               type: "object",
@@ -855,6 +1043,46 @@ function jsonSchema(): Record<string, unknown> {
       },
       rejectedEvidenceIds: { type: "array", items: { type: "string" } },
       notes: { type: "array", items: { type: "string" } },
+    },
+  };
+}
+
+function fileRefJsonSchema(): Record<string, unknown> {
+  return {
+    type: "object",
+    additionalProperties: false,
+    required: ["path", "startLine", "endLine"],
+    properties: {
+      path: { type: "string" },
+      startLine: { type: "integer", minimum: 1 },
+      endLine: { type: "integer", minimum: 1 },
+    },
+  };
+}
+
+function childSliceJsonSchema(): Record<string, unknown> {
+  return {
+    type: "object",
+    additionalProperties: false,
+    required: [
+      "title",
+      "ownedFiles",
+      "contextFiles",
+      "expectedBehavior",
+      "proofRequired",
+      "verification",
+      "nonGoals",
+      "doNotTouch",
+    ],
+    properties: {
+      title: { type: "string" },
+      ownedFiles: { type: "array", minItems: 1, items: fileRefJsonSchema() },
+      contextFiles: { type: "array", items: fileRefJsonSchema() },
+      expectedBehavior: { type: "string" },
+      proofRequired: { type: "array", items: { type: "string" }, minItems: 1 },
+      verification: { type: "array", items: { type: "string" }, minItems: 1 },
+      nonGoals: { type: "array", items: { type: "string" } },
+      doNotTouch: { type: "array", items: { type: "string" } },
     },
   };
 }

@@ -59,6 +59,10 @@ export function rankCandidates(candidates: CandidateRecord[]): CandidateRecord[]
     if (provenanceDelta !== 0) {
       return provenanceDelta;
     }
+    const readinessDelta = readinessScore(b) - readinessScore(a);
+    if (readinessDelta !== 0) {
+      return readinessDelta;
+    }
     const impactDelta = impactScore(b.impact) - impactScore(a.impact);
     if (impactDelta !== 0) {
       return impactDelta;
@@ -69,6 +73,23 @@ export function rankCandidates(candidates: CandidateRecord[]): CandidateRecord[]
     }
     return a.id.localeCompare(b.id);
   });
+}
+
+function readinessScore(candidate: CandidateRecord): number {
+  switch (candidate.readiness) {
+    case "fix-ready":
+      return 12;
+    case "split-needed":
+      return 4;
+    case "design-needed":
+      return -6;
+    case "needs-human":
+      return -10;
+    case "defer":
+      return -14;
+    default:
+      return 0;
+  }
 }
 
 function shouldCreateLocalCandidate(
