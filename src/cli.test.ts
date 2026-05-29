@@ -1823,60 +1823,8 @@ fs.writeFileSync(outputPath, JSON.stringify({
         "--json",
       ], repo);
       expect(result.code).toBe(0);
-      const payload = JSON.parse(result.stdout) as {
-        data: {
-          runId: string;
-          synthesis: {
-            requested: boolean;
-            candidateCount: number;
-            acceptedCandidateCount?: number;
-            rejectedCandidateCount?: number;
-            attemptId?: string;
-            runtime: Record<string, unknown>;
-          };
-          candidates: Array<{
-            id: string;
-            provenance: {
-              source: string;
-              model?: string;
-              runtime?: Record<string, unknown>;
-              synthesisAttemptId?: string;
-              validationId?: string;
-              reviewerRubricVersions?: Record<string, string>;
-            };
-            readiness?: string;
-            ownedFiles?: Array<{ path: string }>;
-            proofRequired?: string[];
-            nonGoals?: string[];
-            doNotTouch?: string[];
-            fixReadiness?: { minimumFixScope: string };
-          }>;
-        };
-      };
-      expect(payload.data.synthesis.requested).toBe(true);
-      expect(payload.data.synthesis.candidateCount).toBe(1);
-      expect(payload.data.synthesis.acceptedCandidateCount).toBe(1);
-      expect(payload.data.synthesis.rejectedCandidateCount).toBe(0);
-      expect(payload.data.synthesis.attemptId).toMatch(/^synthesis-/);
-      expect(payload.data.candidates[0]?.provenance.source).toBe("model-synthesis");
-      expect(payload.data.candidates[0]?.provenance.model).toBe("gpt-test");
-      expect(payload.data.candidates[0]?.provenance.synthesisAttemptId).toBe(payload.data.synthesis.attemptId);
-      expect(payload.data.candidates[0]?.provenance.validationId).toBe("validation-001");
-      expect(payload.data.candidates[0]?.provenance.reviewerRubricVersions?.["architecture-deepening"]).toContain("beta-synthesis-quality");
-      expect(payload.data.candidates[0]?.readiness).toBe("fix-ready");
-      expect(payload.data.candidates[0]?.ownedFiles?.map((file) => file.path)).toEqual(["src/checkout.ts", "src/invoice.ts"]);
-      expect(payload.data.candidates[0]?.proofRequired?.[0]).toContain("regression coverage");
-      expect(payload.data.candidates[0]?.nonGoals).toContain("Do not change pricing rules.");
-      expect(payload.data.candidates[0]?.doNotTouch).toContain("unrelated checkout UI");
-      expect(payload.data.candidates[0]?.fixReadiness?.minimumFixScope).toContain("pricing");
-      expect(payload.data.synthesis.runtime["timeoutMs"]).toBe(5000);
-      expect(payload.data.synthesis.runtime["retries"]).toBe(1);
-      expect(payload.data.synthesis.runtime["rpm"]).toBe(7);
-      expect(payload.data.synthesis.runtime["concurrency"]).toBe(2);
-      expect(payload.data.synthesis.runtime["tokenBudget"]).toBe(1000);
-      expect(payload.data.synthesis.runtime["excerptBudget"]).toBe(0);
-      expect(payload.data.synthesis.runtime["privacyMode"]).toBe("metadata");
-      expect(payload.data.candidates[0]?.provenance.runtime?.["timeoutMs"]).toBe(5000);
+      const payload = JSON.parse(result.stdout) as AcceptedSynthesisScanPayload;
+      const candidateId = expectAcceptedSynthesisScanPayload(payload);
       const attempt = JSON.parse(
         await readFile(path.join(repo, ".deepclean", "synthesis", `${payload.data.runId}.json`), "utf8"),
       ) as {
@@ -1889,10 +1837,10 @@ fs.writeFileSync(outputPath, JSON.stringify({
       expect(attempt.acceptedCandidateCount).toBe(1);
       expect(attempt.reviewerRubricVersions?.["architecture-deepening"]).toContain("beta-synthesis-quality");
       expect(attempt.validations[0]?.status).toBe("accepted");
-      expect(attempt.validations[0]?.candidateId).toBe(payload.data.candidates[0]?.id);
+      expect(attempt.validations[0]?.candidateId).toBe(candidateId);
       expect(attempt.validations[0]?.readiness).toBe("fix-ready");
 
-      const explain = await runCli(["explain", payload.data.candidates[0]?.id ?? "", "--json"], repo);
+      const explain = await runCli(["explain", candidateId, "--json"], repo);
       expect(explain.code).toBe(0);
       const explainPayload = JSON.parse(explain.stdout) as {
         data: {
@@ -1912,7 +1860,7 @@ fs.writeFileSync(outputPath, JSON.stringify({
       expect(markdown).toContain("Proof required:");
       expect(markdown).toContain("Owned files:");
 
-      const handoff = await runCli(["handoff", payload.data.candidates[0]?.id ?? "", "--json"], repo);
+      const handoff = await runCli(["handoff", candidateId, "--json"], repo);
       const handoffPayload = JSON.parse(handoff.stdout) as { data: { handoff: { content: string } } };
       expect(handoffPayload.data.handoff.content).toContain("Readiness: fix-ready");
       expect(handoffPayload.data.handoff.content).toContain("Proof required:");
@@ -3629,6 +3577,66 @@ fs.writeFileSync(outputPath, JSON.stringify({
   };
   config.reviewSynthesis.enabled = false;
   await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+}
+
+type AcceptedSynthesisScanPayload = {
+  data: {
+    runId: string;
+    synthesis: {
+      requested: boolean;
+      candidateCount: number;
+      acceptedCandidateCount?: number;
+      rejectedCandidateCount?: number;
+      attemptId?: string;
+      runtime: Record<string, unknown>;
+    };
+    candidates: Array<{
+      id: string;
+      provenance: {
+        source: string;
+        model?: string;
+        runtime?: Record<string, unknown>;
+        synthesisAttemptId?: string;
+        validationId?: string;
+        reviewerRubricVersions?: Record<string, string>;
+      };
+      readiness?: string;
+      ownedFiles?: Array<{ path: string }>;
+      proofRequired?: string[];
+      nonGoals?: string[];
+      doNotTouch?: string[];
+      fixReadiness?: { minimumFixScope: string };
+    }>;
+  };
+};
+
+function expectAcceptedSynthesisScanPayload(payload: AcceptedSynthesisScanPayload): string {
+  const candidate = payload.data.candidates[0];
+  expect(payload.data.synthesis.requested).toBe(true);
+  expect(payload.data.synthesis.candidateCount).toBe(1);
+  expect(payload.data.synthesis.acceptedCandidateCount).toBe(1);
+  expect(payload.data.synthesis.rejectedCandidateCount).toBe(0);
+  expect(payload.data.synthesis.attemptId).toMatch(/^synthesis-/);
+  expect(candidate?.provenance.source).toBe("model-synthesis");
+  expect(candidate?.provenance.model).toBe("gpt-test");
+  expect(candidate?.provenance.synthesisAttemptId).toBe(payload.data.synthesis.attemptId);
+  expect(candidate?.provenance.validationId).toBe("validation-001");
+  expect(candidate?.provenance.reviewerRubricVersions?.["architecture-deepening"]).toContain("beta-synthesis-quality");
+  expect(candidate?.readiness).toBe("fix-ready");
+  expect(candidate?.ownedFiles?.map((file) => file.path)).toEqual(["src/checkout.ts", "src/invoice.ts"]);
+  expect(candidate?.proofRequired?.[0]).toContain("regression coverage");
+  expect(candidate?.nonGoals).toContain("Do not change pricing rules.");
+  expect(candidate?.doNotTouch).toContain("unrelated checkout UI");
+  expect(candidate?.fixReadiness?.minimumFixScope).toContain("pricing");
+  expect(payload.data.synthesis.runtime["timeoutMs"]).toBe(5000);
+  expect(payload.data.synthesis.runtime["retries"]).toBe(1);
+  expect(payload.data.synthesis.runtime["rpm"]).toBe(7);
+  expect(payload.data.synthesis.runtime["concurrency"]).toBe(2);
+  expect(payload.data.synthesis.runtime["tokenBudget"]).toBe(1000);
+  expect(payload.data.synthesis.runtime["excerptBudget"]).toBe(0);
+  expect(payload.data.synthesis.runtime["privacyMode"]).toBe("metadata");
+  expect(candidate?.provenance.runtime?.["timeoutMs"]).toBe(5000);
+  return candidate?.id ?? "";
 }
 
 async function writeLockFixture(repo: string, overrides: Partial<LockRecord> = {}): Promise<void> {
