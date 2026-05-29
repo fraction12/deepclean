@@ -2923,6 +2923,61 @@ function fixWorkflowVerificationBlocker(
   return undefined;
 }
 
+type FixWorkflowScopeContext = {
+  ok: true;
+  planResult: Awaited<ReturnType<typeof ensureFixPlan>>;
+  allowedWriteScope: string[];
+  dirtyBefore: string[];
+  patchPath?: string;
+  statePrefix: string;
+};
+
+async function prepareFixWorkflowScope(
+  context: CommandContext,
+  options: FixWorkflowOptions,
+  state: FixWorkflowTargetContext["state"],
+  resolved: FixWorkflowTargetContext["resolved"],
+  dryRun: boolean,
+): Promise<FixWorkflowScopeContext | Extract<FixWorkflowResult, { ok: false }>> {
+  const planResult = await ensureFixPlan(context.paths, state.runId, resolved.candidate, state.evidence, state.features);
+  const allowedWriteScope = allowedWriteScopeForCandidate(resolved.candidate, state.features, context);
+  const dirtyBefore = (await dirtyFileEntries(context.paths.root)).map((entry) => entry.file);
+  const patch = flagString(context.parsed.flags, "patch");
+  const patchPath = patch ? path.resolve(context.paths.root, patch) : undefined;
+  const allowedDirty = flagBoolean(context.parsed.flags, "allow-dirty");
+  const statePrefix = `${relativeStatePath(context.paths, context.paths.stateDir).replace(/\/$/, "")}/`;
+  const patchRelativePath = patchPath ? relativeStatePath(context.paths, patchPath) : undefined;
+  const dirtyOutsideTarget = dirtyBefore.filter((file) => (
+    !isPathAllowed(file, allowedWriteScope)
+    && file !== patchRelativePath
+    && !file.startsWith(statePrefix)
+  ));
+  if (!dryRun && dirtyOutsideTarget.length > 0 && !allowedDirty) {
+    await writeFixRefusalLifecycleEvent(context.paths, {
+      findingId: resolved.findingId,
+      candidateId: resolved.candidate.id,
+      command: options.command,
+      code: "dirty_tree",
+      message: `Dirty files outside target scope: ${dirtyOutsideTarget.join(", ")}`,
+    });
+    return {
+      ok: false,
+      exitCode: 2,
+      code: "dirty_tree",
+      message: `Dirty files outside target scope: ${dirtyOutsideTarget.join(", ")}`,
+    };
+  }
+
+  return {
+    ok: true,
+    planResult,
+    allowedWriteScope,
+    dirtyBefore,
+    statePrefix,
+    ...(patchPath ? { patchPath } : {}),
+  };
+}
+
 async function runCandidateFixWorkflow(
   context: CommandContext,
   target: string,
@@ -2960,34 +3015,17 @@ async function runCandidateFixWorkflow(
     return verificationBlocker;
   }
 
-  const planResult = await ensureFixPlan(context.paths, state.runId, resolved.candidate, state.evidence, state.features);
-  const allowedWriteScope = allowedWriteScopeForCandidate(resolved.candidate, state.features, context);
-  const dirtyBefore = (await dirtyFileEntries(context.paths.root)).map((entry) => entry.file);
-  const patch = flagString(context.parsed.flags, "patch");
-  const patchPath = patch ? path.resolve(context.paths.root, patch) : undefined;
-  const allowedDirty = flagBoolean(context.parsed.flags, "allow-dirty");
-  const statePrefix = `${relativeStatePath(context.paths, context.paths.stateDir).replace(/\/$/, "")}/`;
-  const patchRelativePath = patchPath ? relativeStatePath(context.paths, patchPath) : undefined;
-  const dirtyOutsideTarget = dirtyBefore.filter((file) => (
-    !isPathAllowed(file, allowedWriteScope)
-    && file !== patchRelativePath
-    && !file.startsWith(statePrefix)
-  ));
-  if (!dryRun && dirtyOutsideTarget.length > 0 && !allowedDirty) {
-    await writeFixRefusalLifecycleEvent(context.paths, {
-      findingId: resolved.findingId,
-      candidateId: resolved.candidate.id,
-      command: options.command,
-      code: "dirty_tree",
-      message: `Dirty files outside target scope: ${dirtyOutsideTarget.join(", ")}`,
-    });
-    return {
-      ok: false,
-      exitCode: 2,
-      code: "dirty_tree",
-      message: `Dirty files outside target scope: ${dirtyOutsideTarget.join(", ")}`,
-    };
+  const scopeContext = await prepareFixWorkflowScope(context, options, state, resolved, dryRun);
+  if (!scopeContext.ok) {
+    return scopeContext;
   }
+  const {
+    planResult,
+    allowedWriteScope,
+    dirtyBefore,
+    patchPath,
+    statePrefix,
+  } = scopeContext;
 
   const branch = flagString(context.parsed.flags, "branch");
   if (options.createBranch) {
