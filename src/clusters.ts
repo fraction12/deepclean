@@ -1,4 +1,5 @@
 import { uniqueFileReferences } from "./file-references.js";
+import { symmetricGraphEdgeKeys, type ArchitectureGraphEdge } from "./architecture-graph.js";
 import { clusterId } from "./ids.js";
 import {
   candidateCategories,
@@ -277,18 +278,17 @@ function primaryArea(candidate: CandidateRecord): string {
 function codeGraphEdges(evidence: EvidenceRecord[]): Set<string> {
   const graph = evidence.find((record) => record.kind === "code-graph-summary");
   const rawEdges = graph?.data["edges"];
-  const edges = new Set<string>();
   if (!Array.isArray(rawEdges)) {
-    return edges;
+    return new Set();
   }
+  const edges: ArchitectureGraphEdge[] = [];
   for (const edge of rawEdges) {
     if (!isObject(edge) || typeof edge["from"] !== "string" || typeof edge["to"] !== "string") {
       continue;
     }
-    edges.add(`${edge["from"]}->${edge["to"]}`);
-    edges.add(`${edge["to"]}->${edge["from"]}`);
+    edges.push({ from: edge["from"], to: edge["to"] });
   }
-  return edges;
+  return symmetricGraphEdgeKeys(edges);
 }
 
 function hasCodeGraphLink(leftFiles: string[], rightFiles: string[], codeEdges: Set<string>): boolean {

@@ -226,7 +226,7 @@ async function buildValidatedSynthesisCandidates(options: {
     files: candidate.files,
   })));
 
-  for (const draft of parsed.candidates.slice(0, maxCandidates)) {
+  for (const draft of parsed.candidates) {
     const validation = recordSynthesisDraftValidation({
       draft,
       evidence: synthesisOptions.evidence,
@@ -249,6 +249,9 @@ async function buildValidatedSynthesisCandidates(options: {
       candidates,
       validations,
     });
+    if (candidates.length >= maxCandidates) {
+      break;
+    }
   }
 
   return { candidates, validations, diagnostics };

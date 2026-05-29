@@ -4,7 +4,9 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, test } from "vitest";
+import { buildLocalImportGraph } from "./architecture-graph.js";
 import { main } from "./cli.js";
+import type { SourceFile } from "./discovery.js";
 import { readLockStatuses, withStateWriteLock } from "./locks.js";
 import { buildCandidatePlan } from "./plans.js";
 import { buildReportRecord } from "./reporting.js";
@@ -84,6 +86,18 @@ function registerCliSmokeTests(): void {
       expect(result.stdout).toContain("deepclean revalidate <candidate-id>");
       expect(result.stdout).toContain("deepclean fix <candidate-id> --patch ./fix.patch --dry-run --json");
     });
+  });
+
+  test("shared architecture graph resolves local TS and Python imports", () => {
+    const graph = buildLocalImportGraph([
+      sourceFile("src/main.ts", "import { helper } from './helper.js';\nvoid helper;\n"),
+      sourceFile("src/helper.ts", "export const helper = 1;\n"),
+      sourceFile("pkg/service.py", "from .models import Thing\n"),
+      sourceFile("pkg/models.py", "class Thing: pass\n"),
+    ]);
+
+    expect(graph.nodes.get("src/main.ts")?.imports.has("src/helper.ts")).toBe(true);
+    expect(graph.nodes.get("pkg/service.py")?.imports.has("pkg/models.py")).toBe(true);
   });
 }
 
@@ -1337,6 +1351,33 @@ fs.writeFileSync(outputPath, JSON.stringify({
       expect(progress.outcome).toBe("partially-resolved");
       expect(progress.progress?.delta).toBe(40);
       expect(progress.nextAction).toContain("campaign progress");
+
+      const dependencyFinding = findingFixture({
+        evidenceIds: ["ev-deps-before"],
+        files: [{ path: "src/example.ts" }],
+      });
+      const dependencyProgress = await classifyRevalidation({
+        root: repo,
+        finding: dependencyFinding,
+        currentCandidates: [candidateFixture({ findingId: dependencyFinding.id, evidenceIds: ["ev-deps-after"] })],
+        runId: "run-now",
+        createdAt: "2026-05-24T00:00:00.000Z",
+        previousEvidence: [evidenceFixture({
+          id: "ev-deps-before",
+          kind: "dependency-hotspot",
+          files: [{ path: "src/example.ts" }],
+          data: { incoming: 12, outgoing: 4 },
+        })],
+        currentEvidence: [evidenceFixture({
+          id: "ev-deps-after",
+          kind: "dependency-hotspot",
+          files: [{ path: "src/example.ts" }],
+          data: { incoming: 8, outgoing: 4 },
+        })],
+      });
+      expect(dependencyProgress.outcome).toBe("partially-resolved");
+      expect(dependencyProgress.progress?.metric).toBe("dependency-hotspot.incoming");
+      expect(dependencyProgress.progress?.delta).toBe(4);
 
       const changed = await classifyRevalidation({
         root: repo,
@@ -2784,6 +2825,84 @@ fs.writeFileSync(outputPath, JSON.stringify({
     });
   });
 
+  test("scan continues past rejected synthesized drafts until the accepted limit is reached", async () => {
+    await withTempRepo(async (repo) => {
+      await writeFixtureSource(repo);
+      await installFakeCodex(repo, `#!/usr/bin/env node
+const fs = require("node:fs");
+const stdin = fs.readFileSync(0, "utf8");
+const evidenceIds = [...stdin.matchAll(/"id": "(ev-[^"]+)"/g)].map((match) => match[1]);
+const outputPath = process.argv[process.argv.indexOf("-o") + 1];
+const validCandidate = {
+  title: "Valid pricing cleanup after rejected draft",
+  category: "duplication",
+  priority: "P2",
+  confidence: "medium",
+  impact: "feature",
+  effort: "medium",
+  risk: "moderate",
+  readiness: "fix-ready",
+  files: [{ path: "src/checkout.ts", startLine: 1, endLine: 1 }],
+  ownedFiles: [{ path: "src/checkout.ts", startLine: 1, endLine: 1 }],
+  contextFiles: [],
+  evidenceIds,
+  whyItMatters: "The valid candidate should still be considered after an invalid draft.",
+  likelyRootCause: "The model produced one unsupported draft before a supported one.",
+  suggestedDirection: "Keep validating drafts until the accepted candidate budget is filled.",
+  expectedBehavior: "Rejected drafts do not consume the accepted candidate budget.",
+  proofRequired: ["Accepted count reaches the configured limit."],
+  nonGoals: ["Do not accept unsupported drafts."],
+  doNotTouch: ["source files"],
+  splitChildren: [],
+  confidenceDowngradeReasons: [],
+  verification: ["npm test"],
+  fixReadiness: {
+    minimumFixScope: "No source change needed for this fixture.",
+    suggestedRegressionTest: "Assert accepted candidates are counted after rejected drafts.",
+    whyCurrentTestsMissIt: "Existing tests only cover a single rejected draft.",
+    confidenceDowngradeReasons: []
+  },
+  supportingQuotes: []
+};
+fs.writeFileSync(outputPath, JSON.stringify({
+  candidates: [{
+    ...validCandidate,
+    title: "Unsupported draft before valid candidate",
+    evidenceIds: ["ev-not-present"],
+    whyItMatters: "This draft should be rejected before the valid candidate is considered."
+  }, validCandidate],
+  rejectedEvidenceIds: [],
+  notes: []
+}));
+`);
+      const configPath = path.join(repo, ".deepclean", "config.json");
+      const config = JSON.parse(await readFile(configPath, "utf8")) as {
+        reviewSynthesis: { maxCandidates: number };
+      };
+      config.reviewSynthesis.maxCandidates = 1;
+      await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+
+      const result = await runCli(["scan", "--synthesize", "--json"], repo);
+      expect(result.code).toBe(0);
+      const payload = JSON.parse(result.stdout) as {
+        data: {
+          runId: string;
+          synthesis: { candidateCount: number; acceptedCandidateCount?: number; rejectedCandidateCount?: number };
+          candidates: Array<{ id: string; title: string }>;
+        };
+      };
+      expect(payload.data.synthesis.candidateCount).toBe(1);
+      expect(payload.data.synthesis.acceptedCandidateCount).toBe(1);
+      expect(payload.data.synthesis.rejectedCandidateCount).toBe(1);
+      expect(payload.data.candidates[0]?.title).toBe("Valid pricing cleanup after rejected draft");
+      const attempt = JSON.parse(
+        await readFile(path.join(repo, ".deepclean", "synthesis", `${payload.data.runId}.json`), "utf8"),
+      ) as { validations: Array<{ status: string; candidateId?: string }> };
+      expect(attempt.validations.map((item) => item.status)).toEqual(["rejected", "accepted"]);
+      expect(attempt.validations[1]?.candidateId).toBe(payload.data.candidates[0]?.id);
+    });
+  });
+
   test("scan downgrades broad synthesized candidates without safe slices", async () => {
     await withTempRepo(async (repo) => {
       await writeFixtureSource(repo);
@@ -3618,6 +3737,16 @@ function evidenceFixture(overrides: Partial<EvidenceRecord> = {}): EvidenceRecor
     confidence: "medium",
     createdAt: now,
     ...overrides,
+  };
+}
+
+function sourceFile(filePath: string, text: string): SourceFile {
+  return {
+    path: filePath,
+    absolutePath: filePath,
+    extension: path.extname(filePath),
+    text,
+    lines: text.split(/\r?\n/),
   };
 }
 
