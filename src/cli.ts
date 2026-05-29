@@ -144,6 +144,18 @@ interface CommandContext {
   quiet: boolean;
 }
 
+interface PackageUpdateStatus {
+  packageName: string;
+  channel: string;
+  currentVersion: string;
+  latestVersion?: string | undefined;
+  stale: boolean;
+  checked: boolean;
+  skippedReason?: string | undefined;
+  error?: string | undefined;
+  updateCommand: string;
+}
+
 interface ScanExecutionResult {
   runId: string;
   diagnostics: Diagnostic[];
@@ -230,6 +242,8 @@ Usage:
 Commands:
   init                         Create or validate .deepclean state
   doctor                       Check environment, config, state, git, provider, and privacy readiness
+    --no-update-check          Skip npm release-channel freshness check
+    --update-channel <tag>     npm dist-tag to check for updates; default beta
   status                       Read-only lifecycle summary for current Deepclean state
     --progress-events <n>      Recent lifecycle/fix artifacts used for progress summary; default 200
                                --json includes latest artifacts, active/blocked work,
@@ -453,6 +467,27 @@ async function initCommand(context: CommandContext): Promise<number> {
 
 async function doctorCommand(context: CommandContext): Promise<number> {
   const diagnostics: Diagnostic[] = [];
+  const currentPackageVersion = await packageVersion();
+  const packageUpdate = await packageUpdateStatus(context, currentPackageVersion);
+  if (packageUpdate.stale && packageUpdate.latestVersion) {
+    diagnostics.push({
+      level: "warning",
+      code: "package_update_available",
+      message: `Deepclean ${packageUpdate.latestVersion} is available on npm ${packageUpdate.channel}. Update with \`${packageUpdate.updateCommand}\`.`,
+    });
+  } else if (packageUpdate.skippedReason) {
+    diagnostics.push({
+      level: "info",
+      code: "package_update_check_skipped",
+      message: `Package update check skipped: ${packageUpdate.skippedReason}.`,
+    });
+  } else if (packageUpdate.error) {
+    diagnostics.push({
+      level: "warning",
+      code: "package_update_check_failed",
+      message: `Package update check failed: ${packageUpdate.error}`,
+    });
+  }
   const initialized = await pathExists(context.paths.stateDir);
   const missingDirs = initialized ? await missingStateDirectories(context.paths) : [];
   const integrity = initialized ? await stateIntegrity(context.paths) : { valid: true, diagnostics: [] };
@@ -501,7 +536,8 @@ async function doctorCommand(context: CommandContext): Promise<number> {
     root: context.paths.root,
     stateDir: context.paths.stateDir,
     initialized,
-    packageVersion: await packageVersion(),
+    packageVersion: currentPackageVersion,
+    packageUpdate,
     config: {
       path: context.paths.configPath,
       valid: configResult.valid,
@@ -536,6 +572,15 @@ async function doctorCommand(context: CommandContext): Promise<number> {
   emit(context.json, ok("doctor", data, diagnostics));
   if (!context.json && !context.quiet) {
     console.log(`Deepclean ${data.packageVersion}`);
+    if (packageUpdate.stale && packageUpdate.latestVersion) {
+      console.log(`update: ${packageUpdate.latestVersion} available (${packageUpdate.updateCommand})`);
+    } else if (packageUpdate.checked) {
+      console.log(`update: current on ${packageUpdate.channel}`);
+    } else if (packageUpdate.skippedReason) {
+      console.log(`update: skipped (${packageUpdate.skippedReason})`);
+    } else {
+      console.log("update: unavailable");
+    }
     console.log(`root: ${data.root}`);
     console.log(`state: ${data.state.valid ? "ok" : initialized ? "incomplete" : "not initialized"}`);
     console.log(`config: ${data.config.valid ? "ok" : "invalid"}`);
@@ -5721,6 +5766,145 @@ async function packageVersion(): Promise<string> {
   } catch {
     return "0.0.0";
   }
+}
+
+async function packageUpdateStatus(context: CommandContext, currentVersion: string): Promise<PackageUpdateStatus> {
+  const packageName = "@fraction12/deepclean";
+  const channel = flagString(context.parsed.flags, "update-channel") ?? "beta";
+  const updateCommand = `npm install -g ${packageName}@${channel}`;
+  const skipReason = packageUpdateSkipReason(context);
+  if (skipReason) {
+    return {
+      packageName,
+      channel,
+      currentVersion,
+      stale: false,
+      checked: false,
+      skippedReason: skipReason,
+      updateCommand,
+    };
+  }
+
+  try {
+    const latestVersion = await latestPackageVersion(packageName, channel);
+    return {
+      packageName,
+      channel,
+      currentVersion,
+      latestVersion,
+      stale: comparePackageVersions(currentVersion, latestVersion) < 0,
+      checked: true,
+      updateCommand,
+    };
+  } catch (error) {
+    return {
+      packageName,
+      channel,
+      currentVersion,
+      stale: false,
+      checked: false,
+      error: error instanceof Error ? error.message : String(error),
+      updateCommand,
+    };
+  }
+}
+
+function packageUpdateSkipReason(context: CommandContext): string | undefined {
+  if (flagBoolean(context.parsed.flags, "no-update-check")) {
+    return "disabled by --no-update-check";
+  }
+  if (flagBoolean(context.parsed.flags, "offline")) {
+    return "offline mode";
+  }
+  if (flagBoolean(context.parsed.flags, "local-only")) {
+    return "local-only mode";
+  }
+  return undefined;
+}
+
+async function latestPackageVersion(packageName: string, channel: string): Promise<string> {
+  if (process.env["DEEPCLEAN_UPDATE_CHECK_ERROR"]) {
+    throw new Error(process.env["DEEPCLEAN_UPDATE_CHECK_ERROR"]);
+  }
+  if (process.env["DEEPCLEAN_UPDATE_CHECK_LATEST_VERSION"]) {
+    return process.env["DEEPCLEAN_UPDATE_CHECK_LATEST_VERSION"];
+  }
+  const { stdout } = await execFileAsync("npm", ["view", `${packageName}@${channel}`, "version"], {
+    timeout: 5000,
+    maxBuffer: 64 * 1024,
+  });
+  const version = stdout.trim().replace(/^"|"$/g, "");
+  if (!version) {
+    throw new Error(`No version returned for ${packageName}@${channel}`);
+  }
+  return version;
+}
+
+function comparePackageVersions(left: string, right: string): number {
+  const parsedLeft = parsePackageVersion(left);
+  const parsedRight = parsePackageVersion(right);
+  for (const key of ["major", "minor", "patch"] as const) {
+    const delta = parsedLeft[key] - parsedRight[key];
+    if (delta !== 0) {
+      return delta < 0 ? -1 : 1;
+    }
+  }
+  if (!parsedLeft.prerelease.length && !parsedRight.prerelease.length) {
+    return 0;
+  }
+  if (!parsedLeft.prerelease.length) {
+    return 1;
+  }
+  if (!parsedRight.prerelease.length) {
+    return -1;
+  }
+  const length = Math.max(parsedLeft.prerelease.length, parsedRight.prerelease.length);
+  for (let index = 0; index < length; index += 1) {
+    const leftPart = parsedLeft.prerelease[index];
+    const rightPart = parsedRight.prerelease[index];
+    if (leftPart === undefined) {
+      return -1;
+    }
+    if (rightPart === undefined) {
+      return 1;
+    }
+    const delta = comparePrereleasePart(leftPart, rightPart);
+    if (delta !== 0) {
+      return delta;
+    }
+  }
+  return 0;
+}
+
+function comparePrereleasePart(left: string, right: string): number {
+  const leftNumber = /^[0-9]+$/.test(left) ? Number(left) : undefined;
+  const rightNumber = /^[0-9]+$/.test(right) ? Number(right) : undefined;
+  if (leftNumber !== undefined && rightNumber !== undefined) {
+    return Math.sign(leftNumber - rightNumber);
+  }
+  if (leftNumber !== undefined) {
+    return -1;
+  }
+  if (rightNumber !== undefined) {
+    return 1;
+  }
+  return left.localeCompare(right);
+}
+
+function parsePackageVersion(version: string): {
+  major: number;
+  minor: number;
+  patch: number;
+  prerelease: string[];
+} {
+  const [core = "0.0.0", prerelease = ""] = version.split("+")[0]?.split("-", 2) ?? [];
+  const [major = 0, minor = 0, patch = 0] = core.split(".").map((part) => Number.parseInt(part, 10));
+  return {
+    major: Number.isFinite(major) ? major : 0,
+    minor: Number.isFinite(minor) ? minor : 0,
+    patch: Number.isFinite(patch) ? patch : 0,
+    prerelease: prerelease ? prerelease.split(".") : [],
+  };
 }
 
 const entryPath = process.argv[1] ? realpathSync(process.argv[1]) : undefined;

@@ -149,7 +149,7 @@ function registerCliSmokeTests(): void {
 describe("deepclean cli", () => {
   test("doctor reports an uninitialized clean directory without mutating state", async () => {
     await withTempRepo(async (repo) => {
-      const result = await runCli(["doctor", "--json"], repo);
+      const result = await runCli(["doctor", "--no-update-check", "--json"], repo);
       expect(result.code).toBe(0);
       const payload = JSON.parse(result.stdout) as {
         data: { initialized: boolean; config: { valid: boolean }; state: { valid: boolean } };
@@ -166,7 +166,7 @@ describe("deepclean cli", () => {
   test("doctor reports initialized state and provider readiness", async () => {
     await withTempRepo(async (repo) => {
       await runCli(["init", "--json"], repo);
-      const result = await runCli(["doctor", "--json"], repo);
+      const result = await runCli(["doctor", "--no-update-check", "--json"], repo);
       expect(result.code).toBe(0);
       const payload = JSON.parse(result.stdout) as {
         data: {
@@ -184,6 +184,85 @@ describe("deepclean cli", () => {
       expect(payload.data.provider.command).toBeTruthy();
       expect(typeof payload.data.provider.available).toBe("boolean");
       expect(payload.data.privacy?.allowSourceInModel).toBe(false);
+    });
+  });
+
+  test("doctor reports package update availability", async () => {
+    await withEnv({ DEEPCLEAN_UPDATE_CHECK_LATEST_VERSION: "99.0.0-beta.0" }, async () => {
+      await withTempRepo(async (repo) => {
+        await runCli(["init", "--json"], repo);
+        const result = await runCli(["doctor", "--json"], repo);
+        expect(result.code).toBe(0);
+        const payload = JSON.parse(result.stdout) as {
+          data: {
+            packageUpdate: {
+              currentVersion: string;
+              latestVersion?: string;
+              stale: boolean;
+              checked: boolean;
+              updateCommand: string;
+            };
+          };
+          diagnostics: Array<{ code: string }>;
+        };
+        expect(payload.data.packageUpdate.checked).toBe(true);
+        expect(payload.data.packageUpdate.latestVersion).toBe("99.0.0-beta.0");
+        expect(payload.data.packageUpdate.stale).toBe(true);
+        expect(payload.data.packageUpdate.updateCommand).toBe("npm install -g @fraction12/deepclean@beta");
+        expect(payload.diagnostics.some((diagnostic) => diagnostic.code === "package_update_available")).toBe(true);
+      });
+    });
+  });
+
+  test("doctor reports current package when release channel matches installed version", async () => {
+    const packageJson = JSON.parse(await readFile(path.resolve("package.json"), "utf8")) as { version: string };
+    await withEnv({ DEEPCLEAN_UPDATE_CHECK_LATEST_VERSION: packageJson.version }, async () => {
+      await withTempRepo(async (repo) => {
+        const result = await runCli(["doctor", "--json"], repo);
+        expect(result.code).toBe(0);
+        const payload = JSON.parse(result.stdout) as {
+          data: { packageUpdate: { latestVersion?: string; checked: boolean; stale: boolean } };
+          diagnostics: Array<{ code: string }>;
+        };
+        expect(payload.data.packageUpdate.checked).toBe(true);
+        expect(payload.data.packageUpdate.latestVersion).toBe(packageJson.version);
+        expect(payload.data.packageUpdate.stale).toBe(false);
+        expect(payload.diagnostics.some((diagnostic) => diagnostic.code === "package_update_available")).toBe(false);
+      });
+    });
+  });
+
+  test("doctor skips package update checks in offline mode", async () => {
+    await withEnv({ DEEPCLEAN_UPDATE_CHECK_LATEST_VERSION: "99.0.0-beta.0" }, async () => {
+      await withTempRepo(async (repo) => {
+        const result = await runCli(["doctor", "--offline", "--json"], repo);
+        expect(result.code).toBe(0);
+        const payload = JSON.parse(result.stdout) as {
+          data: { packageUpdate: { checked: boolean; skippedReason?: string; stale: boolean } };
+          diagnostics: Array<{ code: string }>;
+        };
+        expect(payload.data.packageUpdate.checked).toBe(false);
+        expect(payload.data.packageUpdate.stale).toBe(false);
+        expect(payload.data.packageUpdate.skippedReason).toBe("offline mode");
+        expect(payload.diagnostics.some((diagnostic) => diagnostic.code === "package_update_check_skipped")).toBe(true);
+      });
+    });
+  });
+
+  test("doctor keeps running when package update check fails", async () => {
+    await withEnv({ DEEPCLEAN_UPDATE_CHECK_ERROR: "npm unavailable" }, async () => {
+      await withTempRepo(async (repo) => {
+        const result = await runCli(["doctor", "--json"], repo);
+        expect(result.code).toBe(0);
+        const payload = JSON.parse(result.stdout) as {
+          data: { packageUpdate: { checked: boolean; error?: string; stale: boolean } };
+          diagnostics: Array<{ code: string }>;
+        };
+        expect(payload.data.packageUpdate.checked).toBe(false);
+        expect(payload.data.packageUpdate.stale).toBe(false);
+        expect(payload.data.packageUpdate.error).toBe("npm unavailable");
+        expect(payload.diagnostics.some((diagnostic) => diagnostic.code === "package_update_check_failed")).toBe(true);
+      });
     });
   });
 
@@ -424,7 +503,7 @@ describe("deepclean cli", () => {
       expect(statusPayload.data.locks.stale).toBe(1);
       expect(statusPayload.data.locks.records[0]?.recoveryCommand).toContain("deepclean unlock --stale");
 
-      const doctor = await runCli(["doctor", "--stale-lock-ms", "1", "--json"], repo);
+      const doctor = await runCli(["doctor", "--stale-lock-ms", "1", "--no-update-check", "--json"], repo);
       const doctorPayload = JSON.parse(doctor.stdout) as { diagnostics: Array<{ code: string }> };
       expect(doctorPayload.diagnostics.some((diagnostic) => diagnostic.code === "stale_locks")).toBe(true);
 
@@ -480,7 +559,7 @@ describe("deepclean cli", () => {
       expect(statusPayload.data.stateIntegrity.partialRecords).toBeGreaterThanOrEqual(1);
       expect(statusPayload.diagnostics.some((diagnostic) => diagnostic.code === "partial_state_record")).toBe(true);
 
-      const doctor = await runCli(["doctor", "--json"], repo);
+      const doctor = await runCli(["doctor", "--no-update-check", "--json"], repo);
       expect(doctor.code).toBe(0);
       const doctorPayload = JSON.parse(doctor.stdout) as {
         data: { state: { valid: boolean; integrity: { partialRecords: number } } };
@@ -3424,6 +3503,29 @@ async function withTempRepo(fn: (repo: string) => Promise<void>): Promise<void> 
     await fn(repo);
   } finally {
     await rm(repo, { recursive: true, force: true });
+  }
+}
+
+async function withEnv(values: Record<string, string | undefined>, fn: () => Promise<void>): Promise<void> {
+  const previous: Record<string, string | undefined> = {};
+  for (const [key, value] of Object.entries(values)) {
+    previous[key] = process.env[key];
+    if (value === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = value;
+    }
+  }
+  try {
+    await fn();
+  } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
   }
 }
 
