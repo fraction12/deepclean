@@ -162,6 +162,137 @@ describe("deepclean cli", () => {
     });
   });
 
+  test("status is read-only before initialization", async () => {
+    await withTempRepo(async (repo) => {
+      const result = await runCli(["status", "--json"], repo);
+      expect(result.code).toBe(0);
+      const payload = JSON.parse(result.stdout) as {
+        data: { initialized: boolean; nextAction: { command: string }; queue: { total: number } };
+        diagnostics: Array<{ code: string }>;
+      };
+      expect(payload.data.initialized).toBe(false);
+      expect(payload.data.queue.total).toBe(0);
+      expect(payload.data.nextAction.command).toBe("deepclean init");
+      expect(payload.diagnostics.some((diagnostic) => diagnostic.code === "no_state")).toBe(true);
+      await expect(stat(path.join(repo, ".deepclean"))).rejects.toThrow();
+    });
+  });
+
+  test("status surfaces blocked work, stale artifacts, recent progress, and next action", async () => {
+    await withTempRepo(async (repo) => {
+      await writeFixtureSource(repo);
+      await runCli(["scan", "--evidence-only", "--json"], repo);
+      await runCli(["report", "--json"], repo);
+      await runCli(["plan", "candidate-001", "--json"], repo);
+      await runCli(["handoff", "candidate-001", "--json"], repo);
+
+      const candidatesPath = path.join(repo, ".deepclean", "candidates", await latestRunFile(repo));
+      const candidates = JSON.parse(await readFile(candidatesPath, "utf8")) as Array<{
+        id: string;
+        findingId?: string;
+        lifecycleState?: string;
+        status?: string;
+        updatedAt?: string;
+      }>;
+      const targetIndex = candidates.findIndex((candidate) => candidate.id === "candidate-001");
+      const target = candidates[targetIndex];
+      expect(target?.findingId).toMatch(/^finding-/);
+      expect(candidates.length).toBeGreaterThan(2);
+      const revalidatedAt = new Date(Date.now() + 1000).toISOString();
+      candidates[targetIndex] = {
+        ...target!,
+        lifecycleState: "stale",
+        status: "stale",
+        updatedAt: revalidatedAt,
+      };
+      candidates[1] = {
+        ...candidates[1]!,
+        lifecycleState: "resolved",
+        status: "fixed",
+        updatedAt: revalidatedAt,
+      };
+      candidates[2] = {
+        ...candidates[2]!,
+        lifecycleState: "superseded",
+        status: "superseded",
+        updatedAt: revalidatedAt,
+      };
+      await writeFile(candidatesPath, `${JSON.stringify(candidates, null, 2)}\n`, "utf8");
+      await mkdir(path.join(repo, ".deepclean", "revalidations"), { recursive: true });
+      await writeFile(path.join(repo, ".deepclean", "revalidations", "revalidation-status-fixture.json"), `${JSON.stringify({
+        schemaVersion,
+        recordType: "revalidation",
+        id: "revalidation-status-fixture",
+        targetType: "finding",
+        targetId: target?.findingId,
+        runId: (await latestRunFile(repo)).replace(/\.json$/, ""),
+        outcome: "stale",
+        evidenceIds: [],
+        diagnostics: [],
+        createdAt: revalidatedAt,
+      }, null, 2)}\n`, "utf8");
+
+      const status = await runCli(["status", "--json"], repo);
+      expect(status.code).toBe(0);
+      const payload = JSON.parse(status.stdout) as {
+        data: {
+          latestRun: { id: string; path: string };
+          latestReport: { id: string; jsonPath: string; markdownPath: string };
+          queue: { stale: number; blocked: number; active: number; fixed: number; byLifecycleState: Record<string, number> };
+          activeItems: Array<{ id: string; status: string; lifecycleState?: string }>;
+          blockedItems: Array<{ id: string; reason: string }>;
+          staleArtifacts: Array<{ type: string; targetId?: string; reason: string; recommendation: string }>;
+          latestArtifacts: { latestReport?: { id: string }; latestPlan?: { id: string }; latestHandoff?: { id: string }; latestRevalidation?: { id: string } };
+          recentProgress: Array<{ type: string; kind: string; id: string }>;
+          nextAction: { command: string; reason: string };
+          pendingRevalidation: number;
+        };
+        diagnostics: Array<{ code: string }>;
+      };
+      expect(payload.data.latestRun.id).toMatch(/^run-/);
+      expect(payload.data.latestRun.path).toContain(".deepclean/runs/");
+      expect(payload.data.latestReport.jsonPath).toContain(".deepclean/reports/");
+      expect(payload.data.latestReport.markdownPath).toContain(".deepclean/reports/");
+      expect(payload.data.queue.stale).toBeGreaterThanOrEqual(1);
+      expect(payload.data.queue.blocked).toBeGreaterThanOrEqual(1);
+      expect(payload.data.queue.fixed).toBeGreaterThanOrEqual(1);
+      expect(payload.data.queue.byLifecycleState["stale"]).toBeGreaterThanOrEqual(1);
+      expect(payload.data.queue.byLifecycleState["resolved"]).toBeGreaterThanOrEqual(1);
+      expect(payload.data.queue.byLifecycleState["superseded"]).toBeGreaterThanOrEqual(1);
+      expect(payload.data.activeItems.some((item) => (
+        item.status === "fixed"
+        || item.status === "superseded"
+        || item.lifecycleState === "stale"
+        || item.lifecycleState === "resolved"
+      ))).toBe(false);
+      expect(payload.data.pendingRevalidation).toBeGreaterThanOrEqual(1);
+      expect(payload.data.blockedItems.some((item) => (
+        item.id === "candidate-001"
+        && item.reason.includes("revalidation")
+      ))).toBe(true);
+      expect(payload.data.staleArtifacts.some((artifact) => (
+        artifact.type === "plan"
+        && artifact.targetId === "candidate-001"
+        && artifact.recommendation.includes("deepclean plan")
+      ))).toBe(true);
+      expect(payload.data.staleArtifacts.some((artifact) => (
+        artifact.type === "handoff"
+        && artifact.targetId === "candidate-001"
+        && artifact.reason.includes("not ready")
+      ))).toBe(true);
+      expect(payload.data.latestArtifacts.latestReport?.id).toMatch(/^report-/);
+      expect(payload.data.latestArtifacts.latestPlan?.id).toMatch(/^plan-/);
+      expect(payload.data.latestArtifacts.latestHandoff?.id).toMatch(/^handoff-/);
+      expect(payload.data.latestArtifacts.latestRevalidation?.id).toBe("revalidation-status-fixture");
+      expect(payload.data.recentProgress.some((event) => event.type === "report")).toBe(true);
+      expect(payload.data.recentProgress.some((event) => event.type === "plan")).toBe(true);
+      expect(payload.data.recentProgress.some((event) => event.type === "handoff")).toBe(true);
+      expect(payload.data.recentProgress.some((event) => event.kind === "revalidation:stale")).toBe(true);
+      expect(payload.data.nextAction.command).toBe("deepclean revalidate all");
+      expect(payload.diagnostics.some((diagnostic) => diagnostic.code === "stale_state")).toBe(true);
+    });
+  });
+
   test("parses current alpha candidates without stable identity fields", () => {
     const now = "2026-05-24T00:00:00.000Z";
     const alphaCandidate = {

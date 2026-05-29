@@ -499,6 +499,46 @@ export async function readFixAttempts(paths: StatePaths): Promise<FixAttemptReco
   return attempts.sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
 }
 
+export async function readRevalidations(paths: StatePaths): Promise<RevalidationRecord[]> {
+  const files = await jsonFiles(paths.revalidationsDir);
+  const records: RevalidationRecord[] = [];
+  for (const file of files) {
+    const raw = await readFile(path.join(paths.revalidationsDir, file), "utf8");
+    records.push(revalidationRecordSchema.parse(JSON.parse(raw)));
+  }
+  return records.sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
+}
+
+export async function readReports(paths: StatePaths): Promise<ReportRecord[]> {
+  const files = await jsonFiles(paths.reportsDir);
+  const reports: ReportRecord[] = [];
+  for (const file of files) {
+    const raw = await readFile(path.join(paths.reportsDir, file), "utf8");
+    reports.push(reportRecordSchema.parse(JSON.parse(raw)));
+  }
+  return reports.sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
+}
+
+export async function readPlans(paths: StatePaths): Promise<PlanRecord[]> {
+  const files = await jsonFiles(paths.plansDir);
+  const plans: PlanRecord[] = [];
+  for (const file of files) {
+    const raw = await readFile(path.join(paths.plansDir, file), "utf8");
+    plans.push(planRecordSchema.parse(JSON.parse(raw)));
+  }
+  return plans.sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
+}
+
+export async function readHandoffs(paths: StatePaths): Promise<HandoffRecord[]> {
+  const files = await jsonFiles(paths.handoffsDir);
+  const handoffs: HandoffRecord[] = [];
+  for (const file of files) {
+    const raw = await readFile(path.join(paths.handoffsDir, file), "utf8");
+    handoffs.push(handoffRecordSchema.parse(JSON.parse(raw)));
+  }
+  return handoffs.sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
+}
+
 export async function readClusters(
   paths: StatePaths,
   runId: string,

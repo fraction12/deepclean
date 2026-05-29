@@ -26,6 +26,7 @@ deepclean init
 deepclean map
 deepclean scan --json
 deepclean report
+deepclean status --json
 deepclean next
 deepclean plan candidate-001
 ```
@@ -53,6 +54,7 @@ deepclean init
 deepclean map
 deepclean scan
 deepclean report
+deepclean status
 deepclean cluster
 deepclean plan theme-001 --format codex
 deepclean next
@@ -76,6 +78,8 @@ Deepclean writes durable local artifacts under `.deepclean/`:
 - `plans/` - focused implementation plans
 - `handoffs/` - agent-ready task packets
 - `triage/` - local triage notes
+- `lifecycle/` and `revalidations/` - finding history and freshness checks
+- `fixes/` - local fix attempt ledgers and verification evidence
 
 Add `.deepclean/` to `.gitignore` unless the repo deliberately wants to share generated reports.
 
@@ -87,6 +91,7 @@ Core commands support `--json` for automation:
 deepclean scan --json
 deepclean map --json
 deepclean scan --evidence-only --json
+deepclean status --json
 deepclean report --json
 deepclean cluster --json
 deepclean plan theme-001 --json
@@ -104,6 +109,8 @@ Useful global flags:
 - `--no-input`
 - `--quiet`
 - `--debug`
+
+`deepclean status --json` is the safest first command for a returning agent. It is read-only and reports the latest run/report, active queue, blocked items, stale artifacts, recent progress events, pending revalidation, latest artifact paths, locks, and a recommended next command.
 
 ## Local Evidence
 
