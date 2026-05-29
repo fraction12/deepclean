@@ -35,44 +35,9 @@ export async function classifyRevalidation(options: ClassifyRevalidationOptions)
   const finding = options.finding!;
   const matching = options.currentCandidates.find((candidate) => candidate.findingId === finding.id);
   const progress = fitnessProgressForFinding(finding, options.previousEvidence ?? [], options.currentEvidence ?? []);
-  if (matching) {
-    if (progress) {
-      return revalidationRecord({
-        targetId: finding.id,
-        priorLifecycleState: finding.lifecycleState,
-        runId: options.runId,
-        outcome: "partially-resolved",
-        confidence: matching.confidence,
-        evidenceIds: unique([...matching.evidenceIds, ...progress.evidenceIds]),
-        evidenceFreshness: "fresh",
-        previousObservationId: finding.currentObservationId,
-        rationale: `The same stable finding remains, but ${progress.metric} moved from ${progress.before} to ${progress.after} ${progress.unit}.`,
-        nextAction: "Treat this as campaign progress and continue slicing until the parent metric clears.",
-        progress,
-        diagnostics: [],
-        createdAt: options.createdAt,
-        verificationRunIds: options.verificationRunIds ?? [],
-        changedFiles: options.changedFiles ?? [],
-        dirtyState: options.dirtyState,
-      });
-    }
-    return revalidationRecord({
-      targetId: finding.id,
-      priorLifecycleState: finding.lifecycleState,
-      runId: options.runId,
-      outcome: "still-open",
-      confidence: matching.confidence,
-      evidenceIds: matching.evidenceIds,
-      evidenceFreshness: "fresh",
-      previousObservationId: finding.currentObservationId,
-      rationale: "The same stable finding was rediscovered in the revalidation scan, so the original issue remains present.",
-      nextAction: "Keep the finding open and inspect the latest evidence before attempting another fix.",
-      diagnostics: [],
-      createdAt: options.createdAt,
-      verificationRunIds: options.verificationRunIds ?? [],
-      changedFiles: options.changedFiles ?? [],
-      dirtyState: options.dirtyState,
-    });
+  const matchingOutcome = revalidationForMatchingCandidate({ options, finding, matching, progress });
+  if (matchingOutcome) {
+    return matchingOutcome;
   }
 
   const filesExist = await anyFindingFilesExist(options.root, finding);
@@ -160,6 +125,57 @@ export async function classifyRevalidation(options: ClassifyRevalidationOptions)
     previousObservationId: finding.currentObservationId,
     rationale: "The original file anchors still exist, but neither the original finding nor related replacement evidence was rediscovered.",
     nextAction: "Keep the proof record with the fix or handoff; passed verification alone was not used as resolution.",
+    diagnostics: [],
+    createdAt: options.createdAt,
+    verificationRunIds: options.verificationRunIds ?? [],
+    changedFiles: options.changedFiles ?? [],
+    dirtyState: options.dirtyState,
+  });
+}
+
+function revalidationForMatchingCandidate(input: {
+  options: ClassifyRevalidationOptions;
+  finding: FindingRecord;
+  matching: CandidateRecord | undefined;
+  progress: ReturnType<typeof fitnessProgressForFinding>;
+}): RevalidationRecord | undefined {
+  const { options, finding, matching, progress } = input;
+  if (!matching) {
+    return undefined;
+  }
+
+  if (progress) {
+    return revalidationRecord({
+      targetId: finding.id,
+      priorLifecycleState: finding.lifecycleState,
+      runId: options.runId,
+      outcome: "partially-resolved",
+      confidence: matching.confidence,
+      evidenceIds: unique([...matching.evidenceIds, ...progress.evidenceIds]),
+      evidenceFreshness: "fresh",
+      previousObservationId: finding.currentObservationId,
+      rationale: `The same stable finding remains, but ${progress.metric} moved from ${progress.before} to ${progress.after} ${progress.unit}.`,
+      nextAction: "Treat this as campaign progress and continue slicing until the parent metric clears.",
+      progress,
+      diagnostics: [],
+      createdAt: options.createdAt,
+      verificationRunIds: options.verificationRunIds ?? [],
+      changedFiles: options.changedFiles ?? [],
+      dirtyState: options.dirtyState,
+    });
+  }
+
+  return revalidationRecord({
+    targetId: finding.id,
+    priorLifecycleState: finding.lifecycleState,
+    runId: options.runId,
+    outcome: "still-open",
+    confidence: matching.confidence,
+    evidenceIds: matching.evidenceIds,
+    evidenceFreshness: "fresh",
+    previousObservationId: finding.currentObservationId,
+    rationale: "The same stable finding was rediscovered in the revalidation scan, so the original issue remains present.",
+    nextAction: "Keep the finding open and inspect the latest evidence before attempting another fix.",
     diagnostics: [],
     createdAt: options.createdAt,
     verificationRunIds: options.verificationRunIds ?? [],
