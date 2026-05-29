@@ -1436,18 +1436,7 @@ fs.writeFileSync(outputPath, JSON.stringify({
 
   test("classifies revalidation outcomes", async () => {
     await withTempRepo(async (repo) => {
-      await mkdir(path.join(repo, "src"), { recursive: true });
-      await writeFile(path.join(repo, "src", "example.ts"), "export const value = 1;\n", "utf8");
-      const finding = findingFixture();
-      const unchanged = await classifyRevalidation({
-        root: repo,
-        finding,
-        currentCandidates: [candidateFixture({ findingId: finding.id })],
-        runId: "run-now",
-        createdAt: "2026-05-24T00:00:00.000Z",
-      });
-      expect(unchanged.outcome).toBe("still-open");
-      expect(unchanged.rationale).toContain("rediscovered");
+      const finding = await expectStillOpenRevalidation(repo);
 
       const progressFinding = findingFixture({
         evidenceIds: ["ev-before"],
@@ -3443,6 +3432,22 @@ function validateFeatureAndSynthesisRecordSchemas(now: string): void {
     diagnostics: [],
     createdAt: now,
   });
+}
+
+async function expectStillOpenRevalidation(repo: string): Promise<FindingRecord> {
+  await mkdir(path.join(repo, "src"), { recursive: true });
+  await writeFile(path.join(repo, "src", "example.ts"), "export const value = 1;\n", "utf8");
+  const finding = findingFixture();
+  const unchanged = await classifyRevalidation({
+    root: repo,
+    finding,
+    currentCandidates: [candidateFixture({ findingId: finding.id })],
+    runId: "run-now",
+    createdAt: "2026-05-24T00:00:00.000Z",
+  });
+  expect(unchanged.outcome).toBe("still-open");
+  expect(unchanged.rationale).toContain("rediscovered");
+  return finding;
 }
 
 async function withTempRepo(fn: (repo: string) => Promise<void>): Promise<void> {
