@@ -46,12 +46,17 @@ import {
   readEvidence,
   readFeatures,
   readFindings,
+  readFixAttempts,
+  readHandoffs,
   readLatestCandidates,
   readLatestClusters,
   readLatestEvidence,
   readLatestFeatures,
   readLatestSynthesisAttempt,
   readLifecycleEvents,
+  readPlans,
+  readReports,
+  readRevalidations,
   readRuns,
   resolveStatePaths,
   updateLatestCandidates,
@@ -87,8 +92,13 @@ import {
   type FeatureRecord,
   type FindingRecord,
   type FixAttemptRecord,
+  type HandoffRecord,
+  type LifecycleEventRecord,
+  type PlanRecord,
+  type ReportRecord,
   type RetentionManifestRecord,
   type RevalidationRecord,
+  type RunRecord,
   type SynthesisAttemptRecord,
 } from "./types.js";
 import { timestampId } from "./ids.js";
@@ -212,8 +222,10 @@ Usage:
 Commands:
   init                         Create or validate .deepclean state
   doctor                       Check environment, config, state, git, provider, and privacy readiness
-  status                       Summarize current project-local Deepclean state
+  status                       Read-only lifecycle summary for current Deepclean state
     --progress-events <n>      Recent lifecycle/fix artifacts used for progress summary; default 200
+                               --json includes latest artifacts, active/blocked work,
+                               stale artifacts, recent progress, and next action
   ci                           Run non-interactive scan and policy gates for CI
   map                          Write semantic feature records without producing candidates
   scan                         Collect local evidence and generate candidates
@@ -519,6 +531,27 @@ async function statusCommand(context: CommandContext): Promise<number> {
   const clusters = latest ? await readLatestClusters(context.paths) : [];
   const evidence = latest ? await readLatestEvidence(context.paths) : [];
   const features = initialized ? await readLatestFeatures(context.paths) : [];
+  let records: StatusRecordInputs = emptyStatusRecordInputs();
+  if (initialized) {
+    try {
+      const [runs, reports, plans, handoffs, lifecycleEvents, revalidations, fixAttempts] = await Promise.all([
+        readRuns(context.paths),
+        readReports(context.paths),
+        readPlans(context.paths),
+        readHandoffs(context.paths),
+        readLifecycleEvents(context.paths),
+        readRevalidations(context.paths),
+        readFixAttempts(context.paths),
+      ]);
+      records = { runs, reports, plans, handoffs, lifecycleEvents, revalidations, fixAttempts };
+    } catch (error) {
+      diagnostics.push({
+        level: "error",
+        code: "invalid_state",
+        message: `Deepclean status could not parse one or more state records: ${errorMessage(error)}`,
+      });
+    }
+  }
   const git = await gitDoctor(context.paths.root);
   if (!git.available) {
     diagnostics.push({
@@ -536,11 +569,96 @@ async function statusCommand(context: CommandContext): Promise<number> {
     ? await buildProgressSummary(context.paths, progressEventLimit === undefined ? {} : { eventLimit: progressEventLimit })
     : undefined;
   const statusCounts = countBy(candidates, (candidate) => candidate.status);
+  const lifecycleCounts = countBy(candidates, (candidate) => candidate.lifecycleState ?? "unknown");
+  const latestRun = records.runs.find((run) => run.id === latest) ?? records.runs.at(-1);
+  const latestReport = latest
+    ? records.reports.filter((report) => report.runId === latest).at(-1) ?? records.reports.at(-1)
+    : records.reports.at(-1);
+  const candidateById = new Map(candidates.map((candidate) => [candidate.id, candidate]));
+  const candidateByFindingId = new Map(candidates.flatMap((candidate) => (
+    candidate.findingId ? [[candidate.findingId, candidate] as const] : []
+  )));
+  const latestRevalidationByFinding = latestRevalidationsByFinding(records.revalidations);
+  const staleArtifacts = buildStaleArtifacts({
+    paths: context.paths,
+    latestRunId: latest,
+    latestReport,
+    candidates,
+    candidateById,
+    candidateByFindingId,
+    latestRevalidationByFinding,
+    reports: records.reports,
+    plans: records.plans,
+    handoffs: records.handoffs,
+    fixAttempts: records.fixAttempts,
+  });
+  const blockers = buildBlockedItems({
+    candidates,
+    fixAttempts: records.fixAttempts,
+  });
+  const activeItems = buildActiveStatusItems(candidates, new Set(blockers.map((item) => item.id))).slice(0, 10);
+  const recentProgress = buildRecentProgressEvents(context.paths, records, candidates, progressEventLimit ?? 20);
+  const latestArtifacts = buildLatestArtifactIndex(context.paths, {
+    latestRun,
+    latestReport,
+    candidates,
+    plans: records.plans,
+    handoffs: records.handoffs,
+    revalidations: records.revalidations,
+    fixAttempts: records.fixAttempts,
+    lifecycleEvents: records.lifecycleEvents,
+  });
+  const nextAction = chooseStatusNextAction({
+    initialized,
+    latestRunId: latest,
+    locks,
+    staleArtifacts,
+    activeItems,
+    blockers,
+    pendingRevalidation: candidates.filter((candidate) => candidate.lifecycleState === "stale" || candidate.status === "stale").length,
+    latestReport,
+  });
+  if (!initialized) {
+    diagnostics.push({
+      level: "info",
+      code: "no_state",
+      message: "Deepclean state has not been initialized.",
+    });
+  } else if (!latest) {
+    diagnostics.push({
+      level: "warning",
+      code: "no_runs",
+      message: "No Deepclean scan run exists yet.",
+    });
+  }
+  if (latest && !records.reports.some((report) => report.runId === latest)) {
+    diagnostics.push({
+      level: "warning",
+      code: "missing_latest_artifacts",
+      message: `No report artifact exists for latest run ${latest}.`,
+    });
+  }
+  if (locks.some((lock) => lock.stale)) {
+    diagnostics.push({
+      level: "warning",
+      code: "stale_lock",
+      message: "A stale Deepclean writer lock is present.",
+    });
+  }
+  if (staleArtifacts.length > 0 || candidates.some((candidate) => candidate.lifecycleState === "stale" || candidate.status === "stale")) {
+    diagnostics.push({
+      level: "warning",
+      code: "stale_state",
+      message: "One or more findings or generated artifacts need revalidation or regeneration.",
+    });
+  }
   const data = {
     root: context.paths.root,
     stateDir: context.paths.stateDir,
     initialized,
     latestRunId: latest,
+    latestRun: latestRun ? runStatusPayload(context.paths, latestRun) : undefined,
+    latestReport: latestReport ? reportStatusPayload(context.paths, latestReport) : undefined,
     git: {
       branch: git.branch,
       dirty: git.dirty,
@@ -549,11 +667,19 @@ async function statusCommand(context: CommandContext): Promise<number> {
     queue: {
       total: candidates.length,
       open: candidates.filter((candidate) => candidate.status === "open").length,
+      active: activeItems.length,
+      blocked: blockers.length,
+      stale: candidates.filter((candidate) => candidate.lifecycleState === "stale" || candidate.status === "stale").length,
+      fixed: candidates.filter((candidate) => candidate.lifecycleState === "fixed" || candidate.lifecycleState === "resolved" || candidate.status === "fixed").length,
+      suppressed: candidates.filter((candidate) => candidate.lifecycleState === "suppressed" || candidate.status === "ignored" || candidate.status === "false-positive").length,
       byStatus: statusCounts,
+      byLifecycleState: lifecycleCounts,
       themes: clusters.length,
       evidence: evidence.length,
       features: features.length,
     },
+    activeItems,
+    blockedItems: blockers,
     locks: {
       active: locks.filter((lock) => !lock.stale).length,
       stale: locks.filter((lock) => lock.stale).length,
@@ -569,8 +695,12 @@ async function statusCommand(context: CommandContext): Promise<number> {
         recoveryCommand: lock.recoveryCommand,
       })),
     },
-    pendingRevalidation: candidates.filter((candidate) => candidate.lifecycleState === "stale").length,
+    pendingRevalidation: candidates.filter((candidate) => candidate.lifecycleState === "stale" || candidate.status === "stale").length,
     artifacts: artifactCounts,
+    latestArtifacts,
+    staleArtifacts,
+    recentProgress,
+    nextAction,
     progress,
   };
 
@@ -579,9 +709,35 @@ async function statusCommand(context: CommandContext): Promise<number> {
     console.log(`root: ${data.root}`);
     console.log(`state: ${initialized ? "initialized" : "not initialized"}`);
     console.log(`latest run: ${latest ?? "none"}`);
-    console.log(`queue: ${data.queue.open} open / ${data.queue.total} total`);
+    console.log(`latest report: ${latestReport ? path.relative(context.paths.root, reportJsonPath(context.paths, latestReport)) : "none"}`);
+    console.log(`queue: ${data.queue.active} active / ${data.queue.blocked} blocked / ${data.queue.open} open / ${data.queue.total} total`);
     console.log(`git: ${git.available ? git.dirty ? "dirty" : "clean" : "unavailable"}`);
     console.log(`locks: ${data.locks.active} active / ${data.locks.stale} stale`);
+    if (activeItems.length > 0) {
+      console.log("active:");
+      for (const item of activeItems.slice(0, 5)) {
+        console.log(`  ${item.id} ${item.priority} ${item.title}`);
+      }
+    }
+    if (blockers.length > 0) {
+      console.log("blocked:");
+      for (const item of blockers.slice(0, 5)) {
+        console.log(`  ${item.id}: ${item.reason}`);
+      }
+    }
+    if (staleArtifacts.length > 0) {
+      console.log("stale artifacts:");
+      for (const item of staleArtifacts.slice(0, 5)) {
+        console.log(`  ${item.type} ${item.id}: ${item.reason}`);
+      }
+    }
+    if (recentProgress.length > 0) {
+      console.log("recent progress:");
+      for (const item of recentProgress.slice(0, 5)) {
+        console.log(`  ${item.timestamp} ${item.kind} ${item.id}`);
+      }
+    }
+    console.log(`next: ${nextAction.command}`);
     if (progress) {
       for (const line of renderProgressSummary(progress)) {
         console.log(line);
@@ -590,6 +746,578 @@ async function statusCommand(context: CommandContext): Promise<number> {
     printDiagnostics(diagnostics);
   }
   return 0;
+}
+
+interface StatusRecordInputs {
+  runs: RunRecord[];
+  reports: ReportRecord[];
+  plans: PlanRecord[];
+  handoffs: HandoffRecord[];
+  lifecycleEvents: LifecycleEventRecord[];
+  revalidations: RevalidationRecord[];
+  fixAttempts: FixAttemptRecord[];
+}
+
+interface StatusCandidateItem {
+  id: string;
+  findingId?: string;
+  title: string;
+  priority: CandidateRecord["priority"];
+  status: CandidateRecord["status"];
+  lifecycleState?: CandidateRecord["lifecycleState"];
+  featureIds: string[];
+  nextCommand: string;
+}
+
+interface StatusBlockedItem extends StatusCandidateItem {
+  reason: string;
+  latestAttemptId?: string;
+  attempts?: number;
+}
+
+interface StatusStaleArtifact {
+  type: "report" | "plan" | "handoff" | "fix-attempt";
+  id: string;
+  path: string;
+  targetId?: string;
+  findingId?: string;
+  createdAt: string;
+  reason: string;
+  recommendation: string;
+}
+
+interface StatusProgressEvent {
+  type: "run" | "report" | "plan" | "handoff" | "split" | "lifecycle" | "revalidation" | "fix-attempt";
+  id: string;
+  kind: string;
+  timestamp: string;
+  path?: string;
+  targetId?: string;
+  findingId?: string;
+  candidateId?: string;
+  outcome?: string;
+}
+
+function emptyStatusRecordInputs(): StatusRecordInputs {
+  return {
+    runs: [],
+    reports: [],
+    plans: [],
+    handoffs: [],
+    lifecycleEvents: [],
+    revalidations: [],
+    fixAttempts: [],
+  };
+}
+
+function runStatusPayload(paths: StatePaths, run: RunRecord): {
+  id: string;
+  path: string;
+  completedAt: string;
+  candidateCount: number;
+  evidenceCount: number;
+  featureCount?: number;
+  clusterCount?: number;
+} {
+  return {
+    id: run.id,
+    path: path.join(paths.runsDir, `${run.id}.json`),
+    completedAt: run.completedAt,
+    candidateCount: run.candidateCount,
+    evidenceCount: run.evidenceCount,
+    ...(run.featureCount === undefined ? {} : { featureCount: run.featureCount }),
+    ...(run.clusterCount === undefined ? {} : { clusterCount: run.clusterCount }),
+  };
+}
+
+function reportStatusPayload(paths: StatePaths, report: ReportRecord): {
+  id: string;
+  runId: string;
+  createdAt: string;
+  path: string;
+  jsonPath: string;
+  markdownPath: string;
+} {
+  const jsonPath = reportJsonPath(paths, report);
+  return {
+    id: report.id,
+    runId: report.runId,
+    createdAt: report.createdAt,
+    path: jsonPath,
+    jsonPath,
+    markdownPath: path.join(paths.reportsDir, `${report.id}.md`),
+  };
+}
+
+function latestRevalidationsByFinding(records: RevalidationRecord[]): Map<string, RevalidationRecord> {
+  const byFinding = new Map<string, RevalidationRecord>();
+  for (const record of records) {
+    if (record.targetType === "finding" && record.targetId) {
+      byFinding.set(record.targetId, record);
+    }
+  }
+  return byFinding;
+}
+
+function buildActiveStatusItems(candidates: CandidateRecord[], blockedIds: Set<string>): StatusCandidateItem[] {
+  return rankCandidates(candidates)
+    .filter((candidate) => defaultQueueCandidate(candidate) && !blockedIds.has(candidate.id))
+    .map((candidate) => statusCandidatePayload(candidate));
+}
+
+function buildBlockedItems(options: {
+  candidates: CandidateRecord[];
+  fixAttempts: FixAttemptRecord[];
+}): StatusBlockedItem[] {
+  const blocked = new Map<string, StatusBlockedItem>();
+  for (const candidate of options.candidates) {
+    const reason = candidateBlockerReason(candidate);
+    if (reason) {
+      blocked.set(candidate.id, { ...statusCandidatePayload(candidate), reason });
+    }
+  }
+
+  const attemptsByTarget = new Map<string, FixAttemptRecord[]>();
+  for (const attempt of options.fixAttempts) {
+    const key = attempt.candidateId ?? attempt.findingId;
+    attemptsByTarget.set(key, [...(attemptsByTarget.get(key) ?? []), attempt]);
+  }
+  for (const [targetId, attempts] of attemptsByTarget) {
+    const latest = attempts.at(-1);
+    if (!latest) {
+      continue;
+    }
+    const unresolved = latest.outcome === "still-open" || latest.outcome === "partially-resolved" || latest.outcome === "needs_human";
+    const failedVerification = latest.verificationResults.some((result) => !result.passed);
+    const exhausted = Boolean(latest.maxAttempts && latest.attemptNumber && latest.attemptNumber >= latest.maxAttempts);
+    if (!unresolved && !failedVerification) {
+      continue;
+    }
+    const candidate = options.candidates.find((item) => item.id === latest.candidateId || item.findingId === latest.findingId);
+    if (!candidate) {
+      continue;
+    }
+    const reason = failedVerification
+      ? "latest fix attempt failed verification"
+      : exhausted
+        ? "fix attempts exhausted without resolution"
+        : "latest fix attempt did not resolve the finding";
+    blocked.set(candidate.id, {
+      ...statusCandidatePayload(candidate),
+      reason,
+      latestAttemptId: latest.id,
+      attempts: attempts.length,
+    });
+  }
+
+  return [...blocked.values()].sort((a, b) => a.priority.localeCompare(b.priority) || a.id.localeCompare(b.id));
+}
+
+function candidateBlockerReason(candidate: CandidateRecord): string | undefined {
+  const lifecycleState = candidate.lifecycleState;
+  if (candidate.status === "stale" || lifecycleState === "stale") {
+    return "revalidation required before handoff or fix work";
+  }
+  if (lifecycleState === "design-needed") {
+    return "design needed before an agent-ready handoff";
+  }
+  if (lifecycleState === "needs-human" || lifecycleState === "inconclusive") {
+    return "human decision needed before work can continue";
+  }
+  return undefined;
+}
+
+function defaultQueueCandidate(candidate: CandidateRecord): boolean {
+  if (candidate.status !== "open") {
+    return false;
+  }
+  const inactive = new Set([
+    "design-needed",
+    "fixed",
+    "inconclusive",
+    "needs-human",
+    "resolved",
+    "split",
+    "stale",
+    "superseded",
+    "suppressed",
+  ]);
+  return !inactive.has(candidate.lifecycleState ?? "ready");
+}
+
+function statusCandidatePayload(candidate: CandidateRecord): StatusCandidateItem {
+  return {
+    id: candidate.id,
+    ...(candidate.findingId ? { findingId: candidate.findingId } : {}),
+    title: candidate.title,
+    priority: candidate.priority,
+    status: candidate.status,
+    ...(candidate.lifecycleState ? { lifecycleState: candidate.lifecycleState } : {}),
+    featureIds: candidate.affectedFeatureIds,
+    nextCommand: `deepclean plan ${candidate.id}`,
+  };
+}
+
+function buildStaleArtifacts(options: {
+  paths: StatePaths;
+  latestRunId?: string | undefined;
+  latestReport?: ReportRecord | undefined;
+  candidates: CandidateRecord[];
+  candidateById: Map<string, CandidateRecord>;
+  candidateByFindingId: Map<string, CandidateRecord>;
+  latestRevalidationByFinding: Map<string, RevalidationRecord>;
+  reports: ReportRecord[];
+  plans: PlanRecord[];
+  handoffs: HandoffRecord[];
+  fixAttempts: FixAttemptRecord[];
+}): StatusStaleArtifact[] {
+  const artifacts: StatusStaleArtifact[] = [];
+  if (options.latestReport && options.latestRunId && options.latestReport.runId !== options.latestRunId) {
+    artifacts.push({
+      type: "report",
+      id: options.latestReport.id,
+      path: reportJsonPath(options.paths, options.latestReport),
+      targetId: options.latestReport.runId,
+      createdAt: options.latestReport.createdAt,
+      reason: `latest report was generated for ${options.latestReport.runId}, not latest run ${options.latestRunId}`,
+      recommendation: "Run deepclean report.",
+    });
+  }
+  if (options.latestRunId && !options.reports.some((report) => report.runId === options.latestRunId)) {
+    artifacts.push({
+      type: "report",
+      id: "missing",
+      path: options.paths.reportsDir,
+      targetId: options.latestRunId,
+      createdAt: new Date(0).toISOString(),
+      reason: `no report exists for latest run ${options.latestRunId}`,
+      recommendation: "Run deepclean report.",
+    });
+  }
+
+  for (const plan of options.plans) {
+    const candidate = plan.targetType === "candidate" ? options.candidateById.get(plan.targetId) : undefined;
+    const reason = planStaleReason(plan, candidate, options.latestRunId, options.latestRevalidationByFinding);
+    if (reason) {
+      artifacts.push({
+        type: "plan",
+        id: plan.id,
+        path: path.join(options.paths.plansDir, `${plan.id}.json`),
+        targetId: plan.targetId,
+        ...(candidate?.findingId ? { findingId: candidate.findingId } : {}),
+        createdAt: plan.createdAt,
+        reason,
+        recommendation: candidate ? `Run deepclean plan ${candidate.id}.` : "Regenerate the plan from the current status queue.",
+      });
+    }
+  }
+
+  for (const handoff of options.handoffs) {
+    const candidate = options.candidateById.get(handoff.candidateId);
+    const reason = handoffStaleReason(handoff, candidate, options.latestRevalidationByFinding);
+    if (reason) {
+      artifacts.push({
+        type: "handoff",
+        id: handoff.id,
+        path: path.join(options.paths.handoffsDir, `${handoff.id}.json`),
+        targetId: handoff.candidateId,
+        ...(candidate?.findingId ? { findingId: candidate.findingId } : {}),
+        createdAt: handoff.createdAt,
+        reason,
+        recommendation: candidate ? `Run deepclean handoff ${candidate.id}.` : "Regenerate a handoff from a current candidate.",
+      });
+    }
+  }
+
+  for (const attempt of options.fixAttempts) {
+    const candidate = attempt.candidateId ? options.candidateById.get(attempt.candidateId) : options.candidateByFindingId.get(attempt.findingId);
+    const latestRevalidation = options.latestRevalidationByFinding.get(attempt.findingId);
+    if (latestRevalidation && latestRevalidation.createdAt > attempt.createdAt) {
+      artifacts.push({
+        type: "fix-attempt",
+        id: attempt.id,
+        path: path.join(options.paths.fixesDir, `${attempt.id}.json`),
+        targetId: attempt.candidateId ?? attempt.findingId,
+        findingId: attempt.findingId,
+        createdAt: attempt.createdAt,
+        reason: `fix attempt predates latest revalidation ${latestRevalidation.id}`,
+        recommendation: candidate ? `Inspect deepclean show ${candidate.id} before retrying.` : "Inspect the latest finding state before retrying.",
+      });
+    }
+  }
+
+  return artifacts.sort((a, b) => b.createdAt.localeCompare(a.createdAt) || a.id.localeCompare(b.id));
+}
+
+function planStaleReason(
+  plan: PlanRecord,
+  candidate: CandidateRecord | undefined,
+  latestRunId: string | undefined,
+  latestRevalidationByFinding: Map<string, RevalidationRecord>,
+): string | undefined {
+  if (latestRunId && plan.runId !== latestRunId) {
+    return `plan was generated for ${plan.runId}, not latest run ${latestRunId}`;
+  }
+  if (plan.targetType === "cluster") {
+    return undefined;
+  }
+  if (!candidate) {
+    return "target candidate is no longer present in the latest run";
+  }
+  const blocker = candidateBlockerReason(candidate);
+  if (blocker) {
+    return `target candidate is not ready: ${blocker}`;
+  }
+  const latestRevalidation = candidate.findingId ? latestRevalidationByFinding.get(candidate.findingId) : undefined;
+  if (latestRevalidation && latestRevalidation.createdAt > plan.createdAt) {
+    return `plan predates latest revalidation ${latestRevalidation.id}`;
+  }
+  return undefined;
+}
+
+function handoffStaleReason(
+  handoff: HandoffRecord,
+  candidate: CandidateRecord | undefined,
+  latestRevalidationByFinding: Map<string, RevalidationRecord>,
+): string | undefined {
+  if (!candidate) {
+    return "target candidate is no longer present in the latest run";
+  }
+  const blocker = candidateBlockerReason(candidate);
+  if (blocker) {
+    return `target candidate is not ready: ${blocker}`;
+  }
+  const latestRevalidation = candidate.findingId ? latestRevalidationByFinding.get(candidate.findingId) : undefined;
+  if (latestRevalidation && latestRevalidation.createdAt > handoff.createdAt) {
+    return `handoff predates latest revalidation ${latestRevalidation.id}`;
+  }
+  return undefined;
+}
+
+function buildRecentProgressEvents(
+  paths: StatePaths,
+  records: StatusRecordInputs,
+  candidates: CandidateRecord[],
+  limit: number,
+): StatusProgressEvent[] {
+  const events: StatusProgressEvent[] = [];
+  for (const run of records.runs) {
+    events.push({
+      type: "run",
+      id: run.id,
+      kind: "scan",
+      timestamp: run.completedAt,
+      path: path.join(paths.runsDir, `${run.id}.json`),
+    });
+  }
+  for (const report of records.reports) {
+    events.push({
+      type: "report",
+      id: report.id,
+      kind: "report",
+      timestamp: report.createdAt,
+      path: reportJsonPath(paths, report),
+      targetId: report.runId,
+    });
+  }
+  for (const plan of records.plans) {
+    events.push({
+      type: "plan",
+      id: plan.id,
+      kind: `plan:${plan.targetType}`,
+      timestamp: plan.createdAt,
+      path: path.join(paths.plansDir, `${plan.id}.json`),
+      targetId: plan.targetId,
+    });
+  }
+  for (const handoff of records.handoffs) {
+    events.push({
+      type: "handoff",
+      id: handoff.id,
+      kind: "handoff",
+      timestamp: handoff.createdAt,
+      path: path.join(paths.handoffsDir, `${handoff.id}.json`),
+      targetId: handoff.candidateId,
+      candidateId: handoff.candidateId,
+    });
+  }
+  for (const candidate of candidates) {
+    if (!candidate.decomposition) {
+      continue;
+    }
+    events.push({
+      type: "split",
+      id: candidate.id,
+      kind: "decomposition",
+      timestamp: candidate.decomposition.createdAt,
+      targetId: candidate.decomposition.parentCandidateId ?? candidate.id,
+      ...(candidate.findingId ? { findingId: candidate.findingId } : {}),
+      candidateId: candidate.id,
+    });
+  }
+  for (const event of records.lifecycleEvents) {
+    const data = asRecord(event.data);
+    events.push({
+      type: "lifecycle",
+      id: event.id,
+      kind: event.kind,
+      timestamp: event.createdAt,
+      targetId: event.targetId,
+      ...(event.findingId ? { findingId: event.findingId } : {}),
+      ...(typeof data["candidateId"] === "string" ? { candidateId: data["candidateId"] } : {}),
+      ...(typeof data["outcome"] === "string" ? { outcome: data["outcome"] } : {}),
+    });
+  }
+  for (const revalidation of records.revalidations) {
+    events.push({
+      type: "revalidation",
+      id: revalidation.id,
+      kind: `revalidation:${revalidation.outcome}`,
+      timestamp: revalidation.createdAt,
+      path: path.join(paths.revalidationsDir, `${revalidation.id}.json`),
+      ...(revalidation.targetId ? { targetId: revalidation.targetId, findingId: revalidation.targetId } : {}),
+      outcome: revalidation.outcome,
+    });
+  }
+  for (const attempt of records.fixAttempts) {
+    events.push({
+      type: "fix-attempt",
+      id: attempt.id,
+      kind: `fix:${attempt.outcome ?? attempt.status}`,
+      timestamp: attempt.updatedAt,
+      path: path.join(paths.fixesDir, `${attempt.id}.json`),
+      targetId: attempt.candidateId ?? attempt.findingId,
+      findingId: attempt.findingId,
+      ...(attempt.candidateId ? { candidateId: attempt.candidateId } : {}),
+      ...(attempt.outcome ? { outcome: attempt.outcome } : {}),
+    });
+  }
+  return events
+    .sort((a, b) => b.timestamp.localeCompare(a.timestamp) || a.id.localeCompare(b.id))
+    .slice(0, Math.max(1, limit));
+}
+
+function buildLatestArtifactIndex(
+  paths: StatePaths,
+  options: {
+    latestRun?: RunRecord | undefined;
+    latestReport?: ReportRecord | undefined;
+    candidates: CandidateRecord[];
+    plans: PlanRecord[];
+    handoffs: HandoffRecord[];
+    revalidations: RevalidationRecord[];
+    fixAttempts: FixAttemptRecord[];
+    lifecycleEvents: LifecycleEventRecord[];
+  },
+): Record<string, unknown> {
+  const latestSplit = options.lifecycleEvents
+    .filter((event) => event.kind === "superseded" && asRecord(event.data)["parentCandidateId"])
+    .at(-1);
+  const latestDecomposition = options.candidates
+    .filter((candidate) => candidate.decomposition)
+    .sort((a, b) => (a.decomposition?.createdAt ?? "").localeCompare(b.decomposition?.createdAt ?? "") || a.id.localeCompare(b.id))
+    .at(-1);
+  return {
+    latestRun: options.latestRun ? runStatusPayload(paths, options.latestRun) : undefined,
+    latestReport: options.latestReport ? reportStatusPayload(paths, options.latestReport) : undefined,
+    latestPlan: latestRecordArtifact(paths.plansDir, options.plans.at(-1)),
+    latestHandoff: latestRecordArtifact(paths.handoffsDir, options.handoffs.at(-1)),
+    latestRevalidation: latestRecordArtifact(paths.revalidationsDir, options.revalidations.at(-1)),
+    latestFixAttempt: latestRecordArtifact(paths.fixesDir, options.fixAttempts.at(-1)),
+    latestSplit: latestSplit
+      ? {
+        id: latestSplit.id,
+        targetId: latestSplit.targetId,
+        findingId: latestSplit.findingId,
+        createdAt: latestSplit.createdAt,
+        parentCandidateId: asRecord(latestSplit.data)["parentCandidateId"],
+        childCandidateIds: asRecord(latestSplit.data)["childCandidateIds"],
+      }
+      : latestDecomposition?.decomposition
+        ? {
+          id: latestDecomposition.id,
+          targetId: latestDecomposition.decomposition.parentCandidateId ?? latestDecomposition.id,
+          findingId: latestDecomposition.findingId,
+          createdAt: latestDecomposition.decomposition.createdAt,
+          parentCandidateId: latestDecomposition.decomposition.parentCandidateId,
+          childCandidateIds: latestDecomposition.decomposition.childCandidateIds,
+        }
+        : undefined,
+  };
+}
+
+function latestRecordArtifact<T extends { id: string; createdAt: string }>(
+  dir: string,
+  record: T | undefined,
+): { id: string; path: string; createdAt: string } | undefined {
+  if (!record) {
+    return undefined;
+  }
+  return {
+    id: record.id,
+    path: path.join(dir, `${record.id}.json`),
+    createdAt: record.createdAt,
+  };
+}
+
+function chooseStatusNextAction(options: {
+  initialized: boolean;
+  latestRunId?: string | undefined;
+  locks: Awaited<ReturnType<typeof readLockStatuses>>;
+  staleArtifacts: StatusStaleArtifact[];
+  activeItems: StatusCandidateItem[];
+  blockers: StatusBlockedItem[];
+  pendingRevalidation: number;
+  latestReport?: ReportRecord | undefined;
+}): { command: string; reason: string; targetId?: string } {
+  if (!options.initialized) {
+    return { command: "deepclean init", reason: "state is not initialized" };
+  }
+  if (options.locks.some((lock) => lock.stale)) {
+    return { command: "deepclean unlock --stale", reason: "stale writer lock blocks future writes" };
+  }
+  if (!options.latestRunId) {
+    return { command: "deepclean scan", reason: "no scan run exists yet" };
+  }
+  if (options.pendingRevalidation > 0) {
+    return { command: "deepclean revalidate all", reason: "stale findings must be refreshed before handoff or fix work" };
+  }
+  const missingLatestReport = !options.latestReport || options.latestReport.runId !== options.latestRunId;
+  if (missingLatestReport) {
+    return { command: "deepclean report", reason: "latest run does not have a fresh report artifact" };
+  }
+  const active = options.activeItems[0];
+  if (active) {
+    return { command: active.nextCommand, reason: "highest-ranked candidate is ready for a focused plan", targetId: active.id };
+  }
+  const stale = options.staleArtifacts[0];
+  if (stale) {
+    return {
+      command: stale.recommendation.replace(/\.$/, ""),
+      reason: stale.reason,
+      ...(stale.targetId ? { targetId: stale.targetId } : {}),
+    };
+  }
+  const blocker = options.blockers[0];
+  if (blocker) {
+    return { command: `deepclean show ${blocker.id}`, reason: blocker.reason, targetId: blocker.id };
+  }
+  return { command: "deepclean scan", reason: "no active work is queued; refresh evidence when ready" };
+}
+
+function reportJsonPath(paths: StatePaths, report: ReportRecord): string {
+  return path.join(paths.reportsDir, `${report.id}.json`);
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  return {};
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 async function unlockCommand(context: CommandContext): Promise<number> {

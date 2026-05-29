@@ -4,7 +4,7 @@
 
 Use `deepclean doctor --json` when checking whether Deepclean is ready to run in a repository. It reports package version, state initialization, config validity, missing state directories, git availability, dirty working tree state, provider availability, privacy settings, and detected project surfaces.
 
-Use `deepclean status --json` when checking what Deepclean already knows about a repository. It reports the latest run, open/total queue counts, evidence/theme counts, artifact counts, active locks, pending revalidation count, and git dirty state.
+Use `deepclean status --json` when checking what Deepclean already knows about a repository. It is read-only and reports the latest run/report, open/active/blocked/stale queue counts, active items, blocked items, stale artifacts, recent progress events, latest artifact paths, active locks, pending revalidation count, the recommended next command, and git dirty state.
 
 Important diagnostic codes:
 
@@ -14,7 +14,24 @@ Important diagnostic codes:
 - `git_unavailable`: the target directory is not a git repository or git could not run there.
 - `provider_unavailable`: synthesis is configured but the provider command could not be executed.
 - `lock_contention`: another write command owns `.deepclean/locks/state-writer.json`. Retry after it exits, or use `--wait-lock --lock-timeout-ms <ms>` for queued local commands.
+- `no_state`: `.deepclean/` does not exist. Run `deepclean init` when the repository should use Deepclean state.
+- `no_runs`: state exists but no scan run exists yet. Run `deepclean scan`.
+- `invalid_state`: one or more local state records could not be parsed. Inspect the named `.deepclean/` artifact before trusting queue output.
+- `missing_latest_artifacts`: the latest run does not have a current report artifact. Run `deepclean report`.
+- `stale_state`: at least one finding or generated artifact needs revalidation or regeneration before work continues.
+- `stale_lock`: `status` found a stale lock record. Run `deepclean unlock --stale` before the next write command.
 - `stale_locks`: a lock file points to a dead process or has exceeded the stale threshold. Run `deepclean unlock --stale` before the next write command.
+
+For agent handoff, prefer this sequence before choosing work:
+
+```bash
+deepclean status --json
+deepclean show <candidate-id> --json
+deepclean plan <candidate-id> --json
+deepclean handoff <candidate-id> --json
+```
+
+If `status.data.nextAction.command` recommends `deepclean revalidate all`, `deepclean report`, or regenerating a plan/handoff, do that before handing the candidate to a worker.
 
 ## Writer Locks
 
