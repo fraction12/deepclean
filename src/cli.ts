@@ -3179,6 +3179,47 @@ type CandidateFixAttemptExecution = {
   diffBeforeAttempt: string;
 };
 
+function applyFixAttemptExecutionGuards(input: {
+  dryRun: boolean;
+  changedFiles: string[];
+  diffAfterAttempt: string;
+  diffBeforeAttempt: string;
+  outOfScopeFiles: string[];
+  workerTimedOut: boolean;
+  status: FixAttemptRecord["status"];
+  attemptDiagnostics: Diagnostic[];
+}): FixAttemptRecord["status"] {
+  let status = input.status;
+  if (!input.dryRun && input.changedFiles.length === 0 && status !== "failed") {
+    input.attemptDiagnostics.push({
+      level: "error",
+      code: "fix_no_changed_files",
+      message: "Patch worker completed without changing candidate-owned files.",
+    });
+    status = "failed";
+  }
+  if (!input.dryRun && input.changedFiles.length > 0 && input.diffAfterAttempt === input.diffBeforeAttempt && status !== "failed") {
+    input.attemptDiagnostics.push({
+      level: "error",
+      code: "fix_no_retry_progress",
+      message: "Patch worker did not make new candidate-owned changes on this attempt.",
+    });
+    status = "failed";
+  }
+  if (input.outOfScopeFiles.length > 0) {
+    input.attemptDiagnostics.push({
+      level: "error",
+      code: "fix_scope_failed",
+      message: `Patch changed files outside candidate scope: ${input.outOfScopeFiles.join(", ")}`,
+    });
+    status = "scope-failed";
+  }
+  if (!input.dryRun && input.workerTimedOut && input.changedFiles.length === 0) {
+    status = "failed";
+  }
+  return status;
+}
+
 async function executeCandidateFixAttempt(input: {
   context: CommandContext;
   config: DeepcleanConfig;
@@ -3369,33 +3410,16 @@ async function runCandidateFixWorkflow(
       });
     }
     const diffAfterAttempt = !dryRun ? await scopedDiffSignature(context.paths.root, allowedWriteScope) : "";
-    if (!dryRun && changedFiles.length === 0 && status !== "failed") {
-      attemptDiagnostics.push({
-        level: "error",
-        code: "fix_no_changed_files",
-        message: "Patch worker completed without changing candidate-owned files.",
-      });
-      status = "failed";
-    }
-    if (!dryRun && changedFiles.length > 0 && diffAfterAttempt === diffBeforeAttempt && status !== "failed") {
-      attemptDiagnostics.push({
-        level: "error",
-        code: "fix_no_retry_progress",
-        message: "Patch worker did not make new candidate-owned changes on this attempt.",
-      });
-      status = "failed";
-    }
-    if (outOfScopeFiles.length > 0) {
-      attemptDiagnostics.push({
-        level: "error",
-        code: "fix_scope_failed",
-        message: `Patch changed files outside candidate scope: ${outOfScopeFiles.join(", ")}`,
-      });
-      status = "scope-failed";
-    }
-    if (!dryRun && worker?.timedOut && changedFiles.length === 0) {
-      status = "failed";
-    }
+    status = applyFixAttemptExecutionGuards({
+      dryRun,
+      changedFiles,
+      diffAfterAttempt,
+      diffBeforeAttempt,
+      outOfScopeFiles,
+      workerTimedOut: Boolean(worker?.timedOut),
+      status,
+      attemptDiagnostics,
+    });
 
     if (!dryRun && status !== "failed" && outOfScopeFiles.length === 0) {
       verificationResults = await runFixVerification(context.paths, attemptId, verificationCommands);
