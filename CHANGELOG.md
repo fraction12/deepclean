@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.1.0-beta.4 - 2026-05-29
+
+- Added a shared architecture graph and fitness ledger so dependency-hotspot evidence, feature mapping, clustering, and revalidation use one common model.
+- Added architecture policy layers/rules, dependency-cycle evidence, architecture-boundary violation candidates, and fitness-delta progress reporting.
+- Fixed synthesis validation so rejected drafts do not consume accepted-candidate budget.
+
 ## 0.1.0-beta.3 - 2026-05-29
 
 - Hardened guarded fix/work so patch workers do not run verification themselves, and revalidation can record measurable metric-reduction campaign progress for partial cleanup PRs.
