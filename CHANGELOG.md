@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.1.0-beta.1 - 2026-05-29
+
+- Promoted the beta operating loop with candidate lifecycle state, richer status/progress output, guarded fix/work safety, proof-ledger revalidation, improved synthesis quality, dogfood gates, and beta onboarding.
+- Added source-safe beta dogfood scorecards and release checks for the required beta evidence set.
+- Ignored local generated system-design diagram artifacts so release checkouts stay clean.
+
 ## 0.1.0-alpha.3 - 2026-05-28
 
 - Added candidate-first fix/work workflows with config gating, owned-file scope checks, required verification, revalidation, PR proof, and structured fix outcomes.
