@@ -1,13 +1,13 @@
 export interface ParsedArgs {
   command?: string;
   positional: string[];
-  flags: Record<string, string | boolean>;
+  flags: Record<string, string | string[] | boolean>;
 }
 
 export function parseArgs(argv: string[]): ParsedArgs {
   let command: string | undefined;
   const positional: string[] = [];
-  const flags: Record<string, string | boolean> = {};
+  const flags: Record<string, string | string[] | boolean> = {};
 
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index];
@@ -21,17 +21,17 @@ export function parseArgs(argv: string[]): ParsedArgs {
       if (equalsIndex >= 0) {
         const key = withoutPrefix.slice(0, equalsIndex);
         const value = withoutPrefix.slice(equalsIndex + 1);
-        flags[key] = value;
+        assignFlag(flags, key, value);
         continue;
       }
 
       const next = argv[index + 1];
       if (valueFlags.has(withoutPrefix)) {
         if (next && !next.startsWith("-")) {
-          flags[withoutPrefix] = next;
+          assignFlag(flags, withoutPrefix, next);
           index += 1;
         } else {
-          flags[withoutPrefix] = "";
+          assignFlag(flags, withoutPrefix, "");
         }
       } else {
         flags[withoutPrefix] = true;
@@ -121,7 +121,7 @@ const valueFlags = new Set([
 export function legacyParseArgs(argv: string[]): ParsedArgs {
   const [command, ...rest] = argv;
   const positional: string[] = [];
-  const flags: Record<string, string | boolean> = {};
+  const flags: Record<string, string | string[] | boolean> = {};
 
   for (let index = 0; index < rest.length; index += 1) {
     const token = rest[index];
@@ -135,13 +135,13 @@ export function legacyParseArgs(argv: string[]): ParsedArgs {
       if (equalsIndex >= 0) {
         const key = withoutPrefix.slice(0, equalsIndex);
         const value = withoutPrefix.slice(equalsIndex + 1);
-        flags[key] = value;
+        assignFlag(flags, key, value);
         continue;
       }
 
       const next = rest[index + 1];
       if (next && !next.startsWith("-")) {
-        flags[withoutPrefix] = next;
+        assignFlag(flags, withoutPrefix, next);
         index += 1;
       } else {
         flags[withoutPrefix] = true;
@@ -163,16 +163,47 @@ export function legacyParseArgs(argv: string[]): ParsedArgs {
   return command ? { command, positional, flags } : { positional, flags };
 }
 
+function assignFlag(
+  flags: Record<string, string | string[] | boolean>,
+  key: string,
+  value: string,
+): void {
+  const existing = flags[key];
+  if (typeof existing === "string") {
+    flags[key] = [existing, value];
+    return;
+  }
+  if (Array.isArray(existing)) {
+    existing.push(value);
+    return;
+  }
+  flags[key] = value;
+}
+
 export function flagString(
-  flags: Record<string, string | boolean>,
+  flags: Record<string, string | string[] | boolean>,
   key: string,
 ): string | undefined {
   const value = flags[key];
+  if (Array.isArray(value)) {
+    return value.at(-1);
+  }
   return typeof value === "string" ? value : undefined;
 }
 
+export function flagStrings(
+  flags: Record<string, string | string[] | boolean>,
+  key: string,
+): string[] {
+  const value = flags[key];
+  if (Array.isArray(value)) {
+    return value;
+  }
+  return typeof value === "string" ? [value] : [];
+}
+
 export function flagBoolean(
-  flags: Record<string, string | boolean>,
+  flags: Record<string, string | string[] | boolean>,
   key: string,
 ): boolean {
   return flags[key] === true;
