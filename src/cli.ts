@@ -3085,7 +3085,10 @@ async function runCandidateFixWorkflow(
     }
 
     if (!dryRun && revalidationRequired && outOfScopeFiles.length === 0) {
-      const record = await revalidateFixTarget(context, resolved.findingId);
+      const record = await revalidateFixTarget(context, resolved.findingId, {
+        previousEvidence: currentEvidence,
+        changedFiles,
+      });
       revalidation = record.revalidation;
       attemptDiagnostics.push(...record.diagnostics);
     }
@@ -3104,7 +3107,7 @@ async function runCandidateFixWorkflow(
       && maxAttempts > 1
       && (
         outcome === "still-open"
-        || outcome === "partially-resolved"
+        || (outcome === "partially-resolved" && !hasRevalidationProgress(revalidation))
         || verificationResults.some((result) => !result.passed)
       );
     if (retryLimitReached) {
@@ -3182,6 +3185,7 @@ async function runCandidateFixWorkflow(
       outOfScopeFiles,
       verificationResults,
       outcome,
+      revalidation,
       revalidationRequired,
     });
     if (!retry) {
@@ -3220,13 +3224,19 @@ async function runCandidateFixWorkflow(
   let pr: FixAttemptRecord["pr"];
   let finalStatus = attempt.status;
   const externalSideEffects: string[] = [];
-  const localSummaryAllowed = outcome === "resolved";
-  const prProofPassed = outcome === "resolved";
+  const campaignProgressAllowed = outcome === "partially-resolved"
+    && hasRevalidationProgress(revalidation)
+    && changedFiles.length > 0
+    && outOfScopeFiles.length === 0
+    && verificationResults.length > 0
+    && verificationResults.every((result) => result.passed);
+  const localSummaryAllowed = outcome === "resolved" || campaignProgressAllowed;
+  const prProofPassed = outcome === "resolved" || campaignProgressAllowed;
   if (options.requirePrProof && !prProofPassed) {
     diagnostics.push({
       level: "error",
       code: "pr_blocked",
-      message: "PR workflow requires in-scope changes, passing verification, and revalidation outcome resolved.",
+      message: "PR workflow requires in-scope changes, passing verification, and resolved revalidation or measurable campaign progress.",
     });
   }
   if (!dryRun && localSummaryAllowed && branch) {
@@ -3589,6 +3599,7 @@ function buildFixWorkerPrompt(options: {
     "- Keep the patch minimal.",
     "- Edit only files in Allowed write scope.",
     "- Do not commit, push, open PRs, publish, or run external actions.",
+    "- Do not run test, build, typecheck, package, npm install, or verification commands.",
     "- Add or update focused tests only when they are in scope.",
     "- After making the minimal patch, stop. Deepclean owns final verification and revalidation.",
     "- Stop if the plan is too broad or unsafe.",
@@ -3600,7 +3611,7 @@ function buildFixWorkerPrompt(options: {
     "Allowed write scope:",
     options.allowedWriteScope.map((file) => `- ${file}`).join("\n") || "- n/a",
     "",
-    "Verification commands the final patch must satisfy:",
+    "Deepclean will run these verification commands after you stop; do not run them yourself:",
     options.verificationCommands.map((command) => `- ${command}`).join("\n") || "- n/a",
     "",
     "Feature context:",
@@ -3640,6 +3651,7 @@ function shouldRetryFixAttempt(options: {
   outOfScopeFiles: string[];
   verificationResults: FixAttemptRecord["verificationResults"];
   outcome?: FixAttemptRecord["outcome"] | undefined;
+  revalidation?: RevalidationRecord | undefined;
   revalidationRequired: boolean;
 }): boolean {
   if (options.dryRun || options.hasPatchPath || options.attemptNumber >= options.maxAttempts) {
@@ -3652,6 +3664,9 @@ function shouldRetryFixAttempt(options: {
     return true;
   }
   if (!options.revalidationRequired) {
+    return false;
+  }
+  if (options.outcome === "partially-resolved" && hasRevalidationProgress(options.revalidation)) {
     return false;
   }
   return options.outcome === "still-open" || options.outcome === "partially-resolved";
@@ -3669,19 +3684,31 @@ async function scopedDiffSignature(root: string, allowedWriteScope: string[]): P
 async function revalidateFixTarget(
   context: CommandContext,
   findingId: string,
+  options: {
+    previousEvidence?: EvidenceRecord[];
+    changedFiles?: string[];
+  } = {},
 ): Promise<{ revalidation: RevalidationRecord; diagnostics: Diagnostic[] }> {
   const beforeFindings = await readFindings(context.paths);
   const finding = beforeFindings.find((item) => item.id === findingId);
   const scan = await executeScan(context, { synthesize: false });
+  const currentEvidence = await readEvidence(context.paths, scan.runId).catch(() => []);
   const revalidation = await classifyRevalidation({
     root: context.paths.root,
     finding,
     currentCandidates: scan.data.candidates,
     runId: scan.runId,
     createdAt: new Date().toISOString(),
+    previousEvidence: options.previousEvidence ?? [],
+    currentEvidence,
+    changedFiles: options.changedFiles ?? scan.data.scope.changedPaths,
   });
   await writeRevalidation(context.paths, revalidation);
   return { revalidation, diagnostics: scan.diagnostics };
+}
+
+function hasRevalidationProgress(revalidation: RevalidationRecord | undefined): boolean {
+  return Boolean(revalidation?.progress && revalidation.progress.delta > 0);
 }
 
 function classifyFixOutcome(options: {

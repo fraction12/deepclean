@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Hardened guarded fix/work so patch workers do not run verification themselves, and revalidation can record measurable metric-reduction campaign progress for partial cleanup PRs.
+
 ## 0.1.0-beta.2 - 2026-05-29
 
 - Documented repeated `--verification` / `--verification-command` usage for guarded fix/work flows.

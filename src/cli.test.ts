@@ -25,6 +25,7 @@ import {
   schemaVersion,
   synthesisAttemptRecordSchema,
   type CandidateRecord,
+  type EvidenceRecord,
   type FeatureRecord,
   type FindingRecord,
   type LockRecord,
@@ -1310,6 +1311,33 @@ fs.writeFileSync(outputPath, JSON.stringify({
       expect(unchanged.outcome).toBe("still-open");
       expect(unchanged.rationale).toContain("rediscovered");
 
+      const progressFinding = findingFixture({
+        evidenceIds: ["ev-before"],
+        files: [{ path: "src/example.ts", startLine: 1, endLine: 120 }],
+      });
+      const progress = await classifyRevalidation({
+        root: repo,
+        finding: progressFinding,
+        currentCandidates: [candidateFixture({ findingId: progressFinding.id, evidenceIds: ["ev-after"] })],
+        runId: "run-now",
+        createdAt: "2026-05-24T00:00:00.000Z",
+        previousEvidence: [evidenceFixture({
+          id: "ev-before",
+          kind: "large-function",
+          files: [{ path: "src/example.ts", startLine: 1, endLine: 120 }],
+          data: { lines: 120, name: "example" },
+        })],
+        currentEvidence: [evidenceFixture({
+          id: "ev-after",
+          kind: "large-function",
+          files: [{ path: "src/example.ts", startLine: 1, endLine: 80 }],
+          data: { lines: 80, name: "example" },
+        })],
+      });
+      expect(progress.outcome).toBe("partially-resolved");
+      expect(progress.progress?.delta).toBe(40);
+      expect(progress.nextAction).toContain("campaign progress");
+
       const changed = await classifyRevalidation({
         root: repo,
         finding,
@@ -2036,7 +2064,15 @@ fs.writeFileSync("outside.ts", "export const outside = true;\\n");
       await enableFixExecution(repo);
       await installFakeCodex(repo, `#!/usr/bin/env node
 const fs = require("node:fs");
-fs.readFileSync(0, "utf8");
+const prompt = fs.readFileSync(0, "utf8");
+if (prompt.includes("Verification commands the final patch must satisfy")) {
+  process.stderr.write("worker prompt asks Codex to own verification");
+  process.exit(42);
+}
+if (!prompt.includes("Do not run test, build, typecheck, package, npm install, or verification commands.")) {
+  process.stderr.write("worker prompt does not forbid verification commands");
+  process.exit(43);
+}
 const target = "src/invoice.ts";
 const source = fs.readFileSync(target, "utf8");
 fs.writeFileSync(target, source.replace("export function", "// worker fix applied\\nexport function"));
@@ -3560,6 +3596,27 @@ function candidateFixture(overrides: Partial<CandidateRecord> = {}): CandidateRe
     provenance: { source: "local-evidence" },
     createdAt: now,
     updatedAt: now,
+    ...overrides,
+  };
+}
+
+function evidenceFixture(overrides: Partial<EvidenceRecord> = {}): EvidenceRecord {
+  const now = "2026-05-24T00:00:00.000Z";
+  return {
+    schemaVersion,
+    recordType: "evidence",
+    id: "ev-test",
+    runId: "run-test",
+    adapter: "test",
+    kind: "large-function",
+    title: "Fixture evidence",
+    summary: "Fixture evidence summary.",
+    files: [{ path: "src/example.ts", startLine: 1, endLine: 20 }],
+    affectedFeatureIds: [],
+    fileRoles: [],
+    data: {},
+    confidence: "medium",
+    createdAt: now,
     ...overrides,
   };
 }

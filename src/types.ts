@@ -507,6 +507,16 @@ export const lifecycleEventRecordSchema = z.object({
 
 export type LifecycleEventRecord = z.infer<typeof lifecycleEventRecordSchema>;
 
+const revalidationProgressSchema = z.object({
+  kind: z.enum(["metric-reduction"]),
+  metric: z.string(),
+  unit: z.string(),
+  before: z.number(),
+  after: z.number(),
+  delta: z.number(),
+  evidenceIds: z.array(z.string()),
+});
+
 export const revalidationRecordSchema = z.object({
   schemaVersion: z.literal(schemaVersion),
   recordType: z.literal("revalidation"),
@@ -543,6 +553,7 @@ export const revalidationRecordSchema = z.object({
   }).optional(),
   supersededByFindingId: z.string().optional(),
   replacementFindingId: z.string().optional(),
+  progress: revalidationProgressSchema.optional(),
   diagnostics: z.array(diagnosticSchema),
   createdAt: z.string(),
 });
