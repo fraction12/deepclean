@@ -1,5 +1,6 @@
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
+import { buildLocalImportGraph } from "./architecture-graph.js";
 import { defaultExcludeDirs } from "./defaults.js";
 import { isTestPath, normalizePath, type SourceFile } from "./discovery.js";
 import { uniqueFileReferences } from "./file-references.js";
@@ -117,11 +118,15 @@ function packageScriptFeatures(options: FeatureMapOptions, packages: PackageReco
 
 function sourceFeatures(options: FeatureMapOptions): FeatureRecord[] {
   const sourceFiles = options.files.filter((file) => !isTestPath(file.path) && !isGeneratedPath(file.path));
-  const sourceByPath = new Map(options.files.map((file) => [file.path, file]));
+  const graph = buildLocalImportGraph(sourceFiles);
   return sourceFiles.map((file) => {
     const kind = sourceFeatureKind(file);
     const tests = nearbyTests(file, options.files);
-    const contextFiles = uniqueFileReferences([...localImportReferences(file, sourceByPath), ...tests]);
+    const imports = graph.nodes.get(file.path)?.imports ?? new Set<string>();
+    const contextFiles = uniqueFileReferences([
+      ...[...imports].map((filePath) => ({ path: filePath })),
+      ...tests,
+    ]);
     const owned = [{ path: file.path, startLine: 1, endLine: Math.max(1, file.lines.length) }];
     const verification = commandsForFiles(options.verificationProfile, owned, tests.length > 0 ? ["npm test"] : []);
     const label = sourceFeatureTitle(file, kind);
@@ -339,91 +344,6 @@ function sourceReasons(
     reasons.push("path indicates job or worker ownership.");
   }
   return reasons;
-}
-
-function localImportReferences(file: SourceFile, sourceByPath: Map<string, SourceFile>): FileReference[] {
-  const references: FileReference[] = [];
-  const patterns = [
-    /\bimport\s+(?:[^'"]+\s+from\s+)?["']([^"']+)["']/g,
-    /\bexport\s+[^'"]+\s+from\s+["']([^"']+)["']/g,
-    /\bimport\(["']([^"']+)["']\)/g,
-    /\brequire\(["']([^"']+)["']\)/g,
-    /^\s*from\s+([.\w]+)\s+import\s+/gm,
-    /^\s*import\s+([.\w]+)\s*$/gm,
-  ];
-  for (const pattern of patterns) {
-    for (const match of file.text.matchAll(pattern)) {
-      const specifier = match[1];
-      if (!specifier) {
-        continue;
-      }
-      const resolved = resolveLocalImport(file.path, specifier, sourceByPath);
-      if (resolved && resolved !== file.path) {
-        references.push({ path: resolved });
-      }
-    }
-  }
-  return uniqueFileReferences(references).slice(0, 8);
-}
-
-function resolveLocalImport(
-  fromPath: string,
-  specifier: string,
-  sourceByPath: Map<string, SourceFile>,
-): string | undefined {
-  const fromExtension = path.posix.extname(fromPath);
-  if (fromExtension === ".py") {
-    return resolvePythonImport(fromPath, specifier, sourceByPath);
-  }
-  if (!specifier.startsWith(".") && !specifier.startsWith("/")) {
-    return undefined;
-  }
-  const fromDir = path.posix.dirname(fromPath);
-  const base = normalizePath(specifier.startsWith("/")
-    ? specifier.slice(1)
-    : path.posix.normalize(path.posix.join(fromDir, specifier)));
-  const candidates = [
-    base,
-    base.replace(/\.[cm]?js$/, ".ts"),
-    base.replace(/\.jsx$/, ".tsx"),
-    `${base}.ts`,
-    `${base}.tsx`,
-    `${base}.js`,
-    `${base}.jsx`,
-    `${base}.py`,
-    `${base}/index.ts`,
-    `${base}/index.tsx`,
-    `${base}/index.js`,
-    `${base}/index.jsx`,
-    `${base}/__init__.py`,
-  ];
-  return candidates.find((candidate) => sourceByPath.has(candidate) && !isGeneratedPath(candidate));
-}
-
-function resolvePythonImport(
-  fromPath: string,
-  specifier: string,
-  sourceByPath: Map<string, SourceFile>,
-): string | undefined {
-  const fromDir = path.posix.dirname(fromPath);
-  const base = normalizePath(specifier.startsWith(".")
-    ? path.posix.join(pythonRelativeImportBase(fromDir, specifier), specifier.replace(/^\.+/, "").replace(/\./g, "/"))
-    : specifier.replace(/\./g, "/"));
-  const candidates = [
-    base,
-    `${base}.py`,
-    `${base}/__init__.py`,
-  ];
-  return candidates.find((candidate) => sourceByPath.has(candidate) && !isGeneratedPath(candidate));
-}
-
-function pythonRelativeImportBase(fromDir: string, specifier: string): string {
-  const leadingDots = specifier.match(/^\.+/)?.[0].length ?? 0;
-  let base = fromDir;
-  for (let index = 1; index < leadingDots; index += 1) {
-    base = path.posix.dirname(base);
-  }
-  return base;
 }
 
 function isGeneratedPath(filePath: string): boolean {
