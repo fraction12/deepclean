@@ -50,6 +50,7 @@ try {
     "package/README.md",
     "package/LICENSE",
     "package/CHANGELOG.md",
+    "package/docs/beta-onboarding.md",
     "package/docs/privacy-and-trust.md",
     "package/docs/public-readiness.md",
     "package/docs/release.md",

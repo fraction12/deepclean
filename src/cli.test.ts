@@ -85,6 +85,24 @@ describe("deepclean cli", () => {
     });
   });
 
+  test("help includes the beta workflow examples", async () => {
+    await withTempRepo(async (repo) => {
+      const result = await runCli(["--help"], repo);
+      expect(result.code).toBe(0);
+      expect(result.stdout).toContain("Examples:");
+      expect(result.stdout).toContain("deepclean doctor");
+      expect(result.stdout).toContain("deepclean scan");
+      expect(result.stdout).toContain("deepclean status");
+      expect(result.stdout).toContain("deepclean report");
+      expect(result.stdout).toContain("deepclean next --json");
+      expect(result.stdout).toContain("deepclean show <candidate-id>");
+      expect(result.stdout).toContain("deepclean plan <candidate-id>");
+      expect(result.stdout).toContain("deepclean handoff <candidate-id> --format codex");
+      expect(result.stdout).toContain("deepclean revalidate <candidate-id>");
+      expect(result.stdout).toContain("deepclean fix <candidate-id> --patch ./fix.patch --dry-run --json");
+    });
+  });
+
   test("doctor reports an uninitialized clean directory without mutating state", async () => {
     await withTempRepo(async (repo) => {
       const result = await runCli(["doctor", "--json"], repo);

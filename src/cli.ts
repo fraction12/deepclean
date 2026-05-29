@@ -306,7 +306,19 @@ Global flags:
   --wait-lock                  Wait for an active writer lock instead of failing immediately
   --lock-timeout-ms <ms>       Maximum time to wait for --wait-lock
   -h, --help                   Show help
-  --version                    Show version`);
+  --version                    Show version
+
+Examples:
+  deepclean doctor
+  deepclean scan
+  deepclean status
+  deepclean report
+  deepclean next --json
+  deepclean show <candidate-id>
+  deepclean plan <candidate-id>
+  deepclean handoff <candidate-id> --format codex
+  deepclean revalidate <candidate-id>
+  deepclean fix <candidate-id> --patch ./fix.patch --dry-run --json`);
 }
 
 export async function main(argv: string[], cwd = process.cwd()): Promise<number> {

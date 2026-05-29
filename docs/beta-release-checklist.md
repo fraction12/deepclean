@@ -6,9 +6,10 @@ Beta release is blocked unless every required gate below is green or explicitly 
 
 - Typecheck passes: `npm run typecheck`
 - Tests pass: `npm test`
-- OpenSpec validates: `openspec validate beta-dogfood-stability`
+- OpenSpec validates: `openspec validate beta-docs-onboarding`
 - Repository specs validate: `npm run spec:validate`
 - Release check passes: `npm run release:check`
+- Beta onboarding docs cover install, update, first scan, status/report interpretation, guarded fix workflow, revalidation proof, source-safe support artifacts, privacy, troubleshooting, and limitations.
 - Beta dogfood matrix has passing source-safe scorecards for:
   - `deepclean`
   - `lightningitb`

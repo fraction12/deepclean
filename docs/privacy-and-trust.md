@@ -30,6 +30,8 @@ The complete operating-loop state model also reserves these directories:
 
 Add `.deepclean/` to `.gitignore` unless a repo deliberately wants to share reports.
 
+Read-only commands such as `doctor`, `scan`, `status`, `report`, `next`, `show`, `plan`, `handoff`, `revalidate`, `prune --dry-run`, `scrub`, and `export --source-safe` do not mutate application source. Guarded mutation commands require explicit source-mutation flags and verification.
+
 ## Local Evidence
 
 `deepclean scan` reads source files and repository metadata locally. It records structured evidence such as file metrics, duplicate windows, import graph summaries, TypeScript/Python structure, git churn, and test-discovery signals.
@@ -51,6 +53,8 @@ Provider execution is disabled by `--evidence-only`, `--offline`, `--local-only`
 Treat `.deepclean/` as private by default. Records may contain repository-relative paths, absolute state paths in diagnostics, source excerpts, analyzer summaries, model prompt metadata, verification output paths, patch previews, and notes written by humans or agents.
 
 Use `deepclean scrub --json` or `deepclean export --source-safe --json` before producing a support artifact. The source-safe export keeps actionable IDs, categories, priorities, verification commands, evidence IDs, and repository-relative paths, while omitting source excerpts, provider prompts, absolute state paths, generated handoff prose, and generated plan prose.
+
+Generated plans and handoffs can contain model-authored implementation prose. Treat them like internal engineering notes, not public issue text, unless they have been reviewed.
 
 ## Network
 
