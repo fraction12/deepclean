@@ -4,7 +4,9 @@ import {
   schemaVersion,
   type CandidateRecord,
   type Diagnostic,
+  type EvidenceRecord,
   type FindingRecord,
+  type FixAttemptRecord,
   type RevalidationRecord,
 } from "./types.js";
 import { timestampId } from "./ids.js";
@@ -15,19 +17,53 @@ export async function classifyRevalidation(options: {
   currentCandidates: CandidateRecord[];
   runId: string;
   createdAt: string;
+  currentEvidence?: EvidenceRecord[];
+  verificationRunIds?: string[];
+  changedFiles?: string[];
+  dirtyState?: { dirty: boolean; files: string[] } | undefined;
+  forceNeedsHuman?: string | undefined;
 }): Promise<RevalidationRecord> {
-  const diagnostics: Diagnostic[] = [];
   if (!options.finding) {
     return revalidationRecord({
       runId: options.runId,
       outcome: "inconclusive",
+      confidence: "low",
       evidenceIds: [],
+      evidenceFreshness: "stale",
+      rationale: "The target finding could not be resolved before revalidation, so Deepclean cannot compare the original claim to current evidence.",
+      nextAction: "Resolve the target to a stable finding ID or rerun scan before revalidating.",
       diagnostics: [{
         level: "warning",
         code: "finding_missing",
         message: "The target finding could not be resolved before revalidation.",
       }],
       createdAt: options.createdAt,
+      changedFiles: options.changedFiles ?? [],
+      dirtyState: options.dirtyState,
+    });
+  }
+
+  if (options.forceNeedsHuman) {
+    return revalidationRecord({
+      targetId: options.finding.id,
+      priorLifecycleState: options.finding.lifecycleState,
+      runId: options.runId,
+      outcome: "needs-human",
+      confidence: "low",
+      evidenceIds: options.finding.evidenceIds,
+      evidenceFreshness: "reused",
+      previousObservationId: options.finding.currentObservationId,
+      rationale: options.forceNeedsHuman,
+      nextAction: "Have a human narrow or confirm the target before assigning implementation work.",
+      diagnostics: [{
+        level: "warning",
+        code: "needs_human_revalidation",
+        message: options.forceNeedsHuman,
+      }],
+      createdAt: options.createdAt,
+      verificationRunIds: options.verificationRunIds ?? [],
+      changedFiles: options.changedFiles ?? [],
+      dirtyState: options.dirtyState,
     });
   }
 
@@ -35,28 +71,20 @@ export async function classifyRevalidation(options: {
   if (matching) {
     return revalidationRecord({
       targetId: options.finding.id,
+      priorLifecycleState: options.finding.lifecycleState,
       runId: options.runId,
-      outcome: "unchanged",
+      outcome: "still-open",
+      confidence: matching.confidence,
       evidenceIds: matching.evidenceIds,
+      evidenceFreshness: "fresh",
       previousObservationId: options.finding.currentObservationId,
-      diagnostics,
+      rationale: "The same stable finding was rediscovered in the revalidation scan, so the original issue remains present.",
+      nextAction: "Keep the finding open and inspect the latest evidence before attempting another fix.",
+      diagnostics: [],
       createdAt: options.createdAt,
-    });
-  }
-
-  if (options.finding.decomposition?.parentCandidateId) {
-    return revalidationRecord({
-      targetId: options.finding.id,
-      runId: options.runId,
-      outcome: "fixed",
-      evidenceIds: [],
-      previousObservationId: options.finding.currentObservationId,
-      diagnostics: [{
-        level: "info",
-        code: "child_candidate_absent_after_rescan",
-        message: "The decomposed child candidate was not rediscovered after verification; broader parent findings may remain open separately.",
-      }],
-      createdAt: options.createdAt,
+      verificationRunIds: options.verificationRunIds ?? [],
+      changedFiles: options.changedFiles ?? [],
+      dirtyState: options.dirtyState,
     });
   }
 
@@ -64,12 +92,24 @@ export async function classifyRevalidation(options: {
   if (!filesExist) {
     return revalidationRecord({
       targetId: options.finding.id,
+      priorLifecycleState: options.finding.lifecycleState,
       runId: options.runId,
-      outcome: "fixed",
-      evidenceIds: [],
+      outcome: "stale",
+      confidence: "low",
+      evidenceIds: options.finding.evidenceIds,
+      evidenceFreshness: "stale",
       previousObservationId: options.finding.currentObservationId,
-      diagnostics,
+      rationale: "The original file anchors no longer exist, so Deepclean cannot prove whether the original concern was resolved or merely moved.",
+      nextAction: "Rescan the repository and inspect replacement findings before closing this concern.",
+      diagnostics: [{
+        level: "warning",
+        code: "target_anchors_missing",
+        message: "None of the finding's primary files exist at their recorded paths.",
+      }],
       createdAt: options.createdAt,
+      verificationRunIds: options.verificationRunIds ?? [],
+      changedFiles: options.changedFiles ?? [],
+      dirtyState: options.dirtyState,
     });
   }
 
@@ -78,65 +118,123 @@ export async function classifyRevalidation(options: {
   if (replacement?.findingId) {
     return revalidationRecord({
       targetId: options.finding.id,
+      priorLifecycleState: options.finding.lifecycleState,
       runId: options.runId,
       outcome: "superseded",
+      confidence: replacement.confidence,
       evidenceIds: replacement.evidenceIds,
+      evidenceFreshness: "fresh",
       previousObservationId: options.finding.currentObservationId,
       supersededByFindingId: replacement.findingId,
-      diagnostics,
+      replacementFindingId: replacement.findingId,
+      rationale: `The original concern is now better represented by replacement finding ${replacement.findingId}.`,
+      nextAction: `Continue work from replacement finding ${replacement.findingId}.`,
+      diagnostics: [],
       createdAt: options.createdAt,
+      verificationRunIds: options.verificationRunIds ?? [],
+      changedFiles: options.changedFiles ?? [],
+      dirtyState: options.dirtyState,
     });
   }
 
   if (related.length > 0) {
     return revalidationRecord({
       targetId: options.finding.id,
+      priorLifecycleState: options.finding.lifecycleState,
       runId: options.runId,
-      outcome: "changed",
-      evidenceIds: related.flatMap((candidate) => candidate.evidenceIds),
+      outcome: "partially-resolved",
+      confidence: strongestConfidence(related.map((candidate) => candidate.confidence)),
+      evidenceIds: unique(related.flatMap((candidate) => candidate.evidenceIds)),
+      evidenceFreshness: "fresh",
       previousObservationId: options.finding.currentObservationId,
-      diagnostics,
+      rationale: "The exact finding was not rediscovered, but related evidence remains on the same files and category.",
+      nextAction: "Treat the original fix as partial and plan from the remaining related evidence.",
+      diagnostics: [],
       createdAt: options.createdAt,
+      verificationRunIds: options.verificationRunIds ?? [],
+      changedFiles: options.changedFiles ?? [],
+      dirtyState: options.dirtyState,
     });
   }
 
   return revalidationRecord({
     targetId: options.finding.id,
+    priorLifecycleState: options.finding.lifecycleState,
     runId: options.runId,
-    outcome: "stale",
-    evidenceIds: [],
+    outcome: "resolved",
+    confidence: options.finding.confidence === "low" ? "medium" : options.finding.confidence,
+    evidenceIds: options.finding.evidenceIds,
+    evidenceFreshness: "reused",
     previousObservationId: options.finding.currentObservationId,
-    diagnostics,
+    rationale: "The original file anchors still exist, but neither the original finding nor related replacement evidence was rediscovered.",
+    nextAction: "Keep the proof record with the fix or handoff; passed verification alone was not used as resolution.",
+    diagnostics: [],
     createdAt: options.createdAt,
+    verificationRunIds: options.verificationRunIds ?? [],
+    changedFiles: options.changedFiles ?? [],
+    dirtyState: options.dirtyState,
   });
 }
 
 function revalidationRecord(input: {
   targetId?: string;
+  priorLifecycleState?: string | undefined;
   runId: string;
   outcome: RevalidationRecord["outcome"];
+  confidence: RevalidationRecord["confidence"];
+  rationale: string;
+  nextAction: string;
   evidenceIds: string[];
+  evidenceFreshness?: RevalidationRecord["evidenceFreshness"];
   previousObservationId?: string | undefined;
   newObservationId?: string | undefined;
+  verificationRunIds?: string[] | undefined;
+  changedFiles?: string[] | undefined;
+  dirtyState?: RevalidationRecord["dirtyState"];
   supersededByFindingId?: string | undefined;
+  replacementFindingId?: string | undefined;
   diagnostics: Diagnostic[];
   createdAt: string;
 }): RevalidationRecord {
+  const id = timestampId("revalidation");
   return {
     schemaVersion,
     recordType: "revalidation",
-    id: timestampId("revalidation"),
+    id,
     targetType: input.targetId ? "finding" : "all",
     ...(input.targetId ? { targetId: input.targetId } : {}),
     runId: input.runId,
+    ...(input.priorLifecycleState ? { priorLifecycleState: input.priorLifecycleState } : {}),
     outcome: input.outcome,
-    evidenceIds: input.evidenceIds,
+    confidence: input.confidence,
+    rationale: input.rationale,
+    nextAction: input.nextAction,
+    evidenceBundleId: `${id}-evidence`,
+    ...(input.evidenceFreshness ? { evidenceFreshness: input.evidenceFreshness } : {}),
+    evidenceIds: unique(input.evidenceIds),
     ...(input.previousObservationId ? { previousObservationId: input.previousObservationId } : {}),
     ...(input.newObservationId ? { newObservationId: input.newObservationId } : {}),
+    verificationRunIds: input.verificationRunIds ?? [],
+    changedFiles: input.changedFiles ?? [],
+    ...(input.dirtyState ? { dirtyState: input.dirtyState } : {}),
     ...(input.supersededByFindingId ? { supersededByFindingId: input.supersededByFindingId } : {}),
+    ...(input.replacementFindingId ? { replacementFindingId: input.replacementFindingId } : {}),
     diagnostics: input.diagnostics,
     createdAt: input.createdAt,
   };
+}
+
+export function verificationRunIdsForFinding(
+  findingId: string,
+  attempts: FixAttemptRecord[],
+): string[] {
+  return attempts
+    .filter((attempt) => (
+      attempt.findingId === findingId
+      && attempt.verificationResults.length > 0
+      && attempt.verificationResults.every((result) => result.passed)
+    ))
+    .map((attempt) => attempt.id);
 }
 
 async function anyFindingFilesExist(root: string, finding: FindingRecord): Promise<boolean> {
@@ -158,4 +256,18 @@ function relatedCandidates(finding: FindingRecord, candidates: CandidateRecord[]
     && candidate.findingId !== finding.id
     && candidate.files.some((file) => findingFiles.has(file.path))
   ));
+}
+
+function strongestConfidence(values: Array<CandidateRecord["confidence"]>): RevalidationRecord["confidence"] {
+  if (values.includes("high")) {
+    return "high";
+  }
+  if (values.includes("medium")) {
+    return "medium";
+  }
+  return "low";
+}
+
+function unique(values: string[]): string[] {
+  return [...new Set(values)].sort();
 }

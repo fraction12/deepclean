@@ -28,7 +28,7 @@ import {
   withStateWriteLock,
 } from "./locks.js";
 import { buildCandidatePlan, buildClusterPlan } from "./plans.js";
-import { classifyRevalidation } from "./revalidation.js";
+import { classifyRevalidation, verificationRunIdsForFinding } from "./revalidation.js";
 import {
   buildHandoff,
   buildReportRecord,
@@ -697,6 +697,7 @@ async function statusCommand(context: CommandContext): Promise<number> {
       })),
     },
     pendingRevalidation: candidates.filter((candidate) => candidate.lifecycleState === "stale" || candidate.status === "stale").length,
+    proof: buildProofSummary(candidates, records.revalidations, records.fixAttempts),
     artifacts: artifactCounts,
     latestArtifacts,
     staleArtifacts,
@@ -1259,6 +1260,140 @@ function latestRecordArtifact<T extends { id: string; createdAt: string }>(
     path: path.join(dir, `${record.id}.json`),
     createdAt: record.createdAt,
   };
+}
+
+interface CandidateProofStatus {
+  findingId?: string;
+  candidateId: string;
+  proofState: "resolved" | "unresolved" | "stale" | "inconclusive" | "needs-human" | "unproven";
+  resolved: boolean;
+  latestRevalidation?: {
+    id: string;
+    outcome: RevalidationRecord["outcome"];
+    confidence: RevalidationRecord["confidence"];
+    rationale: string;
+    nextAction: string;
+    createdAt: string;
+    evidenceIds: string[];
+    verificationRunIds: string[];
+    replacementFindingId?: string;
+  };
+  latestVerificationResult?: {
+    attemptId: string;
+    status: FixAttemptRecord["status"];
+    outcome?: FixAttemptRecord["outcome"];
+    passed: boolean;
+    commandCount: number;
+    createdAt: string;
+  };
+  nextAction: string;
+}
+
+function buildProofSummary(
+  candidates: CandidateRecord[],
+  revalidations: RevalidationRecord[],
+  fixAttempts: FixAttemptRecord[],
+): Record<string, unknown> {
+  const proofStatuses = candidates.map((candidate) => proofStatusForCandidate(candidate, revalidations, fixAttempts));
+  const byOutcome = countBy(
+    revalidations.filter((record) => record.targetType === "finding"),
+    (record) => record.outcome,
+  );
+  return {
+    latestRevalidationCount: revalidations.length,
+    byOutcome,
+    resolved: proofStatuses.filter((status) => status.proofState === "resolved").length,
+    unresolved: proofStatuses.filter((status) => status.proofState === "unresolved").length,
+    stale: proofStatuses.filter((status) => status.proofState === "stale").length,
+    inconclusive: proofStatuses.filter((status) => status.proofState === "inconclusive").length,
+    needsHuman: proofStatuses.filter((status) => status.proofState === "needs-human").length,
+    unproven: proofStatuses.filter((status) => status.proofState === "unproven").length,
+  };
+}
+
+function proofStatusForCandidate(
+  candidate: CandidateRecord,
+  revalidations: RevalidationRecord[],
+  fixAttempts: FixAttemptRecord[],
+): CandidateProofStatus {
+  const latestRevalidation = candidate.findingId ? latestRevalidationForProof(candidate.findingId, revalidations) : undefined;
+  const latestVerificationResult = candidate.findingId ? latestVerificationForProof(candidate.findingId, fixAttempts) : undefined;
+  const proofState = latestRevalidation
+    ? proofStateForOutcome(latestRevalidation.outcome)
+    : "unproven";
+  const replacementFindingId = latestRevalidation?.replacementFindingId ?? latestRevalidation?.supersededByFindingId;
+  return {
+    ...(candidate.findingId ? { findingId: candidate.findingId } : {}),
+    candidateId: candidate.id,
+    proofState,
+    resolved: proofState === "resolved",
+    ...(latestRevalidation ? {
+      latestRevalidation: {
+        id: latestRevalidation.id,
+        outcome: latestRevalidation.outcome,
+        confidence: latestRevalidation.confidence,
+        rationale: latestRevalidation.rationale,
+        nextAction: latestRevalidation.nextAction,
+        createdAt: latestRevalidation.createdAt,
+        evidenceIds: latestRevalidation.evidenceIds,
+        verificationRunIds: latestRevalidation.verificationRunIds,
+        ...(replacementFindingId ? { replacementFindingId } : {}),
+      },
+    } : {}),
+    ...(latestVerificationResult ? { latestVerificationResult } : {}),
+    nextAction: latestRevalidation?.nextAction
+      ?? (latestVerificationResult?.passed
+        ? "Verification passed, but resolution is unproven until revalidation runs."
+        : `Run deepclean revalidate ${candidate.findingId ?? candidate.id}`),
+  };
+}
+
+function latestRevalidationForProof(
+  findingId: string,
+  revalidations: RevalidationRecord[],
+): RevalidationRecord | undefined {
+  return revalidations
+    .filter((record) => record.targetType === "finding" && record.targetId === findingId)
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id))
+    .at(-1);
+}
+
+function latestVerificationForProof(
+  findingId: string,
+  fixAttempts: FixAttemptRecord[],
+): CandidateProofStatus["latestVerificationResult"] | undefined {
+  const latest = fixAttempts
+    .filter((attempt) => attempt.findingId === findingId && attempt.verificationResults.length > 0)
+    .sort((a, b) => a.updatedAt.localeCompare(b.updatedAt) || a.id.localeCompare(b.id))
+    .at(-1);
+  if (!latest) {
+    return undefined;
+  }
+  return {
+    attemptId: latest.id,
+    status: latest.status,
+    ...(latest.outcome ? { outcome: latest.outcome } : {}),
+    passed: latest.verificationResults.every((result) => result.passed),
+    commandCount: latest.verificationResults.length,
+    createdAt: latest.updatedAt,
+  };
+}
+
+function proofStateForOutcome(outcome: RevalidationRecord["outcome"]): CandidateProofStatus["proofState"] {
+  switch (outcome) {
+    case "resolved":
+      return "resolved";
+    case "partially-resolved":
+    case "still-open":
+    case "superseded":
+      return "unresolved";
+    case "stale":
+      return "stale";
+    case "inconclusive":
+      return "inconclusive";
+    case "needs-human":
+      return "needs-human";
+  }
 }
 
 function chooseStatusNextAction(options: {
@@ -1926,7 +2061,11 @@ function remapSynthesisAttemptCandidateIds(
 async function reportCommand(context: CommandContext): Promise<number> {
   const { candidates, evidence, features, runId } = await latestState(context.paths);
   const config = await ensureState(context.paths);
-  const latestClusters = await readLatestClusters(context.paths);
+  const [latestClusters, revalidations, fixAttempts] = await Promise.all([
+    readLatestClusters(context.paths),
+    readRevalidations(context.paths),
+    readFixAttempts(context.paths),
+  ]);
   const filter = queryFilterFromFlags(context);
   const filtered = filterCandidatesForQuery(candidates, latestClusters, filter);
   const selectedFeature = filter.feature ? features.find((feature) => feature.featureId === filter.feature) : undefined;
@@ -1951,6 +2090,7 @@ async function reportCommand(context: CommandContext): Promise<number> {
     jsonPath: paths.jsonPath,
     candidates: ranked,
     clusters,
+    proofStatuses: ranked.map((candidate) => proofStatusForCandidate(candidate, revalidations, fixAttempts)),
     filters: filter,
     selectedFeature,
     evidenceCount: evidence.length,
@@ -1964,10 +2104,12 @@ async function reportCommand(context: CommandContext): Promise<number> {
 }
 
 async function nextCommand(context: CommandContext): Promise<number> {
-  const [candidates, clusters, features] = await Promise.all([
+  const [candidates, clusters, features, revalidations, fixAttempts] = await Promise.all([
     readLatestCandidates(context.paths),
     readLatestClusters(context.paths),
     readLatestFeatures(context.paths),
+    readRevalidations(context.paths),
+    readFixAttempts(context.paths),
   ]);
   const filter = queryFilterFromFlags(context);
   const selectedFeature = filter.feature ? features.find((feature) => feature.featureId === filter.feature) : undefined;
@@ -1978,7 +2120,11 @@ async function nextCommand(context: CommandContext): Promise<number> {
   const filtered = filterCandidatesForQuery(candidates, clusters, filter);
   const ranked = rankCandidates(filtered);
   const candidate = ranked.find((item) => item.status === "open");
-  emit(context.json, ok("next", { candidate: candidate ?? null, selectedFeature }));
+  emit(context.json, ok("next", {
+    candidate: candidate ?? null,
+    proofStatus: candidate ? proofStatusForCandidate(candidate, revalidations, fixAttempts) : null,
+    selectedFeature,
+  }));
   if (!context.json && !context.quiet) {
     if (!candidate) {
       console.log("No open candidates.");
@@ -2055,11 +2201,13 @@ async function showCommand(context: CommandContext): Promise<number> {
     emit(context.json, fail("show", "candidate_not_found", `Candidate or finding not found: ${id}`));
     return 1;
   }
-  const [finding, observation, lifecycleEvents] = await Promise.all([
+  const [finding, observation, lifecycleEvents, revalidations, fixAttempts] = await Promise.all([
     candidate.findingId ? findingForId(context.paths, candidate.findingId) : Promise.resolve(undefined),
     readCandidateObservations(context.paths, candidate.runId)
       .then((observations) => observations.find((item) => item.candidateId === candidate.id)),
     readLifecycleEvents(context.paths),
+    readRevalidations(context.paths),
+    readFixAttempts(context.paths),
   ]);
   const runScopedState = candidate.runId === state.runId
     ? state
@@ -2081,6 +2229,9 @@ async function showCommand(context: CommandContext): Promise<number> {
     finding,
     observation,
     links,
+    latestRevalidation: candidate.findingId ? latestRevalidationForProof(candidate.findingId, revalidations) : undefined,
+    latestVerificationResult: candidate.findingId ? latestVerificationForProof(candidate.findingId, fixAttempts) : undefined,
+    proofStatus: proofStatusForCandidate(candidate, revalidations, fixAttempts),
     evidence: supportingEvidence,
     features: affectedFeatures,
   }, migrationDiagnostics));
@@ -2200,38 +2351,51 @@ async function revalidateCommand(context: CommandContext): Promise<number> {
   const target = requireCandidateId(context);
   await ensureLifecycleStateMigration(context.paths);
   const beforeFindings = await readFindings(context.paths);
-  const targetFindings = await resolveRevalidationTargets(context.paths, target, beforeFindings);
-  if (targetFindings.length === 0 && target !== "all") {
-    emit(context.json, fail("revalidate", "finding_not_found", `Finding not found: ${target}`));
+  const resolvedTarget = await resolveRevalidationTargets(context.paths, target, beforeFindings);
+  if (resolvedTarget.findings.length === 0 && target !== "all" && !resolvedTarget.forceNeedsHuman) {
+    emit(context.json, fail("revalidate", "finding_not_found", `Finding or theme not found: ${target}`));
     return 1;
   }
 
-  const scan = await executeScan(context, { synthesize: false });
+  const dirtyBefore = await dirtyFileEntries(context.paths.root);
+  const revalidationContext = scopedRevalidationContext(context, resolvedTarget.findings);
+  const scan = await executeScan(revalidationContext, { synthesize: false });
   const now = new Date().toISOString();
+  const [fixAttempts, afterFindings] = await Promise.all([
+    readFixAttempts(context.paths),
+    readFindings(context.paths),
+  ]);
   const records: RevalidationRecord[] = [];
-  for (const finding of target === "all" ? beforeFindings : targetFindings) {
+  for (const finding of resolvedTarget.findings) {
     records.push(await classifyRevalidation({
       root: context.paths.root,
       finding,
       currentCandidates: scan.data.candidates,
       runId: scan.runId,
       createdAt: now,
+      currentEvidence: scan.data.candidates.length > 0 ? await readEvidence(context.paths, scan.runId).catch(() => []) : [],
+      verificationRunIds: verificationRunIdsForFinding(finding.id, fixAttempts),
+      changedFiles: scan.data.scope.changedPaths,
+      dirtyState: { dirty: dirtyBefore.length > 0, files: dirtyBefore.map((entry) => entry.file) },
+      forceNeedsHuman: resolvedTarget.forceNeedsHuman,
     }));
   }
-  if (target === "all" && beforeFindings.length === 0) {
+  if (target === "all" && resolvedTarget.findings.length === 0) {
     records.push(await classifyRevalidation({
       root: context.paths.root,
       finding: undefined,
       currentCandidates: scan.data.candidates,
       runId: scan.runId,
       createdAt: now,
+      changedFiles: scan.data.scope.changedPaths,
+      dirtyState: { dirty: dirtyBefore.length > 0, files: dirtyBefore.map((entry) => entry.file) },
     }));
   }
 
   for (const record of records) {
     await writeRevalidation(context.paths, record);
   }
-  const updatedFindings = beforeFindings.map((finding) => {
+  const updatedFindings = afterFindings.map((finding) => {
     const record = records.find((item) => item.targetId === finding.id);
     if (!record) {
       return finding;
@@ -2245,6 +2409,19 @@ async function revalidateCommand(context: CommandContext): Promise<number> {
     };
   });
   await writeFindings(context.paths, updatedFindings);
+  await updateLatestCandidates(context.paths, scan.data.candidates.map((candidate) => {
+    const findingId = candidate.findingId;
+    const record = findingId ? records.find((item) => item.targetId === findingId) : undefined;
+    if (!record) {
+      return candidate;
+    }
+    return {
+      ...candidate,
+      lifecycleState: revalidationOutcomeToLifecycleState(record.outcome),
+      status: revalidationOutcomeToStatus(record.outcome, candidate.status),
+      updatedAt: record.createdAt,
+    };
+  }));
   await writeLifecycleEvents(context.paths, records.flatMap((record) => (
     record.targetId
       ? [{
@@ -2256,20 +2433,33 @@ async function revalidateCommand(context: CommandContext): Promise<number> {
         findingId: record.targetId,
         runId: record.runId,
         kind: "revalidated" as const,
-        toState: record.outcome,
+        fromState: record.priorLifecycleState,
+        toState: revalidationOutcomeToLifecycleState(record.outcome),
         command: "revalidate",
         createdAt: record.createdAt,
-        data: { revalidationId: record.id, outcome: record.outcome },
+        data: {
+          revalidationId: record.id,
+          outcome: record.outcome,
+          confidence: record.confidence,
+          nextAction: record.nextAction,
+          replacementFindingId: record.replacementFindingId ?? record.supersededByFindingId,
+        },
       }]
       : []
   )));
 
   emit(context.json, ok("revalidate", {
     target,
+    resolvedTarget: {
+      type: resolvedTarget.type,
+      findingIds: resolvedTarget.findings.map((finding) => finding.id),
+      ...(resolvedTarget.clusterId ? { clusterId: resolvedTarget.clusterId } : {}),
+      ...(resolvedTarget.forceNeedsHuman ? { forceNeedsHuman: resolvedTarget.forceNeedsHuman } : {}),
+    },
     runId: scan.runId,
     revalidations: records,
     candidates: scan.data.candidates,
-  }, scan.diagnostics));
+  }, [...resolvedTarget.diagnostics, ...scan.diagnostics]));
   if (!context.json && !context.quiet) {
     for (const record of records) {
       console.log(`${record.targetId ?? "all"}: ${record.outcome}`);
@@ -2443,7 +2633,11 @@ async function triageCommand(context: CommandContext): Promise<number> {
 async function handoffCommand(context: CommandContext): Promise<number> {
   const id = requireCandidateId(context);
   const format = flagString(context.parsed.flags, "format") ?? "codex";
-  const { candidates, evidence, features } = await latestState(context.paths);
+  const [{ candidates, evidence, features }, revalidations, fixAttempts] = await Promise.all([
+    latestState(context.paths),
+    readRevalidations(context.paths),
+    readFixAttempts(context.paths),
+  ]);
   const candidate = candidates.find((item) => item.id === id);
   if (!candidate) {
     emit(context.json, fail("handoff", "candidate_not_found", `Candidate not found: ${id}`));
@@ -2453,9 +2647,10 @@ async function handoffCommand(context: CommandContext): Promise<number> {
   const affectedFeatures = featuresForCandidate(candidate, features);
   const handoff = buildHandoff(candidate, supportingEvidence, format, affectedFeatures);
   const handoffPath = await writeHandoff(context.paths, handoff);
-  const warnings = handoffFreshnessWarnings(candidate);
+  const proofStatus = proofStatusForCandidate(candidate, revalidations, fixAttempts);
+  const warnings = handoffFreshnessWarnings(candidate, proofStatus.latestRevalidation);
 
-  emit(context.json, ok("handoff", { handoff, path: handoffPath, warnings, features: affectedFeatures }));
+  emit(context.json, ok("handoff", { handoff, path: handoffPath, warnings, proofStatus, features: affectedFeatures }));
   if (!context.json && !context.quiet) {
     for (const warning of warnings) {
       console.log(`warning: ${warning}`);
@@ -3462,16 +3657,16 @@ function classifyFixOutcome(options: {
     return "needs_human";
   }
   switch (options.revalidation?.outcome) {
-    case "fixed":
+    case "resolved":
       return "resolved";
-    case "changed":
+    case "partially-resolved":
       return "partially-resolved";
-    case "unchanged":
+    case "still-open":
       return "still-open";
     case "superseded":
       return "superseded";
     case "stale":
-      return "resolved";
+    case "needs-human":
     case "inconclusive":
       return "needs_human";
     case undefined:
@@ -4064,17 +4259,93 @@ async function resolveRevalidationTargets(
   paths: StatePaths,
   target: string,
   findings: Awaited<ReturnType<typeof readFindings>>,
-): Promise<Awaited<ReturnType<typeof readFindings>>> {
+): Promise<{
+  type: "finding" | "candidate" | "theme" | "all";
+  findings: Awaited<ReturnType<typeof readFindings>>;
+  clusterId?: string;
+  forceNeedsHuman?: string;
+  diagnostics: Diagnostic[];
+}> {
   if (target === "all") {
-    return findings;
+    return {
+      type: "all",
+      findings: findings.filter((finding) => openFindingForRevalidation(finding)),
+      diagnostics: [],
+    };
+  }
+  const clusters = await readLatestClusters(paths).catch(() => []);
+  const cluster = clusters.find((item) => item.id === target);
+  if (cluster) {
+    const candidateIds = new Set(cluster.candidateIds);
+    const latestCandidates = await readLatestCandidates(paths).catch(() => []);
+    const findingIds = new Set(latestCandidates
+      .filter((candidate) => candidateIds.has(candidate.id) && candidate.findingId)
+      .map((candidate) => candidate.findingId as string));
+    const targetFindings = findings.filter((finding) => findingIds.has(finding.id) && openFindingForRevalidation(finding));
+    return {
+      type: "theme",
+      clusterId: cluster.id,
+      findings: targetFindings,
+      ...(cluster.actionability === "too-broad"
+        ? { forceNeedsHuman: `${cluster.id} is too broad for deterministic revalidation; split it into bounded findings first.` }
+        : {}),
+      diagnostics: cluster.actionability === "too-broad"
+        ? [{
+          level: "warning",
+          code: "theme_too_broad",
+          message: `${cluster.id} is too broad for deterministic revalidation.`,
+        }]
+        : [],
+    };
   }
   if (target.startsWith("candidate-")) {
     const candidate = await candidateForHistoryLookup(paths, target, undefined);
-    return candidate?.findingId
-      ? findings.filter((finding) => finding.id === candidate.findingId)
-      : [];
+    return {
+      type: "candidate",
+      findings: candidate?.findingId
+        ? findings.filter((finding) => finding.id === candidate.findingId)
+        : [],
+      diagnostics: [],
+    };
   }
-  return findings.filter((finding) => finding.id === target);
+  return {
+    type: "finding",
+    findings: findings.filter((finding) => finding.id === target),
+    diagnostics: [],
+  };
+}
+
+function openFindingForRevalidation(finding: FindingRecord): boolean {
+  if (finding.status === "ignored" || finding.status === "false-positive") {
+    return false;
+  }
+  return !["resolved", "suppressed", "superseded", "fixed"].includes(finding.lifecycleState);
+}
+
+function scopedRevalidationContext(
+  context: CommandContext,
+  findings: FindingRecord[],
+): CommandContext {
+  if (flagString(context.parsed.flags, "paths") || findings.length === 0) {
+    return context;
+  }
+  const primaryPaths = uniqueNormalized(findings.flatMap((finding) => [
+    ...finding.files.map((file) => file.path),
+    ...finding.signature.components.primaryAnchors.map((file) => file.path),
+  ]));
+  if (primaryPaths.length === 0) {
+    return context;
+  }
+  return {
+    ...context,
+    parsed: {
+      ...context.parsed,
+      flags: {
+        ...context.parsed.flags,
+        paths: primaryPaths.join(","),
+      },
+    },
+  };
 }
 
 async function withWriteLock(context: CommandContext, fn: () => Promise<number>): Promise<number> {
@@ -4527,7 +4798,10 @@ function candidateQueueItem(candidate: CandidateRecord): Record<string, unknown>
   };
 }
 
-function handoffFreshnessWarnings(candidate: CandidateRecord): string[] {
+function handoffFreshnessWarnings(
+  candidate: CandidateRecord,
+  latestRevalidation?: CandidateProofStatus["latestRevalidation"],
+): string[] {
   const warnings: string[] = [];
   const lifecycleState = candidate.lifecycleState ?? "ready";
   if ([
@@ -4544,6 +4818,15 @@ function handoffFreshnessWarnings(candidate: CandidateRecord): string[] {
   }
   if (candidate.confidence === "low") {
     warnings.push("Finding confidence is low; confirm evidence before implementation.");
+  }
+  if (candidate.status === "fixed" || candidate.status === "superseded" || candidate.status === "ignored" || candidate.status === "false-positive") {
+    warnings.push(`Candidate status is ${candidate.status}; avoid generating implementation handoff without a fresh target.`);
+  }
+  if (candidate.effort === "large" || candidate.risk === "design-needed" || candidate.impact === "cross-cutting") {
+    warnings.push("Finding may be too broad for one implementation handoff; split or narrow it first.");
+  }
+  if (latestRevalidation && latestRevalidation.outcome !== "still-open" && latestRevalidation.outcome !== "partially-resolved") {
+    warnings.push(`Latest revalidation outcome is ${latestRevalidation.outcome}; follow its next action before implementation.`);
   }
   return warnings;
 }
@@ -5136,37 +5419,40 @@ function countBy<T>(items: T[], keyFor: (item: T) => string): Record<string, num
 }
 
 function revalidationOutcomeToLifecycleState(
-  outcome: "unchanged" | "changed" | "fixed" | "stale" | "superseded" | "inconclusive",
-): "still-open" | "resolved" | "stale" | "superseded" | "needs-human" {
+  outcome: RevalidationRecord["outcome"],
+): "still-open" | "partially-resolved" | "resolved" | "stale" | "superseded" | "needs-human" {
   switch (outcome) {
-    case "fixed":
+    case "resolved":
       return "resolved";
+    case "partially-resolved":
+      return "partially-resolved";
+    case "still-open":
+      return "still-open";
     case "stale":
       return "stale";
     case "superseded":
       return "superseded";
+    case "needs-human":
     case "inconclusive":
       return "needs-human";
-    case "changed":
-    case "unchanged":
-      return "still-open";
   }
 }
 
 function revalidationOutcomeToStatus(
-  outcome: "unchanged" | "changed" | "fixed" | "stale" | "superseded" | "inconclusive",
+  outcome: RevalidationRecord["outcome"],
   fallback: CandidateRecord["status"],
 ): CandidateRecord["status"] {
   switch (outcome) {
-    case "fixed":
+    case "resolved":
       return "fixed";
     case "stale":
       return "stale";
     case "superseded":
       return "superseded";
+    case "needs-human":
     case "inconclusive":
-    case "changed":
-    case "unchanged":
+    case "partially-resolved":
+    case "still-open":
       return fallback === "fixed" || fallback === "stale" || fallback === "superseded" ? "open" : fallback;
   }
 }

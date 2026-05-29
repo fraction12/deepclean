@@ -52,6 +52,12 @@ export interface ProgressSummary {
   fixes: ProgressFixSummary;
   splits: ProgressSplitSummary;
   revalidation: {
+    resolved: number;
+    partiallyResolved: number;
+    stillOpen: number;
+    stale: number;
+    superseded: number;
+    needsHuman: number;
     fixed: number;
     changed: number;
     unchanged: number;
@@ -185,9 +191,15 @@ function summarizeRevalidations(events: LifecycleEventRecord[]): ProgressSummary
     .filter((event) => event.kind === "revalidated")
     .map((event) => asRecord(event.data)["outcome"]);
   return {
-    fixed: outcomes.filter((outcome) => outcome === "fixed").length,
-    changed: outcomes.filter((outcome) => outcome === "changed").length,
-    unchanged: outcomes.filter((outcome) => outcome === "unchanged").length,
+    resolved: outcomes.filter((outcome) => outcome === "resolved" || outcome === "fixed").length,
+    partiallyResolved: outcomes.filter((outcome) => outcome === "partially-resolved" || outcome === "changed").length,
+    stillOpen: outcomes.filter((outcome) => outcome === "still-open" || outcome === "unchanged").length,
+    stale: outcomes.filter((outcome) => outcome === "stale").length,
+    superseded: outcomes.filter((outcome) => outcome === "superseded").length,
+    needsHuman: outcomes.filter((outcome) => outcome === "needs-human").length,
+    fixed: outcomes.filter((outcome) => outcome === "resolved" || outcome === "fixed").length,
+    changed: outcomes.filter((outcome) => outcome === "partially-resolved" || outcome === "changed").length,
+    unchanged: outcomes.filter((outcome) => outcome === "still-open" || outcome === "unchanged").length,
     inconclusive: outcomes.filter((outcome) => outcome === "inconclusive").length,
   };
 }
