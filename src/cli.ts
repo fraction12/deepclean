@@ -600,36 +600,17 @@ async function doctorCommand(context: CommandContext): Promise<number> {
 }
 
 async function statusCommand(context: CommandContext): Promise<number> {
-  const diagnostics: Diagnostic[] = [];
-  const initialized = await pathExists(context.paths.stateDir);
-  const integrity = initialized ? await stateIntegrity(context.paths) : { valid: true, diagnostics: [] };
-  diagnostics.push(...integrity.diagnostics);
-  const latest = initialized ? await latestRunId(context.paths) : undefined;
-  const candidates = latest ? await safeReadState("latest candidates", readLatestCandidates(context.paths), diagnostics) : [];
-  const clusters = latest ? await safeReadState("latest clusters", readLatestClusters(context.paths), diagnostics) : [];
-  const evidence = latest ? await safeReadState("latest evidence", readLatestEvidence(context.paths), diagnostics) : [];
-  const features = initialized ? await safeReadState("latest features", readLatestFeatures(context.paths), diagnostics) : [];
-  let records: StatusRecordInputs = emptyStatusRecordInputs();
-  if (initialized) {
-    try {
-      const [runs, reports, plans, handoffs, lifecycleEvents, revalidations, fixAttempts] = await Promise.all([
-        readRuns(context.paths),
-        readReports(context.paths),
-        readPlans(context.paths),
-        readHandoffs(context.paths),
-        readLifecycleEvents(context.paths),
-        readRevalidations(context.paths),
-        readFixAttempts(context.paths),
-      ]);
-      records = { runs, reports, plans, handoffs, lifecycleEvents, revalidations, fixAttempts };
-    } catch (error) {
-      diagnostics.push({
-        level: "error",
-        code: "invalid_state",
-        message: `Deepclean status could not parse one or more state records: ${errorMessage(error)}`,
-      });
-    }
-  }
+  const {
+    diagnostics,
+    initialized,
+    integrity,
+    latest,
+    candidates,
+    clusters,
+    evidence,
+    features,
+    records,
+  } = await readStatusInputs(context.paths);
   const git = await gitDoctor(context.paths.root);
   if (!git.available) {
     diagnostics.push({
@@ -838,6 +819,20 @@ interface StatusRecordInputs {
   fixAttempts: FixAttemptRecord[];
 }
 
+interface StatusInputs {
+  diagnostics: Diagnostic[];
+  initialized: boolean;
+  integrity: StatusIntegrity;
+  latest: string | undefined;
+  candidates: CandidateRecord[];
+  clusters: ClusterRecord[];
+  evidence: EvidenceRecord[];
+  features: FeatureRecord[];
+  records: StatusRecordInputs;
+}
+
+type StatusIntegrity = StateIntegritySummary | { valid: boolean; diagnostics: Diagnostic[] };
+
 interface StatusCandidateItem {
   id: string;
   findingId?: string;
@@ -887,6 +882,51 @@ function emptyStatusRecordInputs(): StatusRecordInputs {
     lifecycleEvents: [],
     revalidations: [],
     fixAttempts: [],
+  };
+}
+
+async function readStatusInputs(paths: StatePaths): Promise<StatusInputs> {
+  const diagnostics: Diagnostic[] = [];
+  const initialized = await pathExists(paths.stateDir);
+  const integrity = initialized ? await stateIntegrity(paths) : { valid: true, diagnostics: [] };
+  diagnostics.push(...integrity.diagnostics);
+  const latest = initialized ? await latestRunId(paths) : undefined;
+  const candidates = latest ? await safeReadState("latest candidates", readLatestCandidates(paths), diagnostics) : [];
+  const clusters = latest ? await safeReadState("latest clusters", readLatestClusters(paths), diagnostics) : [];
+  const evidence = latest ? await safeReadState("latest evidence", readLatestEvidence(paths), diagnostics) : [];
+  const features = initialized ? await safeReadState("latest features", readLatestFeatures(paths), diagnostics) : [];
+  let records: StatusRecordInputs = emptyStatusRecordInputs();
+  if (initialized) {
+    try {
+      const [runs, reports, plans, handoffs, lifecycleEvents, revalidations, fixAttempts] = await Promise.all([
+        readRuns(paths),
+        readReports(paths),
+        readPlans(paths),
+        readHandoffs(paths),
+        readLifecycleEvents(paths),
+        readRevalidations(paths),
+        readFixAttempts(paths),
+      ]);
+      records = { runs, reports, plans, handoffs, lifecycleEvents, revalidations, fixAttempts };
+    } catch (error) {
+      diagnostics.push({
+        level: "error",
+        code: "invalid_state",
+        message: `Deepclean status could not parse one or more state records: ${errorMessage(error)}`,
+      });
+    }
+  }
+
+  return {
+    diagnostics,
+    initialized,
+    integrity,
+    latest,
+    candidates,
+    clusters,
+    evidence,
+    features,
+    records,
   };
 }
 
