@@ -2978,11 +2978,22 @@ async function prepareFixWorkflowScope(
   };
 }
 
-async function runCandidateFixWorkflow(
+type CandidateFixWorkflowPreflight = {
+  ok: true;
+  config: DeepcleanConfig;
+  state: FixWorkflowTargetContext["state"];
+  resolved: FixWorkflowTargetContext["resolved"];
+  dryRun: boolean;
+  verificationCommands: string[];
+  scopeContext: FixWorkflowScopeContext;
+  branch?: string;
+};
+
+async function prepareCandidateFixWorkflow(
   context: CommandContext,
   target: string,
   options: FixWorkflowOptions,
-): Promise<FixWorkflowResult> {
+): Promise<CandidateFixWorkflowPreflight | Extract<FixWorkflowResult, { ok: false }>> {
   const targetContext = await resolveFixWorkflowTarget(context, target);
   if (!targetContext.ok) {
     return targetContext;
@@ -3019,13 +3030,6 @@ async function runCandidateFixWorkflow(
   if (!scopeContext.ok) {
     return scopeContext;
   }
-  const {
-    planResult,
-    allowedWriteScope,
-    dirtyBefore,
-    patchPath,
-    statePrefix,
-  } = scopeContext;
 
   const branch = flagString(context.parsed.flags, "branch");
   if (options.createBranch) {
@@ -3049,6 +3053,44 @@ async function runCandidateFixWorkflow(
       }
     }
   }
+
+  return {
+    ok: true,
+    config,
+    state,
+    resolved,
+    dryRun,
+    verificationCommands,
+    scopeContext,
+    ...(branch ? { branch } : {}),
+  };
+}
+
+async function runCandidateFixWorkflow(
+  context: CommandContext,
+  target: string,
+  options: FixWorkflowOptions,
+): Promise<FixWorkflowResult> {
+  const preflight = await prepareCandidateFixWorkflow(context, target, options);
+  if (!preflight.ok) {
+    return preflight;
+  }
+  const {
+    config,
+    state,
+    resolved,
+    dryRun,
+    verificationCommands,
+    scopeContext,
+    branch,
+  } = preflight;
+  const {
+    planResult,
+    allowedWriteScope,
+    dirtyBefore,
+    patchPath,
+    statePrefix,
+  } = scopeContext;
 
   const workflowId = timestampId("fix");
   const maxAttempts = (!dryRun && !patchPath)
