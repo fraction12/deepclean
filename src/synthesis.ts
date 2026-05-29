@@ -227,106 +227,173 @@ async function buildValidatedSynthesisCandidates(options: {
   })));
 
   for (const draft of parsed.candidates.slice(0, maxCandidates)) {
-    const validation = validateDraftCandidate({
-      id: validationId(validations.length),
+    const validation = recordSynthesisDraftValidation({
       draft,
       evidence: synthesisOptions.evidence,
       sourceText,
       seenStableIdentities,
+      validations,
+      diagnostics,
     });
-    validations.push(validation);
-    diagnostics.push(...validation.diagnostics);
     if (validation.status === "rejected") {
       continue;
     }
-    seenStableIdentities.add(stableIdentity({
-      title: draft.title,
-      category: draft.category,
-      files: draft.files,
-    }));
 
-    const verification = commandsForFiles(synthesisOptions.verificationProfile ?? {
-      defaultCommands: [],
-      pythonCommands: [],
-      frontendCommands: [],
-      adminCommands: [],
-    }, draft.files, draft.verification);
-    const confidenceDowngradeReasons = uniqueStrings([
-      ...draft.confidenceDowngradeReasons,
-      ...draft.fixReadiness.confidenceDowngradeReasons,
-      ...(validation.confidenceDowngradeReasons ?? []),
-    ]);
-    const readiness = validation.readiness ?? draft.readiness;
-
-    candidates.push({
-      schemaVersion,
-      recordType: "candidate",
-      id: candidateId(synthesisOptions.existingCandidates.length + candidates.length),
-      runId: synthesisOptions.runId,
-      title: draft.title,
-      category: draft.category,
-      status: "open",
-      priority: draft.priority,
-      confidence: confidenceAfterValidation(draft.confidence, confidenceDowngradeReasons),
-      impact: draft.impact,
-      effort: draft.effort,
-      risk: readiness === "design-needed" ? "design-needed" : draft.risk,
-      readiness,
-      files: draft.files,
-      ownedFiles: uniqueFileReferences(draft.ownedFiles),
-      contextFiles: uniqueFileReferences(draft.contextFiles),
-      evidenceIds: validation.evidenceIds,
-      affectedFeatureIds: [],
-      featureScope: "unmapped",
-      whyItMatters: draft.whyItMatters,
-      likelyRootCause: draft.likelyRootCause,
-      suggestedDirection: draft.suggestedDirection,
-      expectedBehavior: draft.expectedBehavior,
-      proofRequired: draft.proofRequired,
-      nonGoals: draft.nonGoals,
-      doNotTouch: draft.doNotTouch,
-      splitChildren: draft.splitChildren.map((child) => ({
-        ...child,
-        ownedFiles: uniqueFileReferences(child.ownedFiles),
-        contextFiles: uniqueFileReferences(child.contextFiles),
-      })),
-      confidenceDowngradeReasons,
-      verification: mergeVerificationCommands(verification, draft.verification),
-      fixReadiness: {
-        ...draft.fixReadiness,
-        confidenceDowngradeReasons,
-      },
-      provenance: {
-        source: "model-synthesis",
-        provider: "codex",
-        model,
-        promptVersion,
-        synthesisAttemptId: attemptBase.id,
-        validationId: validation.id,
-        reviewers: reviewerPack.rubrics.map((rubric) => rubric.id),
-        reviewerRubricVersions: reviewerRubricVersions(reviewerPack.rubrics),
-        runtime: {
-          effort: synthesisOptions.runtime.effort,
-          timeoutMs: synthesisOptions.runtime.timeoutMs,
-          retries: synthesisOptions.runtime.retries,
-          rpm: synthesisOptions.runtime.rpm,
-          concurrency: synthesisOptions.runtime.concurrency,
-          tokenBudget: synthesisOptions.runtime.tokenBudget,
-          excerptBudget: synthesisOptions.runtime.excerptBudget,
-          privacyMode: synthesisOptions.runtime.privacyMode,
-          allowSourceInModel: synthesisOptions.runtime.allowSourceInModel,
-        },
-      },
-      createdAt: synthesisOptions.createdAt,
-      updatedAt: synthesisOptions.createdAt,
+    recordAcceptedSynthesisDraft({
+      draft,
+      validation,
+      synthesisOptions,
+      model,
+      reviewerPack,
+      attemptBase,
+      candidates,
+      validations,
     });
-    validations[validations.length - 1] = {
-      ...validation,
-      candidateId: candidates.at(-1)?.id,
-    };
   }
 
   return { candidates, validations, diagnostics };
+}
+
+function recordAcceptedSynthesisDraft(options: {
+  draft: SynthesisOutput["candidates"][number];
+  validation: SynthesisAttemptRecord["validations"][number];
+  synthesisOptions: SynthesizeWithCodexOptions;
+  model: string | undefined;
+  reviewerPack: Awaited<ReturnType<typeof resolveReviewerPack>>;
+  attemptBase: ReturnType<typeof buildAttemptBase>;
+  candidates: CandidateRecord[];
+  validations: SynthesisAttemptRecord["validations"];
+}): void {
+  const candidate = buildAcceptedSynthesisCandidate({
+    draft: options.draft,
+    validation: options.validation,
+    synthesisOptions: options.synthesisOptions,
+    model: options.model,
+    reviewerPack: options.reviewerPack,
+    attemptBase: options.attemptBase,
+    candidateOffset: options.candidates.length,
+  });
+  options.candidates.push(candidate);
+  options.validations[options.validations.length - 1] = {
+    ...options.validation,
+    candidateId: candidate.id,
+  };
+}
+
+function buildAcceptedSynthesisCandidate(options: {
+  draft: SynthesisOutput["candidates"][number];
+  validation: SynthesisAttemptRecord["validations"][number];
+  synthesisOptions: SynthesizeWithCodexOptions;
+  model: string | undefined;
+  reviewerPack: Awaited<ReturnType<typeof resolveReviewerPack>>;
+  attemptBase: ReturnType<typeof buildAttemptBase>;
+  candidateOffset: number;
+}): CandidateRecord {
+  const { draft, validation, synthesisOptions, model, reviewerPack, attemptBase, candidateOffset } = options;
+  const verification = commandsForFiles(synthesisOptions.verificationProfile ?? {
+    defaultCommands: [],
+    pythonCommands: [],
+    frontendCommands: [],
+    adminCommands: [],
+  }, draft.files, draft.verification);
+  const confidenceDowngradeReasons = uniqueStrings([
+    ...draft.confidenceDowngradeReasons,
+    ...draft.fixReadiness.confidenceDowngradeReasons,
+    ...(validation.confidenceDowngradeReasons ?? []),
+  ]);
+  const readiness = validation.readiness ?? draft.readiness;
+
+  return {
+    schemaVersion,
+    recordType: "candidate",
+    id: candidateId(synthesisOptions.existingCandidates.length + candidateOffset),
+    runId: synthesisOptions.runId,
+    title: draft.title,
+    category: draft.category,
+    status: "open",
+    priority: draft.priority,
+    confidence: confidenceAfterValidation(draft.confidence, confidenceDowngradeReasons),
+    impact: draft.impact,
+    effort: draft.effort,
+    risk: readiness === "design-needed" ? "design-needed" : draft.risk,
+    readiness,
+    files: draft.files,
+    ownedFiles: uniqueFileReferences(draft.ownedFiles),
+    contextFiles: uniqueFileReferences(draft.contextFiles),
+    evidenceIds: validation.evidenceIds,
+    affectedFeatureIds: [],
+    featureScope: "unmapped",
+    whyItMatters: draft.whyItMatters,
+    likelyRootCause: draft.likelyRootCause,
+    suggestedDirection: draft.suggestedDirection,
+    expectedBehavior: draft.expectedBehavior,
+    proofRequired: draft.proofRequired,
+    nonGoals: draft.nonGoals,
+    doNotTouch: draft.doNotTouch,
+    splitChildren: draft.splitChildren.map((child) => ({
+      ...child,
+      ownedFiles: uniqueFileReferences(child.ownedFiles),
+      contextFiles: uniqueFileReferences(child.contextFiles),
+    })),
+    confidenceDowngradeReasons,
+    verification: mergeVerificationCommands(verification, draft.verification),
+    fixReadiness: {
+      ...draft.fixReadiness,
+      confidenceDowngradeReasons,
+    },
+    provenance: {
+      source: "model-synthesis",
+      provider: "codex",
+      model,
+      promptVersion,
+      synthesisAttemptId: attemptBase.id,
+      validationId: validation.id,
+      reviewers: reviewerPack.rubrics.map((rubric) => rubric.id),
+      reviewerRubricVersions: reviewerRubricVersions(reviewerPack.rubrics),
+      runtime: {
+        effort: synthesisOptions.runtime.effort,
+        timeoutMs: synthesisOptions.runtime.timeoutMs,
+        retries: synthesisOptions.runtime.retries,
+        rpm: synthesisOptions.runtime.rpm,
+        concurrency: synthesisOptions.runtime.concurrency,
+        tokenBudget: synthesisOptions.runtime.tokenBudget,
+        excerptBudget: synthesisOptions.runtime.excerptBudget,
+        privacyMode: synthesisOptions.runtime.privacyMode,
+        allowSourceInModel: synthesisOptions.runtime.allowSourceInModel,
+      },
+    },
+    createdAt: synthesisOptions.createdAt,
+    updatedAt: synthesisOptions.createdAt,
+  };
+}
+
+function recordSynthesisDraftValidation(options: {
+  draft: SynthesisOutput["candidates"][number];
+  evidence: EvidenceRecord[];
+  sourceText: Map<string, string>;
+  seenStableIdentities: Set<string>;
+  validations: SynthesisAttemptRecord["validations"];
+  diagnostics: Diagnostic[];
+}): SynthesisAttemptRecord["validations"][number] {
+  const validation = validateDraftCandidate({
+    id: validationId(options.validations.length),
+    draft: options.draft,
+    evidence: options.evidence,
+    sourceText: options.sourceText,
+    seenStableIdentities: options.seenStableIdentities,
+  });
+  options.validations.push(validation);
+  options.diagnostics.push(...validation.diagnostics);
+
+  if (validation.status === "accepted") {
+    options.seenStableIdentities.add(stableIdentity({
+      title: options.draft.title,
+      category: options.draft.category,
+      files: options.draft.files,
+    }));
+  }
+
+  return validation;
 }
 
 function buildCodexFailureSynthesisResult(
