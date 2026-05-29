@@ -6,7 +6,7 @@ import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises"
 import path from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
-import { parseArgs, flagBoolean, flagString, type ParsedArgs } from "./args.js";
+import { parseArgs, flagBoolean, flagString, flagStrings, type ParsedArgs } from "./args.js";
 import { candidatesFromEvidence, rankCandidates, reassignCandidateIds } from "./candidates.js";
 import { buildClusters, unclusteredCandidateIds } from "./clusters.js";
 import { isSplittableParentCandidate, splitCandidate } from "./decomposition.js";
@@ -4164,10 +4164,12 @@ function verificationCommandsForFix(
   config: DeepcleanConfig,
   candidate: CandidateRecord,
 ): string[] {
-  const override = flagString(context.parsed.flags, "verification")
-    ?? flagString(context.parsed.flags, "verification-command");
-  if (override) {
-    return [override];
+  const overrides = [
+    ...flagStrings(context.parsed.flags, "verification"),
+    ...flagStrings(context.parsed.flags, "verification-command"),
+  ].filter((command) => command.length > 0);
+  if (overrides.length > 0) {
+    return overrides;
   }
   if (config.fixExecution.verificationCommands.length > 0) {
     return config.fixExecution.verificationCommands;

@@ -1893,6 +1893,47 @@ process.exit(0);
     });
   });
 
+  test("fix runs every repeated verification flag", async () => {
+    await withTempRepo(async (repo) => {
+      const prepared = await prepareFixableRepo(repo);
+      await enableFixExecution(repo);
+      const result = await runCli([
+        "fix",
+        prepared.candidateId,
+        "--patch",
+        prepared.patchPath,
+        "--apply",
+        "--verification",
+        "test -f src/invoice.ts",
+        "--verification",
+        "grep -q 'deepclean fix applied' src/invoice.ts",
+        "--json",
+      ], repo);
+      expect(result.code).toBe(0);
+      const payload = JSON.parse(result.stdout) as {
+        data: {
+          attempt: {
+            status: string;
+            verificationCommands: string[];
+            verificationResults: Array<{ command: string; passed: boolean; outputPath?: string }>;
+          };
+        };
+      };
+      expect(payload.data.attempt.status).toBe("passed");
+      expect(payload.data.attempt.verificationCommands).toEqual([
+        "test -f src/invoice.ts",
+        "grep -q 'deepclean fix applied' src/invoice.ts",
+      ]);
+      expect(payload.data.attempt.verificationResults.map((result) => result.command)).toEqual([
+        "test -f src/invoice.ts",
+        "grep -q 'deepclean fix applied' src/invoice.ts",
+      ]);
+      expect(payload.data.attempt.verificationResults.every((result) => result.passed)).toBe(true);
+      await expect(stat(payload.data.attempt.verificationResults[0]?.outputPath ?? "")).resolves.toBeTruthy();
+      await expect(stat(payload.data.attempt.verificationResults[1]?.outputPath ?? "")).resolves.toBeTruthy();
+    });
+  });
+
   test("fix creates a requested local branch before applying", async () => {
     await withTempRepo(async (repo) => {
       const prepared = await prepareFixableRepo(repo);
