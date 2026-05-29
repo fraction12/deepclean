@@ -220,7 +220,11 @@ async function buildValidatedSynthesisCandidates(options: {
   const candidates: CandidateRecord[] = [];
   const validations: SynthesisAttemptRecord["validations"] = [];
   const diagnostics: Diagnostic[] = [];
-  const seenStableIdentities = new Set(synthesisOptions.existingCandidates.map(stableCandidateIdentity));
+  const seenStableIdentities = new Set(synthesisOptions.existingCandidates.map((candidate) => stableIdentity({
+    title: candidate.title,
+    category: candidate.category,
+    files: candidate.files,
+  })));
 
   for (const draft of parsed.candidates.slice(0, maxCandidates)) {
     const validation = validateDraftCandidate({
@@ -726,10 +730,15 @@ function validateDraftCandidate(options: {
 }
 
 function isBroadDraft(draft: SynthesisOutput["candidates"][number]): boolean {
+  const fileAreas = new Set(draft.files.map((file) => {
+    const parts = file.path.split("/");
+    return parts.length <= 1 ? file.path : parts.slice(0, 2).join("/");
+  }));
+
   return draft.readiness === "split-needed"
     || draft.impact === "cross-cutting"
     || draft.effort === "large"
-    || uniqueStrings(draft.files.map((file) => candidateArea(file.path))).length > 2
+    || fileAreas.size > 2
     || draft.files.length > 4;
 }
 
@@ -746,23 +755,10 @@ function confidenceAfterValidation(
   return confidence === "medium" ? "low" : "low";
 }
 
-function stableCandidateIdentity(candidate: CandidateRecord): string {
-  return stableIdentity({
-    title: candidate.title,
-    category: candidate.category,
-    files: candidate.files,
-  });
-}
-
 function stableIdentity(values: { title: string; category: string; files: FileReference[] }): string {
   const normalizedTitle = values.title.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
   const paths = uniqueStrings(values.files.map((file) => file.path)).sort().slice(0, 6).join(",");
   return `${values.category}:${normalizedTitle}:${paths}`;
-}
-
-function candidateArea(filePath: string): string {
-  const parts = filePath.split("/");
-  return parts.length <= 1 ? filePath : parts.slice(0, 2).join("/");
 }
 
 function reviewerRubricVersions(rubrics: typeof reviewerRubrics): Record<string, string> {
