@@ -47,9 +47,14 @@ export const lifecycleEventKinds = [
   "fixed",
   "stale",
   "superseded",
+  "fix-refused",
+  "patch-started",
+  "patch-applied",
+  "scope-failed",
   "fix-attempted",
   "verification-passed",
   "verification-failed",
+  "unverified",
 ] as const;
 export const lifecycleStates = [
   "new",
@@ -97,6 +102,7 @@ export const fixAttemptStatuses = [
   "applied",
   "passed",
   "failed",
+  "scope-failed",
   "unverified",
 ] as const;
 export const fixAttemptOutcomes = [
@@ -551,8 +557,12 @@ export const fixAttemptRecordSchema = z.object({
   attemptNumber: z.number().int().positive().optional(),
   maxAttempts: z.number().int().positive().optional(),
   previousAttemptIds: z.array(z.string()).optional(),
+  branch: z.string().optional(),
+  dirtyBefore: z.array(z.string()).optional(),
+  dirtyAfter: z.array(z.string()).optional(),
   allowedWriteScope: z.array(z.string()).optional(),
   outOfScopeFiles: z.array(z.string()).optional(),
+  noExternalSideEffects: z.boolean().default(true),
   beforeEvidenceIds: z.array(z.string()).optional(),
   afterRevalidationId: z.string().optional(),
   changedFiles: z.array(z.string()),
@@ -562,6 +572,8 @@ export const fixAttemptRecordSchema = z.object({
     command: z.string(),
     exitCode: z.number().int().optional(),
     passed: z.boolean(),
+    durationMs: z.number().int().nonnegative().optional(),
+    summary: z.string().optional(),
     outputPath: z.string().optional(),
   })),
   worker: z.object({
