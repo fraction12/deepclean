@@ -667,59 +667,31 @@ async function statusCommand(context: CommandContext): Promise<number> {
       message: "One or more findings or generated artifacts need revalidation or regeneration.",
     });
   }
-  const data = {
-    root: context.paths.root,
-    stateDir: context.paths.stateDir,
+  const data = buildStatusData(context.paths, {
     initialized,
-    latestRunId: latest,
-    latestRun: latestRun ? runStatusPayload(context.paths, latestRun) : undefined,
-    latestReport: latestReport ? reportStatusPayload(context.paths, latestReport) : undefined,
-    git: {
-      branch: git.branch,
-      dirty: git.dirty,
-      available: git.available,
-    },
-    queue: {
-      total: candidates.length,
-      open: candidates.filter((candidate) => candidate.status === "open").length,
-      active: activeItems.length,
-      blocked: blockers.length,
-      stale: candidates.filter((candidate) => candidate.lifecycleState === "stale" || candidate.status === "stale").length,
-      fixed: candidates.filter((candidate) => candidate.lifecycleState === "fixed" || candidate.lifecycleState === "resolved" || candidate.status === "fixed").length,
-      suppressed: candidates.filter((candidate) => candidate.lifecycleState === "suppressed" || candidate.status === "ignored" || candidate.status === "false-positive").length,
-      byStatus: statusCounts,
-      byLifecycleState: lifecycleCounts,
-      themes: clusters.length,
-      evidence: evidence.length,
-      features: features.length,
-    },
-    activeItems,
-    blockedItems: blockers,
-    locks: {
-      active: locks.filter((lock) => !lock.stale).length,
-      stale: locks.filter((lock) => lock.stale).length,
-      records: locks.map((lock) => ({
-        id: lock.record?.id,
-        owner: lock.record?.owner,
-        pid: lock.record?.pid,
-        command: lock.record?.command,
-        statePath: lock.record?.statePath,
-        createdAt: lock.record?.createdAt,
-        stale: lock.stale,
-        reason: lock.reason,
-        recoveryCommand: lock.recoveryCommand,
-      })),
-    },
-    pendingRevalidation: candidates.filter((candidate) => candidate.lifecycleState === "stale" || candidate.status === "stale").length,
-    proof: buildProofSummary(candidates, records.revalidations, records.fixAttempts),
-    artifacts: artifactCounts,
-    stateIntegrity: integrity,
-    latestArtifacts,
-    staleArtifacts,
-    recentProgress,
-    nextAction,
+    integrity,
+    latest,
+    candidates,
+    clusters,
+    evidence,
+    features,
+    records,
+  }, {
+    git,
+    artifactCounts,
+    locks,
     progress,
-  };
+    statusCounts,
+    lifecycleCounts,
+    latestRun,
+    latestReport,
+    staleArtifacts,
+    blockers,
+    activeItems,
+    recentProgress,
+    latestArtifacts,
+    nextAction,
+  });
 
   emit(context.json, ok("status", data, diagnostics));
   if (!context.json && !context.quiet) {
@@ -844,6 +816,84 @@ interface StatusProgressEvent {
   findingId?: string;
   candidateId?: string;
   outcome?: string;
+}
+
+function buildStatusData(
+  paths: StatePaths,
+  inputs: Pick<StatusInputs, "initialized" | "integrity" | "latest" | "candidates" | "clusters" | "evidence" | "features" | "records">,
+  derived: StatusDerivedState,
+) {
+  const { initialized, integrity, latest, candidates, clusters, evidence, features, records } = inputs;
+  const {
+    git,
+    artifactCounts,
+    locks,
+    progress,
+    statusCounts,
+    lifecycleCounts,
+    latestRun,
+    latestReport,
+    staleArtifacts,
+    blockers,
+    activeItems,
+    recentProgress,
+    latestArtifacts,
+    nextAction,
+  } = derived;
+
+  return {
+    root: paths.root,
+    stateDir: paths.stateDir,
+    initialized,
+    latestRunId: latest,
+    latestRun: latestRun ? runStatusPayload(paths, latestRun) : undefined,
+    latestReport: latestReport ? reportStatusPayload(paths, latestReport) : undefined,
+    git: {
+      branch: git.branch,
+      dirty: git.dirty,
+      available: git.available,
+    },
+    queue: {
+      total: candidates.length,
+      open: candidates.filter((candidate) => candidate.status === "open").length,
+      active: activeItems.length,
+      blocked: blockers.length,
+      stale: candidates.filter((candidate) => candidate.lifecycleState === "stale" || candidate.status === "stale").length,
+      fixed: candidates.filter((candidate) => candidate.lifecycleState === "fixed" || candidate.lifecycleState === "resolved" || candidate.status === "fixed").length,
+      suppressed: candidates.filter((candidate) => candidate.lifecycleState === "suppressed" || candidate.status === "ignored" || candidate.status === "false-positive").length,
+      byStatus: statusCounts,
+      byLifecycleState: lifecycleCounts,
+      themes: clusters.length,
+      evidence: evidence.length,
+      features: features.length,
+    },
+    activeItems,
+    blockedItems: blockers,
+    locks: {
+      active: locks.filter((lock) => !lock.stale).length,
+      stale: locks.filter((lock) => lock.stale).length,
+      records: locks.map((lock) => ({
+        id: lock.record?.id,
+        owner: lock.record?.owner,
+        pid: lock.record?.pid,
+        command: lock.record?.command,
+        statePath: lock.record?.statePath,
+        createdAt: lock.record?.createdAt,
+        stale: lock.stale,
+        reason: lock.reason,
+        recoveryCommand: lock.recoveryCommand,
+      })),
+    },
+    pendingRevalidation: candidates.filter((candidate) => candidate.lifecycleState === "stale" || candidate.status === "stale").length,
+    proof: buildProofSummary(candidates, records.revalidations, records.fixAttempts),
+    artifacts: artifactCounts,
+    stateIntegrity: integrity,
+    latestArtifacts,
+    staleArtifacts,
+    recentProgress,
+    nextAction,
+    progress,
+  };
 }
 
 function emptyStatusRecordInputs(): StatusRecordInputs {
