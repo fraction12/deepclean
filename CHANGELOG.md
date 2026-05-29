@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.1.0-beta.5 - 2026-05-29
+
+- Added beta update-path diagnostics to `deepclean doctor`, including stale package warnings, offline/local-only skip handling, and beta install/update docs.
+
 ## 0.1.0-beta.4 - 2026-05-29
 
 - Added a shared architecture graph and fitness ledger so dependency-hotspot evidence, feature mapping, clustering, and revalidation use one common model.
