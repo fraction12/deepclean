@@ -4538,12 +4538,19 @@ interface StateIntegritySummary {
   diagnostics: Diagnostic[];
 }
 
-async function stateIntegrity(paths: StatePaths): Promise<StateIntegritySummary> {
-  const diagnostics: Diagnostic[] = [];
-  let partialRecords = 0;
-  let duplicateIds = 0;
-  let alphaRecords = 0;
-  const dirs: Array<{ name: string; dir: string; arrayRecords?: boolean; alphaCandidates?: boolean }> = [
+interface StateIntegrityDirectory {
+  name: string;
+  dir: string;
+  arrayRecords?: boolean;
+  alphaCandidates?: boolean;
+}
+
+type StateRecordReadResult =
+  | { ok: true; parsed: unknown }
+  | { ok: false; diagnostic: Diagnostic };
+
+function stateIntegrityDirectories(paths: StatePaths): StateIntegrityDirectory[] {
+  return [
     { name: "runs", dir: paths.runsDir },
     { name: "findings", dir: paths.findingsDir },
     { name: "observations", dir: paths.observationsDir, arrayRecords: true },
@@ -4563,8 +4570,35 @@ async function stateIntegrity(paths: StatePaths): Promise<StateIntegritySummary>
     { name: "fixes", dir: paths.fixesDir },
     { name: "synthesis", dir: paths.synthesisDir },
   ];
+}
 
-  for (const dir of dirs) {
+async function readStateRecordFile(filePath: string, relativePath: string): Promise<StateRecordReadResult> {
+  try {
+    const raw = await readFile(filePath, "utf8");
+    if (raw.trim().length === 0) {
+      throw new Error("file is empty");
+    }
+    return { ok: true, parsed: JSON.parse(raw) };
+  } catch (error) {
+    return {
+      ok: false,
+      diagnostic: {
+        level: "error",
+        code: "partial_state_record",
+        message: `${relativePath} is unreadable or partially written: ${errorMessage(error)}`,
+        adapter: "state",
+      },
+    };
+  }
+}
+
+async function stateIntegrity(paths: StatePaths): Promise<StateIntegritySummary> {
+  const diagnostics: Diagnostic[] = [];
+  let partialRecords = 0;
+  let duplicateIds = 0;
+  let alphaRecords = 0;
+
+  for (const dir of stateIntegrityDirectories(paths)) {
     let files: string[];
     try {
       files = (await readdir(dir.dir)).filter((file) => file.endsWith(".json")).sort();
@@ -4575,24 +4609,14 @@ async function stateIntegrity(paths: StatePaths): Promise<StateIntegritySummary>
     for (const file of files) {
       const filePath = path.join(dir.dir, file);
       const relativePath = path.relative(paths.root, filePath) || filePath;
-      let parsed: unknown;
-      try {
-        const raw = await readFile(filePath, "utf8");
-        if (raw.trim().length === 0) {
-          throw new Error("file is empty");
-        }
-        parsed = JSON.parse(raw);
-      } catch (error) {
+      const readResult = await readStateRecordFile(filePath, relativePath);
+      if (!readResult.ok) {
         partialRecords += 1;
-        diagnostics.push({
-          level: "error",
-          code: "partial_state_record",
-          message: `${relativePath} is unreadable or partially written: ${errorMessage(error)}`,
-          adapter: "state",
-        });
+        diagnostics.push(readResult.diagnostic);
         continue;
       }
 
+      const parsed = readResult.parsed;
       const records = Array.isArray(parsed) ? parsed : [parsed];
       if (dir.arrayRecords && !Array.isArray(parsed)) {
         partialRecords += 1;
