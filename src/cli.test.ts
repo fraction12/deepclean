@@ -1667,16 +1667,60 @@ process.exit(0);
       expect(result.code).toBe(0);
       const payload = JSON.parse(result.stdout) as {
         data: {
-          attempt: { status: string; dryRun: boolean; verificationResults: Array<{ passed: boolean; outputPath?: string }> };
+          attempt: {
+            status: string;
+            dryRun: boolean;
+            noExternalSideEffects?: boolean;
+            dirtyBefore?: string[];
+            dirtyAfter?: string[];
+            verificationResults: Array<{
+              passed: boolean;
+              outputPath?: string;
+              durationMs?: number;
+              summary?: string;
+            }>;
+          };
           externalSideEffects: unknown[];
         };
       };
       expect(payload.data.attempt.status).toBe("passed");
       expect(payload.data.attempt.dryRun).toBe(false);
       expect(payload.data.attempt.verificationResults[0]?.passed).toBe(true);
+      expect(payload.data.attempt.verificationResults[0]?.durationMs).toBeGreaterThanOrEqual(0);
+      expect(payload.data.attempt.verificationResults[0]?.summary).toBeDefined();
+      expect(payload.data.attempt.noExternalSideEffects).toBe(true);
+      expect(payload.data.attempt.dirtyBefore).toContain("fix.patch");
+      expect(payload.data.attempt.dirtyAfter).toContain("src/invoice.ts");
       expect(payload.data.externalSideEffects).toEqual([]);
       expect(await readFile(path.join(repo, "src", "invoice.ts"), "utf8")).toContain("deepclean fix applied");
       await expect(stat(payload.data.attempt.verificationResults[0]?.outputPath ?? "")).resolves.toBeTruthy();
+    });
+  });
+
+  test("fix creates a requested local branch before applying", async () => {
+    await withTempRepo(async (repo) => {
+      const prepared = await prepareFixableRepo(repo);
+      await enableFixExecution(repo);
+      const result = await runCli([
+        "fix",
+        prepared.candidateId,
+        "--branch",
+        "chore/deepclean-safe-fix",
+        "--patch",
+        prepared.patchPath,
+        "--apply",
+        "--verification",
+        "test -f src/invoice.ts",
+        "--json",
+      ], repo);
+      expect(result.code).toBe(0);
+      const payload = JSON.parse(result.stdout) as {
+        data: { attempt: { branch?: string; status: string } };
+      };
+      expect(payload.data.attempt.status).toBe("passed");
+      expect(payload.data.attempt.branch).toBe("chore/deepclean-safe-fix");
+      const branch = await execFileAsync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: repo });
+      expect(branch.stdout.trim()).toBe("chore/deepclean-safe-fix");
     });
   });
 
@@ -1699,6 +1743,68 @@ process.exit(0);
       expect(result.code).toBe(2);
       const payload = JSON.parse(result.stdout) as { error: { code: string } };
       expect(payload.error.code).toBe("dirty_tree");
+    });
+  });
+
+  test("fix records scope-failed attempts when worker edits outside allowed files", async () => {
+    await withTempRepo(async (repo) => {
+      const prepared = await prepareFixableRepo(repo);
+      await rm(prepared.patchPath, { force: true });
+      await enableFixExecution(repo);
+      await installFakeCodex(repo, `#!/usr/bin/env node
+const fs = require("node:fs");
+fs.readFileSync(0, "utf8");
+fs.writeFileSync("outside.ts", "export const outside = true;\\n");
+`);
+      const result = await runCli([
+        "fix",
+        prepared.candidateId,
+        "--apply",
+        "--verification",
+        "true",
+        "--allow-dirty",
+        "--json",
+      ], repo);
+      expect(result.code).toBe(3);
+      const payload = JSON.parse(result.stdout) as {
+        data: { attempt: { status: string; outcome?: string; outOfScopeFiles?: string[]; verificationResults: unknown[] } };
+      };
+      expect(payload.data.attempt.status).toBe("scope-failed");
+      expect(payload.data.attempt.outcome).toBe("needs_human");
+      expect(payload.data.attempt.outOfScopeFiles).toContain("outside.ts");
+      expect(payload.data.attempt.verificationResults).toEqual([]);
+      const eventFiles = await readdir(path.join(repo, ".deepclean", "lifecycle"));
+      const events = await Promise.all(eventFiles.map(async (file) => (
+        JSON.parse(await readFile(path.join(repo, ".deepclean", "lifecycle", file), "utf8")) as { kind: string }
+      )));
+      expect(events.some((event) => event.kind === "scope-failed")).toBe(true);
+    });
+  });
+
+  test("fix captures failed verification output without marking the attempt verified", async () => {
+    await withTempRepo(async (repo) => {
+      const prepared = await prepareFixableRepo(repo);
+      await enableFixExecution(repo);
+      const result = await runCli([
+        "fix",
+        prepared.candidateId,
+        "--patch",
+        prepared.patchPath,
+        "--apply",
+        "--verification",
+        "echo nope && exit 7",
+        "--json",
+      ], repo);
+      expect(result.code).toBe(3);
+      const payload = JSON.parse(result.stdout) as {
+        data: { attempt: { status: string; verificationResults: Array<{ passed: boolean; exitCode?: number; summary?: string; durationMs?: number; outputPath?: string }> } };
+      };
+      expect(payload.data.attempt.status).toBe("failed");
+      expect(payload.data.attempt.verificationResults[0]?.passed).toBe(false);
+      expect(payload.data.attempt.verificationResults[0]?.exitCode).toBe(7);
+      expect(payload.data.attempt.verificationResults[0]?.durationMs).toBeGreaterThanOrEqual(0);
+      expect(payload.data.attempt.verificationResults[0]?.summary).toContain("nope");
+      await expect(stat(payload.data.attempt.verificationResults[0]?.outputPath ?? "")).resolves.toBeTruthy();
     });
   });
 

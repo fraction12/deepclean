@@ -276,6 +276,7 @@ Commands:
     --dry-run                  Persist preview without changing source
     --apply                    Apply the patch locally
     --allow-dirty              Allow dirty files inside target scope
+    --branch <name>            Create or switch to a local branch before applying
     --verification <c>         Required verification command for --apply
     --verification-command <c> Alias for --verification
     --allow-files <glob>       Explicitly allow additional changed files
@@ -1461,7 +1462,7 @@ async function fixCommand(context: CommandContext): Promise<number> {
   const result = await runCandidateFixWorkflow(context, target, {
     command: "fix",
     requirePrProof: false,
-    createBranch: false,
+    createBranch: Boolean(flagString(context.parsed.flags, "branch")),
     openPr: false,
   });
   if (!result.ok) {
@@ -2640,6 +2641,13 @@ async function runCandidateFixWorkflow(
 
   const blocked = fixReadinessBlocker(resolved.candidate);
   if (blocked) {
+    await writeFixRefusalLifecycleEvent(context.paths, {
+      findingId: resolved.findingId,
+      candidateId: resolved.candidate.id,
+      command: options.command,
+      code: blocked.code,
+      message: blocked.message,
+    });
     return { ok: false, exitCode: 2, ...blocked };
   }
 
@@ -2647,6 +2655,13 @@ async function runCandidateFixWorkflow(
   const verificationCommands = verificationCommandsForFix(context, config, resolved.candidate);
   const verificationBlocker = fixWorkflowVerificationBlocker(options, dryRun, verificationCommands);
   if (verificationBlocker) {
+    await writeFixRefusalLifecycleEvent(context.paths, {
+      findingId: resolved.findingId,
+      candidateId: resolved.candidate.id,
+      command: options.command,
+      code: verificationBlocker.code,
+      message: verificationBlocker.message,
+    });
     return verificationBlocker;
   }
 
@@ -2664,6 +2679,13 @@ async function runCandidateFixWorkflow(
     && !file.startsWith(statePrefix)
   ));
   if (!dryRun && dirtyOutsideTarget.length > 0 && !allowedDirty) {
+    await writeFixRefusalLifecycleEvent(context.paths, {
+      findingId: resolved.findingId,
+      candidateId: resolved.candidate.id,
+      command: options.command,
+      code: "dirty_tree",
+      message: `Dirty files outside target scope: ${dirtyOutsideTarget.join(", ")}`,
+    });
     return {
       ok: false,
       exitCode: 2,
@@ -2808,7 +2830,7 @@ async function runCandidateFixWorkflow(
         code: "fix_scope_failed",
         message: `Patch changed files outside candidate scope: ${outOfScopeFiles.join(", ")}`,
       });
-      status = "failed";
+      status = "scope-failed";
     }
     if (!dryRun && worker?.timedOut && changedFiles.length === 0) {
       status = "failed";
@@ -2851,12 +2873,14 @@ async function runCandidateFixWorkflow(
       outcome = "needs_human";
     }
     lastRevalidation = revalidation;
-    if (outcome === "needs_human" && status !== "failed" && !dryRun) {
+    if (outcome === "needs_human" && status !== "failed" && status !== "scope-failed" && !dryRun) {
       status = "failed";
     }
 
     const now = new Date().toISOString();
     const previousAttemptIds = attempts.map((attempt) => attempt.id);
+    const dirtyAfter = !dryRun ? (await dirtyFileEntries(context.paths.root)).map((entry) => entry.file) : dirtyBefore;
+    const activeBranch = flagString(context.parsed.flags, "branch") ?? await currentGitBranch(context.paths.root);
     const attempt: FixAttemptRecord = {
       schemaVersion,
       recordType: "fix_attempt",
@@ -2870,8 +2894,12 @@ async function runCandidateFixWorkflow(
       attemptNumber,
       maxAttempts,
       previousAttemptIds,
+      branch: activeBranch,
+      dirtyBefore,
+      dirtyAfter,
       allowedWriteScope,
       outOfScopeFiles,
+      noExternalSideEffects: true,
       beforeEvidenceIds: resolved.candidate.evidenceIds,
       afterRevalidationId: revalidation?.id,
       changedFiles,
@@ -3007,7 +3035,7 @@ async function runCandidateFixWorkflow(
   const blockedPr = options.requirePrProof && !prProofPassed;
   return {
     ok: true,
-    exitCode: finalStatus === "failed" || blockedPr ? 3 : 0,
+    exitCode: finalStatus === "failed" || finalStatus === "scope-failed" || blockedPr ? 3 : 0,
     data: {
       attempt,
       attemptPath,
@@ -3563,6 +3591,12 @@ async function checkoutWorkBranch(root: string, branch: string): Promise<{ ok: t
   return result.ok ? { ok: true } : result;
 }
 
+async function currentGitBranch(root: string): Promise<string | undefined> {
+  return execFileAsync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: root, timeout: 5000 })
+    .then((result) => result.stdout.trim())
+    .catch(() => undefined);
+}
+
 async function changedFilesSince(root: string, beforeDirty: string[]): Promise<string[]> {
   const before = new Set(beforeDirty);
   const after = (await dirtyFileEntries(root)).map((entry) => entry.file);
@@ -3614,6 +3648,51 @@ async function writeFixLifecycleEvents(
       targetType: "fix_attempt",
       targetId: attempt.id,
       findingId: attempt.findingId,
+      kind: "patch-started",
+      command,
+      createdAt: now,
+      data: {
+        candidateId: attempt.candidateId,
+        dryRun: attempt.dryRun,
+        branch: attempt.branch,
+        allowedWriteScope: attempt.allowedWriteScope,
+      },
+    },
+    ...(!attempt.dryRun && attempt.changedFiles.length > 0
+      ? [{
+        schemaVersion,
+        recordType: "lifecycle_event" as const,
+        id: timestampId("event"),
+        targetType: "fix_attempt" as const,
+        targetId: attempt.id,
+        findingId: attempt.findingId,
+        kind: "patch-applied" as const,
+        command,
+        createdAt: now,
+        data: { changedFiles: attempt.changedFiles },
+      }]
+      : []),
+    ...((attempt.outOfScopeFiles?.length ?? 0) > 0
+      ? [{
+        schemaVersion,
+        recordType: "lifecycle_event" as const,
+        id: timestampId("event"),
+        targetType: "fix_attempt" as const,
+        targetId: attempt.id,
+        findingId: attempt.findingId,
+        kind: "scope-failed" as const,
+        command,
+        createdAt: now,
+        data: { outOfScopeFiles: attempt.outOfScopeFiles },
+      }]
+      : []),
+    {
+      schemaVersion,
+      recordType: "lifecycle_event",
+      id: timestampId("event"),
+      targetType: "fix_attempt",
+      targetId: attempt.id,
+      findingId: attempt.findingId,
       kind: "fix-attempted",
       command,
       createdAt: now,
@@ -3638,7 +3717,20 @@ async function writeFixLifecycleEvents(
         createdAt: now,
         data: { verificationResults: attempt.verificationResults },
       }]
-      : []),
+      : !attempt.dryRun
+        ? [{
+          schemaVersion,
+          recordType: "lifecycle_event" as const,
+          id: timestampId("event"),
+          targetType: "fix_attempt" as const,
+          targetId: attempt.id,
+          findingId: attempt.findingId,
+          kind: "unverified" as const,
+          command,
+          createdAt: now,
+          data: { status: attempt.status },
+        }]
+        : []),
     ...(revalidation
       ? [{
         schemaVersion,
@@ -3654,6 +3746,35 @@ async function writeFixLifecycleEvents(
       }]
       : []),
   ]);
+}
+
+async function writeFixRefusalLifecycleEvent(
+  paths: StatePaths,
+  options: {
+    findingId: string;
+    candidateId?: string | undefined;
+    command: "fix" | "work";
+    code: string;
+    message: string;
+  },
+): Promise<void> {
+  const now = new Date().toISOString();
+  await writeLifecycleEvents(paths, [{
+    schemaVersion,
+    recordType: "lifecycle_event",
+    id: timestampId("event"),
+    targetType: "finding",
+    targetId: options.findingId,
+    findingId: options.findingId,
+    kind: "fix-refused",
+    command: options.command,
+    createdAt: now,
+    data: {
+      candidateId: options.candidateId,
+      code: options.code,
+      message: options.message,
+    },
+  }]);
 }
 
 function nextFixWorkflowStep(options: {
@@ -3829,6 +3950,7 @@ async function runFixVerification(
 ): Promise<FixAttemptRecord["verificationResults"]> {
   const results: FixAttemptRecord["verificationResults"] = [];
   for (const [index, command] of commandsToRun.entries()) {
+    const startedAt = Date.now();
     const outputPath = path.join(paths.fixesDir, `${attemptId}-verification-${String(index + 1).padStart(2, "0")}.txt`);
     const result = await execFileAsync("sh", ["-lc", command], { cwd: paths.root, timeout: 120_000 })
       .then((output) => ({ exitCode: 0, output: `${output.stdout}${output.stderr}` }))
@@ -3841,10 +3963,20 @@ async function runFixVerification(
       command,
       exitCode: result.exitCode,
       passed: result.exitCode === 0,
+      durationMs: Date.now() - startedAt,
+      summary: summarizeVerificationOutput(result.output, result.exitCode),
       outputPath,
     });
   }
   return results;
+}
+
+function summarizeVerificationOutput(output: string, exitCode: number): string {
+  const normalized = output.replace(/\s+/g, " ").trim();
+  if (normalized.length === 0) {
+    return exitCode === 0 ? "Command completed successfully with no output." : `Command failed with exit ${exitCode} and no output.`;
+  }
+  return normalized.length > 240 ? `${normalized.slice(0, 237)}...` : normalized;
 }
 
 async function candidateForHistoryLookup(
