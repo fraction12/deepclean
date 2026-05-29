@@ -27,6 +27,9 @@
     "docs/privacy-and-trust.md",
     "docs/public-readiness.md",
     "docs/release.md",
+    "docs/beta-release-checklist.md",
+    "docs/beta-dogfood/matrix.md",
+    "docs/beta-dogfood/scorecard-template.md",
     "docs/reviewer-references.md",
     "docs/troubleshooting.md"
   ],
