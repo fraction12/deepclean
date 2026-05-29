@@ -465,29 +465,36 @@ async function initCommand(context: CommandContext): Promise<number> {
   return 0;
 }
 
+function packageUpdateDiagnostics(packageUpdate: PackageUpdateStatus): Diagnostic[] {
+  if (packageUpdate.stale && packageUpdate.latestVersion) {
+    return [{
+      level: "warning",
+      code: "package_update_available",
+      message: `Deepclean ${packageUpdate.latestVersion} is available on npm ${packageUpdate.channel}. Update with \`${packageUpdate.updateCommand}\`.`,
+    }];
+  }
+  if (packageUpdate.skippedReason) {
+    return [{
+      level: "info",
+      code: "package_update_check_skipped",
+      message: `Package update check skipped: ${packageUpdate.skippedReason}.`,
+    }];
+  }
+  if (packageUpdate.error) {
+    return [{
+      level: "warning",
+      code: "package_update_check_failed",
+      message: `Package update check failed: ${packageUpdate.error}`,
+    }];
+  }
+  return [];
+}
+
 async function doctorCommand(context: CommandContext): Promise<number> {
   const diagnostics: Diagnostic[] = [];
   const currentPackageVersion = await packageVersion();
   const packageUpdate = await packageUpdateStatus(context, currentPackageVersion);
-  if (packageUpdate.stale && packageUpdate.latestVersion) {
-    diagnostics.push({
-      level: "warning",
-      code: "package_update_available",
-      message: `Deepclean ${packageUpdate.latestVersion} is available on npm ${packageUpdate.channel}. Update with \`${packageUpdate.updateCommand}\`.`,
-    });
-  } else if (packageUpdate.skippedReason) {
-    diagnostics.push({
-      level: "info",
-      code: "package_update_check_skipped",
-      message: `Package update check skipped: ${packageUpdate.skippedReason}.`,
-    });
-  } else if (packageUpdate.error) {
-    diagnostics.push({
-      level: "warning",
-      code: "package_update_check_failed",
-      message: `Package update check failed: ${packageUpdate.error}`,
-    });
-  }
+  diagnostics.push(...packageUpdateDiagnostics(packageUpdate));
   const initialized = await pathExists(context.paths.stateDir);
   const missingDirs = initialized ? await missingStateDirectories(context.paths) : [];
   const integrity = initialized ? await stateIntegrity(context.paths) : { valid: true, diagnostics: [] };
