@@ -929,7 +929,12 @@ ${Array.from({ length: 96 }, (_, index) => `  const value${index} = ${index};`).
         data: { revalidations: Array<{ outcome: string; targetId?: string }> };
       };
       expect(payload.data.revalidations[0]?.targetId).toBe(target);
-      expect(payload.data.revalidations[0]?.outcome).toBe("unchanged");
+      expect(payload.data.revalidations[0]?.outcome).toBe("still-open");
+      expect(payload.data.revalidations[0]).toMatchObject({
+        confidence: expect.any(String),
+        rationale: expect.any(String),
+        nextAction: expect.any(String),
+      });
 
       const history = await runCli(["history", target ?? "", "--json"], repo);
       const historyPayload = JSON.parse(history.stdout) as {
@@ -937,8 +942,51 @@ ${Array.from({ length: 96 }, (_, index) => `  const value${index} = ${index};`).
       };
       expect(historyPayload.data.events.some((event) => (
         event.kind === "revalidated"
-        && event.data?.outcome === "unchanged"
+        && event.data?.outcome === "still-open"
       ))).toBe(true);
+    });
+  });
+
+  test("passed verification alone does not prove resolution", async () => {
+    await withTempRepo(async (repo) => {
+      await writeFixtureSource(repo);
+      await runCli(["scan", "--evidence-only", "--json"], repo);
+      const candidates = JSON.parse(
+        await readFile(path.join(repo, ".deepclean", "candidates", (await latestRunFile(repo))), "utf8"),
+      ) as Array<{ id: string; findingId?: string }>;
+      const candidate = candidates.find((item) => item.findingId);
+      expect(candidate?.findingId).toBeTruthy();
+
+      await mkdir(path.join(repo, ".deepclean", "fixes"), { recursive: true });
+      await writeFile(path.join(repo, ".deepclean", "fixes", "fix-proof-only.json"), `${JSON.stringify({
+        schemaVersion,
+        recordType: "fix_attempt",
+        id: "fix-proof-only",
+        findingId: candidate?.findingId,
+        candidateId: candidate?.id,
+        status: "passed",
+        outcome: "partially-resolved",
+        dryRun: false,
+        changedFiles: ["src/invoice.ts"],
+        verificationCommands: ["npm test"],
+        verificationResults: [{ command: "npm test", exitCode: 0, passed: true }],
+        diagnostics: [],
+        createdAt: "2026-05-24T00:00:00.000Z",
+        updatedAt: "2026-05-24T00:00:00.000Z",
+      }, null, 2)}\n`, "utf8");
+
+      const show = await runCli(["show", candidate?.id ?? "candidate-001", "--json"], repo);
+      expect(show.code).toBe(0);
+      const payload = JSON.parse(show.stdout) as {
+        data: {
+          latestVerificationResult?: { passed: boolean };
+          proofStatus: { proofState: string; resolved: boolean; nextAction: string };
+        };
+      };
+      expect(payload.data.latestVerificationResult?.passed).toBe(true);
+      expect(payload.data.proofStatus.proofState).toBe("unproven");
+      expect(payload.data.proofStatus.resolved).toBe(false);
+      expect(payload.data.proofStatus.nextAction).toContain("Verification passed");
     });
   });
 
@@ -1171,7 +1219,8 @@ fs.writeFileSync(outputPath, JSON.stringify({
         runId: "run-now",
         createdAt: "2026-05-24T00:00:00.000Z",
       });
-      expect(unchanged.outcome).toBe("unchanged");
+      expect(unchanged.outcome).toBe("still-open");
+      expect(unchanged.rationale).toContain("rediscovered");
 
       const changed = await classifyRevalidation({
         root: repo,
@@ -1180,7 +1229,7 @@ fs.writeFileSync(outputPath, JSON.stringify({
         runId: "run-now",
         createdAt: "2026-05-24T00:00:00.000Z",
       });
-      expect(changed.outcome).toBe("changed");
+      expect(changed.outcome).toBe("partially-resolved");
 
       const superseded = await classifyRevalidation({
         root: repo,
@@ -1194,24 +1243,25 @@ fs.writeFileSync(outputPath, JSON.stringify({
         createdAt: "2026-05-24T00:00:00.000Z",
       });
       expect(superseded.outcome).toBe("superseded");
+      expect(superseded.replacementFindingId).toBe("finding-replacement");
 
       const stale = await classifyRevalidation({
-        root: repo,
-        finding,
-        currentCandidates: [],
-        runId: "run-now",
-        createdAt: "2026-05-24T00:00:00.000Z",
-      });
-      expect(stale.outcome).toBe("stale");
-
-      const fixed = await classifyRevalidation({
         root: repo,
         finding: { ...finding, files: [{ path: "src/missing.ts" }] },
         currentCandidates: [],
         runId: "run-now",
         createdAt: "2026-05-24T00:00:00.000Z",
       });
-      expect(fixed.outcome).toBe("fixed");
+      expect(stale.outcome).toBe("stale");
+
+      const resolved = await classifyRevalidation({
+        root: repo,
+        finding,
+        currentCandidates: [],
+        runId: "run-now",
+        createdAt: "2026-05-24T00:00:00.000Z",
+      });
+      expect(resolved.outcome).toBe("resolved");
 
       const inconclusive = await classifyRevalidation({
         root: repo,
@@ -1221,6 +1271,16 @@ fs.writeFileSync(outputPath, JSON.stringify({
         createdAt: "2026-05-24T00:00:00.000Z",
       });
       expect(inconclusive.outcome).toBe("inconclusive");
+
+      const needsHuman = await classifyRevalidation({
+        root: repo,
+        finding,
+        currentCandidates: [],
+        runId: "run-now",
+        createdAt: "2026-05-24T00:00:00.000Z",
+        forceNeedsHuman: "Target is too broad.",
+      });
+      expect(needsHuman.outcome).toBe("needs-human");
     });
   });
 
@@ -2170,7 +2230,7 @@ export function calculateInvoice(items, coupon) {
       };
       expect(payload.data.attempt.status).toBe("passed");
       expect(payload.data.attempt.outcome).toBe("resolved");
-      expect(payload.data.revalidation?.outcome).toBe("stale");
+      expect(payload.data.revalidation?.outcome).toBe("resolved");
       expect(payload.data.prSummaryPath).toBeDefined();
       expect(payload.data.externalSideEffects).toEqual([]);
       expect(payload.data.attempt.pr?.externalSideEffects).toEqual([]);
@@ -2230,7 +2290,7 @@ export function calculateInvoice(items, coupon) {
       expect(payload.data.attempt.outcome).toBe("resolved");
       expect(payload.data.attempt.attemptNumber).toBe(2);
       expect(payload.data.attempt.maxAttempts).toBe(3);
-      expect(payload.data.revalidation?.outcome).toBe("stale");
+      expect(payload.data.revalidation?.outcome).toBe("resolved");
       expect(payload.data.prSummaryPath).toBeDefined();
     });
   });

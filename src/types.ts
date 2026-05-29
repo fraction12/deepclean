@@ -75,9 +75,10 @@ export const lifecycleStates = [
   "inconclusive",
 ] as const;
 export const revalidationOutcomes = [
-  "unchanged",
-  "changed",
-  "fixed",
+  "resolved",
+  "partially-resolved",
+  "still-open",
+  "needs-human",
   "stale",
   "superseded",
   "inconclusive",
@@ -480,11 +481,35 @@ export const revalidationRecordSchema = z.object({
   targetType: z.enum(["finding", "theme", "all"]),
   targetId: z.string().optional(),
   runId: z.string(),
-  outcome: z.enum(revalidationOutcomes),
+  priorLifecycleState: z.string().optional(),
+  outcome: z.preprocess((value) => {
+    if (value === "fixed") {
+      return "resolved";
+    }
+    if (value === "changed") {
+      return "partially-resolved";
+    }
+    if (value === "unchanged") {
+      return "still-open";
+    }
+    return value;
+  }, z.enum(revalidationOutcomes)),
+  confidence: z.enum(confidenceLevels).default("medium"),
+  rationale: z.string().default("Historical revalidation record without a rationale."),
+  nextAction: z.string().default("Inspect the latest finding state before proceeding."),
+  evidenceBundleId: z.string().optional(),
+  evidenceFreshness: z.enum(evidenceFreshnessStates).optional(),
   evidenceIds: z.array(z.string()),
   previousObservationId: z.string().optional(),
   newObservationId: z.string().optional(),
+  verificationRunIds: z.array(z.string()).default([]),
+  changedFiles: z.array(z.string()).default([]),
+  dirtyState: z.object({
+    dirty: z.boolean(),
+    files: z.array(z.string()),
+  }).optional(),
   supersededByFindingId: z.string().optional(),
+  replacementFindingId: z.string().optional(),
   diagnostics: z.array(diagnosticSchema),
   createdAt: z.string(),
 });
