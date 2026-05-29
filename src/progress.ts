@@ -4,6 +4,7 @@ import {
   readRuns,
   type StatePaths,
 } from "./state.js";
+import { asRecord } from "./json.js";
 import type { FixAttemptRecord, LifecycleEventRecord, RunRecord } from "./types.js";
 
 export type ProgressNet = "positive" | "weak" | "neutral";
@@ -289,13 +290,6 @@ function proofParts(summary: ProgressSummary): string[] {
     parts.push(`${summary.fixes.verificationFailed} verification failure${plural(summary.fixes.verificationFailed)}`);
   }
   return parts;
-}
-
-function asRecord(value: unknown): Record<string, unknown> {
-  if (typeof value === "object" && value !== null && !Array.isArray(value)) {
-    return value as Record<string, unknown>;
-  }
-  return {};
 }
 
 function formatDelta(value: number | undefined): string {
