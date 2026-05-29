@@ -32,12 +32,12 @@ import {
 
 const execFileAsync = promisify(execFile);
 
-describe("deepclean cli", () => {
+describe("deepclean cli", registerCliSmokeTests);
+
+function registerCliSmokeTests(): void {
   test("initializes state and emits JSON", async () => {
     await withTempRepo(async (repo) => {
-      const result = await runCli(["init", "--json"], repo);
-      expect(result.code).toBe(0);
-      const payload = JSON.parse(result.stdout) as { ok: boolean; data: { stateDir: string } };
+      const payload = await runJsonCli<{ ok: boolean; data: { stateDir: string } }>(["init", "--json"], repo);
       expect(payload.ok).toBe(true);
       expect(payload.data.stateDir.endsWith(".deepclean")).toBe(true);
     });
@@ -45,32 +45,14 @@ describe("deepclean cli", () => {
 
   test("initializes operating-loop state directories", async () => {
     await withTempRepo(async (repo) => {
-      const result = await runCli(["init", "--json"], repo);
-      expect(result.code).toBe(0);
-      const dirs = [
-        "findings",
-        "observations",
-        "lifecycle",
-        "identity-matches",
-        "revalidations",
-        "ci",
-        "locks",
-        "retention",
-        "fixes",
-        "features",
-        "synthesis",
-      ];
-      for (const dir of dirs) {
-        expect((await stat(path.join(repo, ".deepclean", dir))).isDirectory()).toBe(true);
-      }
+      await runJsonCli(["init", "--json"], repo);
+      await expectDeepcleanStateDirectories(repo);
     });
   });
 
   test("supports global flags before the command", async () => {
     await withTempRepo(async (repo) => {
-      const result = await runCli(["--root", repo, "init", "--json"], "/");
-      expect(result.code).toBe(0);
-      const payload = JSON.parse(result.stdout) as { ok: boolean; data: { root: string } };
+      const payload = await runJsonCli<{ ok: boolean; data: { root: string } }>(["--root", repo, "init", "--json"], "/");
       expect(payload.ok).toBe(true);
       expect(payload.data.root).toBe(repo);
     });
@@ -102,7 +84,9 @@ describe("deepclean cli", () => {
       expect(result.stdout).toContain("deepclean fix <candidate-id> --patch ./fix.patch --dry-run --json");
     });
   });
+}
 
+describe("deepclean cli", () => {
   test("doctor reports an uninitialized clean directory without mutating state", async () => {
     await withTempRepo(async (repo) => {
       const result = await runCli(["doctor", "--json"], repo);
@@ -3621,5 +3605,30 @@ async function runCli(argv: string[], cwd: string): Promise<{ code: number; stdo
   } finally {
     console.log = originalLog;
     console.error = originalError;
+  }
+}
+
+async function runJsonCli<T = unknown>(argv: string[], cwd: string): Promise<T> {
+  const result = await runCli(argv, cwd);
+  expect(result.code).toBe(0);
+  return JSON.parse(result.stdout) as T;
+}
+
+async function expectDeepcleanStateDirectories(repo: string): Promise<void> {
+  const dirs = [
+    "findings",
+    "observations",
+    "lifecycle",
+    "identity-matches",
+    "revalidations",
+    "ci",
+    "locks",
+    "retention",
+    "fixes",
+    "features",
+    "synthesis",
+  ];
+  for (const dir of dirs) {
+    expect((await stat(path.join(repo, ".deepclean", dir))).isDirectory()).toBe(true);
   }
 }
