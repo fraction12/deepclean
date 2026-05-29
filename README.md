@@ -15,7 +15,14 @@ Public alpha. TypeScript, JavaScript, and Python evidence are supported.
 ## Install
 
 ```bash
-npm install -g @fraction12/deepclean
+npm install -g @fraction12/deepclean@alpha
+deepclean --version
+```
+
+Update with:
+
+```bash
+npm update -g @fraction12/deepclean
 deepclean --version
 ```
 
@@ -23,12 +30,14 @@ deepclean --version
 
 ```bash
 deepclean init
-deepclean map
-deepclean scan --json
+deepclean doctor
+deepclean scan
 deepclean report
-deepclean status --json
+deepclean status
 deepclean next
+deepclean show candidate-001
 deepclean plan candidate-001
+deepclean handoff candidate-001 --format codex
 ```
 
 `deepclean scan` collects local evidence first, then runs Codex synthesis by default. Use evidence-only mode when you only want deterministic local analysis:
@@ -46,6 +55,8 @@ deepclean scan --root ./some-repo --evidence-only
 ```
 
 Older examples may include `deepclean scan --synthesize`; that flag still works, but it is no longer required. Plain `deepclean scan` is the normal synthesized path. Use `--evidence-only`, `--offline`, or `--local-only` when a run must avoid provider execution.
+
+For the full beta flow from install through source-safe support artifacts, see [Beta Onboarding](docs/beta-onboarding.md).
 
 ## Workflow
 
@@ -112,6 +123,18 @@ Useful global flags:
 
 `deepclean status --json` is the safest first command for a returning agent. It is read-only and reports the latest run/report, active queue, blocked items, stale artifacts, recent progress events, pending revalidation, latest artifact paths, locks, and a recommended next command.
 
+## Guarded Fix Workflow
+
+Deepclean recommendations are not automatic fixes. The safe implementation loop is:
+
+1. Inspect one candidate with `deepclean show <candidate-id>`.
+2. Generate a bounded plan with `deepclean plan <candidate-id>`.
+3. Generate an agent handoff with `deepclean handoff <candidate-id> --format codex`.
+4. Apply one local patch only through an explicit guarded fix path.
+5. Run verification and `deepclean revalidate <candidate-id>` before treating the work as resolved.
+
+`deepclean fix` and `deepclean work` are intentionally gated. They require one target, explicit source mutation, current proof inputs, and verification. They do not publish packages, push branches, or open PRs unless an explicit PR workflow is requested and local proof passes.
+
 ## Local Evidence
 
 Deepclean runs local evidence first and model synthesis second unless evidence-only or local-only mode is selected. The built-in evidence layer includes:
@@ -151,7 +174,7 @@ Reviewer packs can be configured in `.deepclean/config.json`:
 
 Source samples are redacted from the synthesis prompt by default. Use `--allow-source-in-model` only when the target repository and provider configuration make that acceptable. Use `--evidence-only`, `--offline`, or `--local-only` when no provider should run.
 
-See [Privacy And Trust](docs/privacy-and-trust.md), [Reviewer References](docs/reviewer-references.md), and [Troubleshooting](docs/troubleshooting.md) before using synthesis on private repos.
+See [Beta Onboarding](docs/beta-onboarding.md), [Privacy And Trust](docs/privacy-and-trust.md), [Reviewer References](docs/reviewer-references.md), and [Troubleshooting](docs/troubleshooting.md) before using synthesis on private repos.
 
 ## Themes And Plans
 

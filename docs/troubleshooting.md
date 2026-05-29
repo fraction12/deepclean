@@ -21,6 +21,11 @@ Important diagnostic codes:
 - `stale_state`: at least one finding or generated artifact needs revalidation or regeneration before work continues.
 - `stale_lock`: `status` found a stale lock record. Run `deepclean unlock --stale` before the next write command.
 - `stale_locks`: a lock file points to a dead process or has exceeded the stale threshold. Run `deepclean unlock --stale` before the next write command.
+- `malformed_provider_output`: provider output was recorded but rejected. Use the synthesis attempt ledger for diagnostics, then rerun with a narrower scope or evidence-only mode.
+- `privacy_refused`: the requested scan would send source or metadata in a way the current privacy policy disallows. Use `--evidence-only`, `--offline`, `--local-only`, or `--privacy-mode metadata --excerpt-budget 0`.
+- `dirty_worktree`: a guarded mutation command refused to run because source files in scope are dirty. Commit, stash, or pass the documented allow flag only when the dirty files are intentional.
+- `verification_failed`: a guarded fix ran but one or more verification commands failed. Treat the candidate as still open until fixed and revalidated.
+- `revalidation_inconclusive`: Deepclean could not prove the finding resolved or still holds. Inspect the evidence manually before assigning more work.
 
 For agent handoff, prefer this sequence before choosing work:
 
@@ -32,6 +37,23 @@ deepclean handoff <candidate-id> --json
 ```
 
 If `status.data.nextAction.command` recommends `deepclean revalidate all`, `deepclean report`, or regenerating a plan/handoff, do that before handing the candidate to a worker.
+
+## Reading Reports And Status
+
+Use `report` for a ranked narrative and `status` for machine-checkable state. A report `Start Here` item is a recommendation to inspect a candidate, not permission to edit broadly.
+
+Recommended drill-down:
+
+```bash
+deepclean status --json
+deepclean report
+deepclean next --json
+deepclean show <candidate-id> --json
+deepclean plan <candidate-id> --json
+deepclean handoff <candidate-id> --format codex --json
+```
+
+When `status` reports stale reports, plans, handoffs, revalidations, or fix attempts, regenerate the named artifact before assigning implementation work. Stale proof is not proof.
 
 ## Writer Locks
 
@@ -103,6 +125,8 @@ deepclean export --source-safe --output .deepclean/source-safe.json --json
 
 `scrub --json` is the same source-safe export path. It keeps actionable IDs, priorities, categories, evidence IDs, verification commands, and repository-relative paths, but omits source excerpts, provider prompts, absolute state paths, generated handoff prose, and generated plan prose.
 
+Share source-safe exports for support. Do not share raw `.deepclean/` from private repositories unless the recipient is allowed to see repository paths, diagnostics, generated prose, and possible source excerpts.
+
 ## Guarded Fix Execution
 
 `deepclean fix` is intentionally gated. It only works on one stable finding or candidate at a time, requires an explicit patch file, requires a current plan, and requires current revalidation.
@@ -134,6 +158,27 @@ deepclean fix finding-abc123 \
 ```
 
 Fix execution never pushes, opens pull requests, publishes packages, or performs external actions. It writes local fix attempt records, patch previews, verification outputs, and lifecycle events under `.deepclean/`.
+
+If fix execution fails:
+
+- `fix_execution_disabled`: enable `fixExecution.enabled` only after reading the plan and choosing one candidate.
+- `fix_target_too_broad` or `fix_target_needs_split`: run `deepclean split <candidate-id>` or pick a narrower child.
+- `fix_ambiguous`: design-needed work needs a human decision before implementation.
+- `fix_scope_failed`: inspect changed files and narrow the patch to the candidate-owned scope.
+- `fix_no_changed_files`: the worker did not make a material patch; inspect the attempt artifact before retrying.
+- `fix_max_attempts_exhausted`: stop retrying and review the candidate manually.
+
+## Generated Files And Ignored Directories
+
+Deepclean skips generated and dependency-heavy paths by default. Typical excluded paths include dependency directories, build outputs, coverage, temporary directories, and `.deepclean/` itself.
+
+If a generated file appears in a report, either add the path to repository ignore rules or narrow the scan with:
+
+```bash
+deepclean scan --paths src,app,packages --json
+```
+
+Deepclean records repository-relative paths for source files and may record absolute state paths in local diagnostics. Use `export --source-safe` before sharing artifacts.
 
 ## Codex Is Missing
 
