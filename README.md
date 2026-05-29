@@ -10,21 +10,24 @@ Website: https://fraction12.github.io/deepclean/
 
 ## Status
 
-Public alpha. TypeScript, JavaScript, and Python evidence are supported.
+Public beta. TypeScript, JavaScript, and Python evidence are supported.
 
 ## Install
 
 ```bash
-npm install -g @fraction12/deepclean@alpha
+npm install -g @fraction12/deepclean@beta
 deepclean --version
 ```
 
 Update with:
 
 ```bash
-npm update -g @fraction12/deepclean
+npm install -g @fraction12/deepclean@beta
 deepclean --version
+deepclean doctor
 ```
+
+`deepclean doctor` checks the installed package against the npm `beta` channel and warns when a newer beta is available. Use `deepclean doctor --no-update-check`, `--offline`, or `--local-only` when the command must avoid network access.
 
 ## Quick Start
 
