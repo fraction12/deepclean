@@ -3169,6 +3169,116 @@ async function prepareCandidateFixWorkflow(
   };
 }
 
+type CandidateFixAttemptExecution = {
+  ok: true;
+  attemptDiagnostics: Diagnostic[];
+  patchPreviewPath?: string;
+  worker?: FixAttemptRecord["worker"];
+  status: FixAttemptRecord["status"];
+  changedFiles: string[];
+  diffBeforeAttempt: string;
+};
+
+async function executeCandidateFixAttempt(input: {
+  context: CommandContext;
+  config: DeepcleanConfig;
+  dryRun: boolean;
+  patchPath: string | undefined;
+  attemptId: string;
+  attemptNumber: number;
+  maxAttempts: number;
+  previousAttemptSummaries: FixWorkerPreviousAttempt[];
+  currentCandidate: CandidateRecord;
+  planContent: string;
+  currentEvidence: EvidenceRecord[];
+  currentFeatures: FeatureRecord[];
+  remainingEvidence: EvidenceRecord[];
+  allowedWriteScope: string[];
+  verificationCommands: string[];
+}): Promise<CandidateFixAttemptExecution | Extract<FixWorkflowResult, { ok: false }>> {
+  const {
+    context,
+    config,
+    dryRun,
+    patchPath,
+    attemptId,
+    attemptNumber,
+    maxAttempts,
+    previousAttemptSummaries,
+    currentCandidate,
+    planContent,
+    currentEvidence,
+    currentFeatures,
+    remainingEvidence,
+    allowedWriteScope,
+    verificationCommands,
+  } = input;
+  const attemptDiagnostics: Diagnostic[] = [];
+  let patchPreviewPath: string | undefined;
+  let worker: FixAttemptRecord["worker"];
+  let status: FixAttemptRecord["status"] = dryRun ? "previewed" : "unverified";
+  let changedFiles: string[] = [];
+  const diffBeforeAttempt = !dryRun ? await scopedDiffSignature(context.paths.root, allowedWriteScope) : "";
+
+  if (patchPath) {
+    const patchContent = await readFile(patchPath, "utf8");
+    changedFiles = changedFilesFromPatch(patchContent);
+    if (changedFiles.length === 0) {
+      return {
+        ok: false,
+        exitCode: 2,
+        code: "patch_empty",
+        message: "Patch preview did not contain changed files.",
+      };
+    }
+    patchPreviewPath = path.join(context.paths.fixesDir, `${attemptId}.patch`);
+    await writeFile(patchPreviewPath, patchContent, "utf8");
+    if (!dryRun) {
+      const apply = await execFileAsync("git", ["apply", patchPath], { cwd: context.paths.root, timeout: 30_000 })
+        .then(() => ({ ok: true, error: undefined as string | undefined }))
+        .catch((error) => ({ ok: false, error: error instanceof Error ? error.message : String(error) }));
+      if (!apply.ok) {
+        attemptDiagnostics.push({ level: "error", code: "patch_apply_failed", message: apply.error ?? "Patch failed to apply." });
+        status = "failed";
+      }
+    }
+  } else if (!dryRun) {
+    const workerResult = await runCodexPatchWorker({
+      root: context.paths.root,
+      command: config.reviewSynthesis.command,
+      model: config.reviewSynthesis.model,
+      idleTimeoutMs: config.fixExecution.workerIdleTimeoutMs,
+      hardTimeoutMs: config.fixExecution.workerHardTimeoutMs,
+      attemptId,
+      attemptNumber,
+      maxAttempts,
+      previousAttempts: previousAttemptSummaries,
+      candidate: currentCandidate,
+      planContent,
+      evidence: remainingEvidence.length > 0 ? remainingEvidence : evidenceForIds(currentEvidence, currentCandidate.evidenceIds),
+      features: featuresForCandidate(currentCandidate, currentFeatures),
+      allowedWriteScope,
+      verificationCommands,
+      outputDir: context.paths.fixesDir,
+    });
+    worker = workerResult.worker;
+    attemptDiagnostics.push(...workerResult.diagnostics);
+    if (workerResult.exitCode !== 0 && !workerResult.timedOut) {
+      status = "failed";
+    }
+  }
+
+  return {
+    ok: true,
+    attemptDiagnostics,
+    ...(patchPreviewPath ? { patchPreviewPath } : {}),
+    ...(worker ? { worker } : {}),
+    status,
+    changedFiles,
+    diffBeforeAttempt,
+  };
+}
+
 async function runCandidateFixWorkflow(
   context: CommandContext,
   target: string,
@@ -3214,62 +3324,35 @@ async function runCandidateFixWorkflow(
 
   for (let attemptNumber = 1; attemptNumber <= maxAttempts; attemptNumber += 1) {
     const attemptId = maxAttempts > 1 ? `${workflowId}-${String(attemptNumber).padStart(2, "0")}` : workflowId;
-    const attemptDiagnostics: Diagnostic[] = [];
-    let patchPreviewPath: string | undefined;
-    let worker: FixAttemptRecord["worker"];
-    let status: FixAttemptRecord["status"] = dryRun ? "previewed" : "unverified";
-    let changedFiles: string[] = [];
     let verificationResults: FixAttemptRecord["verificationResults"] = [];
     let revalidation: RevalidationRecord | undefined;
-    const diffBeforeAttempt = !dryRun ? await scopedDiffSignature(context.paths.root, allowedWriteScope) : "";
-
-    if (patchPath) {
-      const patchContent = await readFile(patchPath, "utf8");
-      changedFiles = changedFilesFromPatch(patchContent);
-      if (changedFiles.length === 0) {
-        return {
-          ok: false,
-          exitCode: 2,
-          code: "patch_empty",
-          message: "Patch preview did not contain changed files.",
-        };
-      }
-      patchPreviewPath = path.join(context.paths.fixesDir, `${attemptId}.patch`);
-      await writeFile(patchPreviewPath, patchContent, "utf8");
-      if (!dryRun) {
-        const apply = await execFileAsync("git", ["apply", patchPath], { cwd: context.paths.root, timeout: 30_000 })
-          .then(() => ({ ok: true, error: undefined as string | undefined }))
-          .catch((error) => ({ ok: false, error: error instanceof Error ? error.message : String(error) }));
-        if (!apply.ok) {
-          attemptDiagnostics.push({ level: "error", code: "patch_apply_failed", message: apply.error ?? "Patch failed to apply." });
-          status = "failed";
-        }
-      }
-    } else if (!dryRun) {
-      const workerResult = await runCodexPatchWorker({
-        root: context.paths.root,
-        command: config.reviewSynthesis.command,
-        model: config.reviewSynthesis.model,
-        idleTimeoutMs: config.fixExecution.workerIdleTimeoutMs,
-        hardTimeoutMs: config.fixExecution.workerHardTimeoutMs,
-        attemptId,
-        attemptNumber,
-        maxAttempts,
-        previousAttempts: previousAttemptSummaries,
-        candidate: currentCandidate,
-        planContent: planResult.plan.content,
-        evidence: remainingEvidence.length > 0 ? remainingEvidence : evidenceForIds(currentEvidence, currentCandidate.evidenceIds),
-        features: featuresForCandidate(currentCandidate, currentFeatures),
-        allowedWriteScope,
-        verificationCommands,
-        outputDir: context.paths.fixesDir,
-      });
-      worker = workerResult.worker;
-      attemptDiagnostics.push(...workerResult.diagnostics);
-      if (workerResult.exitCode !== 0 && !workerResult.timedOut) {
-        status = "failed";
-      }
+    const execution = await executeCandidateFixAttempt({
+      context,
+      config,
+      dryRun,
+      patchPath,
+      attemptId,
+      attemptNumber,
+      maxAttempts,
+      previousAttemptSummaries,
+      currentCandidate,
+      planContent: planResult.plan.content,
+      currentEvidence,
+      currentFeatures,
+      remainingEvidence,
+      allowedWriteScope,
+      verificationCommands,
+    });
+    if (!execution.ok) {
+      return execution;
     }
+    const {
+      attemptDiagnostics,
+      patchPreviewPath,
+      worker,
+      diffBeforeAttempt,
+    } = execution;
+    let { status, changedFiles } = execution;
 
     if (!dryRun) {
       changedFiles = uniqueNormalized([
