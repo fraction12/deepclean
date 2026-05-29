@@ -435,6 +435,8 @@ async function doctorCommand(context: CommandContext): Promise<number> {
   const diagnostics: Diagnostic[] = [];
   const initialized = await pathExists(context.paths.stateDir);
   const missingDirs = initialized ? await missingStateDirectories(context.paths) : [];
+  const integrity = initialized ? await stateIntegrity(context.paths) : { valid: true, diagnostics: [] };
+  diagnostics.push(...integrity.diagnostics);
   const locks = initialized ? await readLockStatuses(context.paths, {
     staleAfterMs: numberFlag(context, "stale-lock-ms"),
   }) : [];
@@ -486,8 +488,9 @@ async function doctorCommand(context: CommandContext): Promise<number> {
       error: configResult.error,
     },
     state: {
-      valid: initialized && missingDirs.length === 0,
+      valid: initialized && missingDirs.length === 0 && integrity.valid,
       missingDirs,
+      integrity,
     },
     locks: {
       active: locks.filter((lock) => !lock.stale).length,
@@ -527,11 +530,13 @@ async function doctorCommand(context: CommandContext): Promise<number> {
 async function statusCommand(context: CommandContext): Promise<number> {
   const diagnostics: Diagnostic[] = [];
   const initialized = await pathExists(context.paths.stateDir);
+  const integrity = initialized ? await stateIntegrity(context.paths) : { valid: true, diagnostics: [] };
+  diagnostics.push(...integrity.diagnostics);
   const latest = initialized ? await latestRunId(context.paths) : undefined;
-  const candidates = latest ? await readLatestCandidates(context.paths) : [];
-  const clusters = latest ? await readLatestClusters(context.paths) : [];
-  const evidence = latest ? await readLatestEvidence(context.paths) : [];
-  const features = initialized ? await readLatestFeatures(context.paths) : [];
+  const candidates = latest ? await safeReadState("latest candidates", readLatestCandidates(context.paths), diagnostics) : [];
+  const clusters = latest ? await safeReadState("latest clusters", readLatestClusters(context.paths), diagnostics) : [];
+  const evidence = latest ? await safeReadState("latest evidence", readLatestEvidence(context.paths), diagnostics) : [];
+  const features = initialized ? await safeReadState("latest features", readLatestFeatures(context.paths), diagnostics) : [];
   let records: StatusRecordInputs = emptyStatusRecordInputs();
   if (initialized) {
     try {
@@ -699,6 +704,7 @@ async function statusCommand(context: CommandContext): Promise<number> {
     pendingRevalidation: candidates.filter((candidate) => candidate.lifecycleState === "stale" || candidate.status === "stale").length,
     proof: buildProofSummary(candidates, records.revalidations, records.fixAttempts),
     artifacts: artifactCounts,
+    stateIntegrity: integrity,
     latestArtifacts,
     staleArtifacts,
     recentProgress,
@@ -1454,6 +1460,25 @@ function asRecord(value: unknown): Record<string, unknown> {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+async function safeReadState<T>(
+  label: string,
+  promise: Promise<T>,
+  diagnostics: Diagnostic[],
+  fallback: T extends unknown[] ? T : never = [] as T extends unknown[] ? T : never,
+): Promise<T> {
+  try {
+    return await promise;
+  } catch (error) {
+    diagnostics.push({
+      level: "error",
+      code: "partial_state_record",
+      message: `Could not read ${label}; treating it as unavailable until state is repaired: ${errorMessage(error)}`,
+      adapter: "state",
+    });
+    return fallback as T;
+  }
 }
 
 async function unlockCommand(context: CommandContext): Promise<number> {
@@ -4496,6 +4521,153 @@ async function missingStateDirectories(paths: StatePaths): Promise<string[]> {
     }
   }
   return missing;
+}
+
+interface StateIntegritySummary {
+  valid: boolean;
+  partialRecords: number;
+  duplicateIds: number;
+  alphaRecords: number;
+  diagnostics: Diagnostic[];
+}
+
+async function stateIntegrity(paths: StatePaths): Promise<StateIntegritySummary> {
+  const diagnostics: Diagnostic[] = [];
+  let partialRecords = 0;
+  let duplicateIds = 0;
+  let alphaRecords = 0;
+  const dirs: Array<{ name: string; dir: string; arrayRecords?: boolean; alphaCandidates?: boolean }> = [
+    { name: "runs", dir: paths.runsDir },
+    { name: "findings", dir: paths.findingsDir },
+    { name: "observations", dir: paths.observationsDir, arrayRecords: true },
+    { name: "features", dir: paths.featuresDir, arrayRecords: true },
+    { name: "evidence", dir: paths.evidenceDir, arrayRecords: true },
+    { name: "candidates", dir: paths.candidatesDir, arrayRecords: true, alphaCandidates: true },
+    { name: "clusters", dir: paths.clustersDir, arrayRecords: true },
+    { name: "reports", dir: paths.reportsDir },
+    { name: "triage", dir: paths.triageDir },
+    { name: "handoffs", dir: paths.handoffsDir },
+    { name: "plans", dir: paths.plansDir },
+    { name: "lifecycle", dir: paths.lifecycleDir },
+    { name: "identity-matches", dir: paths.identityMatchesDir },
+    { name: "revalidations", dir: paths.revalidationsDir },
+    { name: "ci", dir: paths.ciDir },
+    { name: "retention", dir: paths.retentionDir },
+    { name: "fixes", dir: paths.fixesDir },
+    { name: "synthesis", dir: paths.synthesisDir },
+  ];
+
+  for (const dir of dirs) {
+    let files: string[];
+    try {
+      files = (await readdir(dir.dir)).filter((file) => file.endsWith(".json")).sort();
+    } catch {
+      continue;
+    }
+    const seenIds = new Map<string, string>();
+    for (const file of files) {
+      const filePath = path.join(dir.dir, file);
+      const relativePath = path.relative(paths.root, filePath) || filePath;
+      let parsed: unknown;
+      try {
+        const raw = await readFile(filePath, "utf8");
+        if (raw.trim().length === 0) {
+          throw new Error("file is empty");
+        }
+        parsed = JSON.parse(raw);
+      } catch (error) {
+        partialRecords += 1;
+        diagnostics.push({
+          level: "error",
+          code: "partial_state_record",
+          message: `${relativePath} is unreadable or partially written: ${errorMessage(error)}`,
+          adapter: "state",
+        });
+        continue;
+      }
+
+      const records = Array.isArray(parsed) ? parsed : [parsed];
+      if (dir.arrayRecords && !Array.isArray(parsed)) {
+        partialRecords += 1;
+        diagnostics.push({
+          level: "error",
+          code: "partial_state_record",
+          message: `${relativePath} should contain an array of ${dir.name} records.`,
+          adapter: "state",
+        });
+      }
+
+      const idsInFile = new Map<string, number>();
+      for (const record of records) {
+        const object = asRecord(record);
+        const id = stateRecordId(object);
+        if (!id) {
+          continue;
+        }
+        idsInFile.set(id, (idsInFile.get(id) ?? 0) + 1);
+        if (!dir.arrayRecords) {
+          const priorPath = seenIds.get(id);
+          if (priorPath && priorPath !== relativePath) {
+            duplicateIds += 1;
+            diagnostics.push({
+              level: "error",
+              code: "duplicate_state_id",
+              message: `${dir.name} state id ${id} is present in both ${priorPath} and ${relativePath}.`,
+              adapter: "state",
+            });
+          } else {
+            seenIds.set(id, relativePath);
+          }
+        }
+        if (dir.alphaCandidates && candidateNeedsAlphaMigration(object)) {
+          alphaRecords += 1;
+        }
+      }
+      for (const [id, count] of idsInFile) {
+        if (count > 1) {
+          duplicateIds += 1;
+          diagnostics.push({
+            level: "error",
+            code: "duplicate_state_id",
+            message: `${relativePath} contains duplicate ${dir.name} state id ${id}.`,
+            adapter: "state",
+          });
+        }
+      }
+    }
+  }
+
+  if (alphaRecords > 0) {
+    diagnostics.push({
+      level: "warning",
+      code: "alpha_state_detected",
+      message: `Found ${alphaRecords} alpha-era candidate record${alphaRecords === 1 ? "" : "s"} missing lifecycle identity fields. Run show or history to lazily migrate inspectable records.`,
+      adapter: "state",
+    });
+  }
+
+  return {
+    valid: partialRecords === 0 && duplicateIds === 0,
+    partialRecords,
+    duplicateIds,
+    alphaRecords,
+    diagnostics,
+  };
+}
+
+function stateRecordId(record: Record<string, unknown>): string | undefined {
+  const id = record["id"] ?? record["featureId"];
+  return typeof id === "string" && id.length > 0 ? id : undefined;
+}
+
+function candidateNeedsAlphaMigration(record: Record<string, unknown>): boolean {
+  return record["recordType"] === "candidate"
+    && (
+      typeof record["findingId"] !== "string"
+      || typeof record["signature"] !== "object"
+      || typeof record["lifecycleState"] !== "string"
+      || typeof record["identityConfidence"] !== "string"
+    );
 }
 
 async function readConfigForDoctor(paths: StatePaths): Promise<{

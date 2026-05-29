@@ -402,6 +402,55 @@ describe("deepclean cli", () => {
     });
   });
 
+  test("doctor and status diagnose partial candidate writes without crashing", async () => {
+    await withTempRepo(async (repo) => {
+      await writeFixtureSource(repo);
+      await runCli(["scan", "--evidence-only", "--json"], repo);
+      await writeFile(path.join(repo, ".deepclean", "candidates", await latestRunFile(repo)), "", "utf8");
+
+      const status = await runCli(["status", "--json"], repo);
+      expect(status.code).toBe(0);
+      const statusPayload = JSON.parse(status.stdout) as {
+        data: { stateIntegrity: { valid: boolean; partialRecords: number } };
+        diagnostics: Array<{ code: string }>;
+      };
+      expect(statusPayload.data.stateIntegrity.valid).toBe(false);
+      expect(statusPayload.data.stateIntegrity.partialRecords).toBeGreaterThanOrEqual(1);
+      expect(statusPayload.diagnostics.some((diagnostic) => diagnostic.code === "partial_state_record")).toBe(true);
+
+      const doctor = await runCli(["doctor", "--json"], repo);
+      expect(doctor.code).toBe(0);
+      const doctorPayload = JSON.parse(doctor.stdout) as {
+        data: { state: { valid: boolean; integrity: { partialRecords: number } } };
+        diagnostics: Array<{ code: string }>;
+      };
+      expect(doctorPayload.data.state.valid).toBe(false);
+      expect(doctorPayload.data.state.integrity.partialRecords).toBeGreaterThanOrEqual(1);
+      expect(doctorPayload.diagnostics.some((diagnostic) => diagnostic.code === "partial_state_record")).toBe(true);
+    });
+  });
+
+  test("status reports duplicate candidate IDs as state corruption", async () => {
+    await withTempRepo(async (repo) => {
+      await writeFixtureSource(repo);
+      await runCli(["scan", "--evidence-only", "--json"], repo);
+      const candidatesPath = path.join(repo, ".deepclean", "candidates", await latestRunFile(repo));
+      const candidates = JSON.parse(await readFile(candidatesPath, "utf8")) as CandidateRecord[];
+      candidates.push({ ...candidates[0]! });
+      await writeFile(candidatesPath, `${JSON.stringify(candidates, null, 2)}\n`, "utf8");
+
+      const result = await runCli(["status", "--json"], repo);
+      expect(result.code).toBe(0);
+      const payload = JSON.parse(result.stdout) as {
+        data: { stateIntegrity: { valid: boolean; duplicateIds: number } };
+        diagnostics: Array<{ code: string }>;
+      };
+      expect(payload.data.stateIntegrity.valid).toBe(false);
+      expect(payload.data.stateIntegrity.duplicateIds).toBeGreaterThanOrEqual(1);
+      expect(payload.diagnostics.some((diagnostic) => diagnostic.code === "duplicate_state_id")).toBe(true);
+    });
+  });
+
   test("serializes concurrent state writers without leaving locks behind", async () => {
     await withTempRepo(async (repo) => {
       await runCli(["init", "--json"], repo);
@@ -568,7 +617,7 @@ def list_orders():
       };
       expect(payload.data.mapId).toMatch(/^map-/);
       expect(payload.data.mapSource).toBe("heuristic");
-      expect(payload.data.sourceFileCount).toBe(8);
+      expect(payload.data.sourceFileCount).toBe(7);
       expect(payload.data.featureCount).toBeGreaterThanOrEqual(4);
       expect(payload.data.features.every((feature) => feature.featureId.startsWith("feature-"))).toBe(true);
       expect(payload.data.features.every((feature) => feature.runId === payload.data.mapId)).toBe(true);
@@ -768,6 +817,34 @@ export function generatedConstellation() {
       const featurePaths = scanPayload.data.features.flatMap((feature) => feature.ownedFiles.map((file) => file.path));
       expect(candidatePaths.some((file) => file.startsWith(".site-dist/"))).toBe(false);
       expect(featurePaths.some((file) => file.startsWith(".site-dist/"))).toBe(false);
+    });
+  });
+
+  test("scan ignores default build, vendor, and generated noise directories", async () => {
+    await withTempRepo(async (repo) => {
+      await writeFixtureSource(repo);
+      const noisyDirs = ["dist", "build", "vendor", "src/__generated__"];
+      for (const dir of noisyDirs) {
+        await mkdir(path.join(repo, dir), { recursive: true });
+        await writeFile(path.join(repo, dir, "noise.ts"), Array.from({ length: 160 }, (_, index) => (
+          `export const generatedValue${index} = ${index};`
+        )).join("\n"), "utf8");
+      }
+
+      const scan = await runCli(["scan", "--evidence-only", "--json"], repo);
+      expect(scan.code).toBe(0);
+      const payload = JSON.parse(scan.stdout) as {
+        data: {
+          candidates: Array<{ files: Array<{ path: string }> }>;
+          features: Array<{ ownedFiles: Array<{ path: string }> }>;
+        };
+      };
+      const candidatePaths = payload.data.candidates.flatMap((candidate) => candidate.files.map((file) => file.path));
+      const featurePaths = payload.data.features.flatMap((feature) => feature.ownedFiles.map((file) => file.path));
+      for (const dir of noisyDirs) {
+        expect(candidatePaths.some((file) => file.startsWith(`${dir}/`))).toBe(false);
+        expect(featurePaths.some((file) => file.startsWith(`${dir}/`))).toBe(false);
+      }
     });
   });
 
@@ -2807,6 +2884,30 @@ fs.writeFileSync(outputPath, "not json");
       expect(attempt.acceptedCandidateCount).toBe(0);
       expect(attempt.rejectedCandidateCount).toBe(0);
       expect(attempt.diagnostics.some((item) => item.code === "codex_synthesis_error")).toBe(true);
+    });
+  });
+
+  test("scan recovers from synthesis provider timeouts with local evidence intact", async () => {
+    await withTempRepo(async (repo) => {
+      await writeFixtureSource(repo);
+      await installFakeCodex(repo, `#!/usr/bin/env node
+setTimeout(() => {}, 2000);
+`);
+
+      const result = await runCli(["scan", "--synthesize", "--timeout", "1", "--json"], repo);
+      expect(result.code).toBe(0);
+      const payload = JSON.parse(result.stdout) as {
+        data: { runId: string; evidenceCount: number; candidateCount: number; synthesis: { candidateCount: number } };
+        diagnostics: Array<{ code: string }>;
+      };
+      expect(payload.data.evidenceCount).toBeGreaterThan(0);
+      expect(payload.data.candidateCount).toBeGreaterThan(0);
+      expect(payload.data.synthesis.candidateCount).toBe(0);
+      expect(payload.diagnostics.some((item) => item.code === "codex_synthesis_timeout")).toBe(true);
+      const attempt = JSON.parse(
+        await readFile(path.join(repo, ".deepclean", "synthesis", `${payload.data.runId}.json`), "utf8"),
+      ) as { diagnostics: Array<{ code: string }> };
+      expect(attempt.diagnostics.some((item) => item.code === "codex_synthesis_timeout")).toBe(true);
     });
   });
 

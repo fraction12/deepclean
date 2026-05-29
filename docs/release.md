@@ -57,8 +57,9 @@ npm run release:check
 ```
 
 4. For operating-loop changes, run or cite the latest dogfood scorecard in `docs/`.
-5. Commit and push.
-6. Tag the exact package version:
+5. For beta releases, complete `docs/beta-release-checklist.md` and ensure the source-safe scorecards in `docs/beta-dogfood/scorecards/` cover every required matrix slot from `docs/beta-dogfood/matrix.md`.
+6. Commit and push.
+7. Tag the exact package version:
 
 ```bash
 git tag v0.1.0-alpha.1
@@ -66,6 +67,12 @@ git push origin v0.1.0-alpha.1
 ```
 
 The tag must match `package.json` exactly. For prereleases, the workflow publishes under the prerelease label, such as `alpha`. Stable versions publish under `latest`.
+
+## Beta Dogfood Gate
+
+Beta releases are blocked unless dogfood scorecards pass for Deepclean, LightningITB, two additional codebases, and a generated/noisy fixture. `npm run release:check` enforces that gate when the package version includes `-beta`, `DEEPCLEAN_RELEASE_CHANNEL=beta`, or `DEEPCLEAN_REQUIRE_BETA_DOGFOOD=1`.
+
+Committed scorecards must be source-safe: counts, timings, diagnostics, quality scores, and residual risks are allowed; source excerpts, prompts, provider payloads, private absolute paths, and private report prose are not.
 
 ## Manual Publish Retry
 

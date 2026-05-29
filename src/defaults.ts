@@ -20,6 +20,8 @@ export const defaultExcludeDirs = [
   "dist",
   "build",
   "coverage",
+  "generated",
+  "__generated__",
   "output",
   ".next",
   ".turbo",
