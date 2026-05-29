@@ -695,43 +695,18 @@ async function statusCommand(context: CommandContext): Promise<number> {
 
   emit(context.json, ok("status", data, diagnostics));
   if (!context.json && !context.quiet) {
-    console.log(`root: ${data.root}`);
-    console.log(`state: ${initialized ? "initialized" : "not initialized"}`);
-    console.log(`latest run: ${latest ?? "none"}`);
-    console.log(`latest report: ${latestReport ? path.relative(context.paths.root, reportJsonPath(context.paths, latestReport)) : "none"}`);
-    console.log(`queue: ${data.queue.active} active / ${data.queue.blocked} blocked / ${data.queue.open} open / ${data.queue.total} total`);
-    console.log(`git: ${git.available ? git.dirty ? "dirty" : "clean" : "unavailable"}`);
-    console.log(`locks: ${data.locks.active} active / ${data.locks.stale} stale`);
-    if (activeItems.length > 0) {
-      console.log("active:");
-      for (const item of activeItems.slice(0, 5)) {
-        console.log(`  ${item.id} ${item.priority} ${item.title}`);
-      }
-    }
-    if (blockers.length > 0) {
-      console.log("blocked:");
-      for (const item of blockers.slice(0, 5)) {
-        console.log(`  ${item.id}: ${item.reason}`);
-      }
-    }
-    if (staleArtifacts.length > 0) {
-      console.log("stale artifacts:");
-      for (const item of staleArtifacts.slice(0, 5)) {
-        console.log(`  ${item.type} ${item.id}: ${item.reason}`);
-      }
-    }
-    if (recentProgress.length > 0) {
-      console.log("recent progress:");
-      for (const item of recentProgress.slice(0, 5)) {
-        console.log(`  ${item.timestamp} ${item.kind} ${item.id}`);
-      }
-    }
-    console.log(`next: ${nextAction.command}`);
-    if (progress) {
-      for (const line of renderProgressSummary(progress)) {
-        console.log(line);
-      }
-    }
+    renderStatusText(context, data, {
+      initialized,
+      latest,
+      git,
+      latestReport,
+      activeItems,
+      blockers,
+      staleArtifacts,
+      recentProgress,
+      nextAction,
+      progress,
+    });
     printDiagnostics(diagnostics);
   }
   return 0;
@@ -816,6 +791,66 @@ interface StatusProgressEvent {
   findingId?: string;
   candidateId?: string;
   outcome?: string;
+}
+
+function renderStatusText(
+  context: CommandContext,
+  data: ReturnType<typeof buildStatusData>,
+  state: Pick<StatusInputs, "initialized" | "latest"> & Pick<
+    StatusDerivedState,
+    "git" | "latestReport" | "activeItems" | "blockers" | "staleArtifacts" | "recentProgress" | "nextAction" | "progress"
+  >,
+): void {
+  const {
+    initialized,
+    latest,
+    git,
+    latestReport,
+    activeItems,
+    blockers,
+    staleArtifacts,
+    recentProgress,
+    nextAction,
+    progress,
+  } = state;
+
+  console.log(`root: ${data.root}`);
+  console.log(`state: ${initialized ? "initialized" : "not initialized"}`);
+  console.log(`latest run: ${latest ?? "none"}`);
+  console.log(`latest report: ${latestReport ? path.relative(context.paths.root, reportJsonPath(context.paths, latestReport)) : "none"}`);
+  console.log(`queue: ${data.queue.active} active / ${data.queue.blocked} blocked / ${data.queue.open} open / ${data.queue.total} total`);
+  console.log(`git: ${git.available ? git.dirty ? "dirty" : "clean" : "unavailable"}`);
+  console.log(`locks: ${data.locks.active} active / ${data.locks.stale} stale`);
+  if (activeItems.length > 0) {
+    console.log("active:");
+    for (const item of activeItems.slice(0, 5)) {
+      console.log(`  ${item.id} ${item.priority} ${item.title}`);
+    }
+  }
+  if (blockers.length > 0) {
+    console.log("blocked:");
+    for (const item of blockers.slice(0, 5)) {
+      console.log(`  ${item.id}: ${item.reason}`);
+    }
+  }
+  if (staleArtifacts.length > 0) {
+    console.log("stale artifacts:");
+    for (const item of staleArtifacts.slice(0, 5)) {
+      console.log(`  ${item.type} ${item.id}: ${item.reason}`);
+    }
+  }
+  if (recentProgress.length > 0) {
+    console.log("recent progress:");
+    for (const item of recentProgress.slice(0, 5)) {
+      console.log(`  ${item.timestamp} ${item.kind} ${item.id}`);
+    }
+  }
+  console.log(`next: ${nextAction.command}`);
+  if (progress) {
+    for (const line of renderProgressSummary(progress)) {
+      console.log(line);
+    }
+  }
 }
 
 function buildStatusData(
