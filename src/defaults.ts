@@ -77,6 +77,8 @@ export function defaultConfig(): DeepcleanConfig {
         "external-duplicate": 16,
         "sarif-finding": 24,
         "dependency-hotspot": 24,
+        "dependency-cycle": 12,
+        "architecture-boundary-violation": 24,
         "large-function": 24,
         "large-file": 24,
         "test-gap": 24,
@@ -88,6 +90,8 @@ export function defaultConfig(): DeepcleanConfig {
         "external-duplicate": 4,
         "sarif-finding": 8,
         "dependency-hotspot": 8,
+        "dependency-cycle": 4,
+        "architecture-boundary-violation": 8,
         "large-function": 8,
         "large-file": 8,
         "test-gap": 8,
@@ -97,6 +101,12 @@ export function defaultConfig(): DeepcleanConfig {
       maxCandidates: 12,
       maxFiles: 18,
       splitBroad: true,
+    },
+    architecture: {
+      layers: [],
+      rules: [],
+      maxCycles: 20,
+      maxPolicyViolations: 40,
     },
     reviewers: {
       enabled: [

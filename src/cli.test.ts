@@ -99,6 +99,51 @@ function registerCliSmokeTests(): void {
     expect(graph.nodes.get("src/main.ts")?.imports.has("src/helper.ts")).toBe(true);
     expect(graph.nodes.get("pkg/service.py")?.imports.has("pkg/models.py")).toBe(true);
   });
+
+  test("scan emits architecture policy violations and dependency cycles", async () => {
+    await withTempRepo(async (repo) => {
+      await mkdir(path.join(repo, "src", "ui"), { recursive: true });
+      await mkdir(path.join(repo, "src", "domain"), { recursive: true });
+      await writeFile(path.join(repo, "src", "ui", "view.ts"), "import { model } from '../domain/model.js';\nexport const view = model;\n", "utf8");
+      await writeFile(path.join(repo, "src", "domain", "model.ts"), "import { view } from '../ui/view.js';\nexport const model = String(view);\n", "utf8");
+      await runCli(["init", "--json"], repo);
+      const configPath = path.join(repo, ".deepclean", "config.json");
+      const config = JSON.parse(await readFile(configPath, "utf8")) as {
+        architecture?: {
+          layers?: Array<{ name: string; pathPatterns: string[] }>;
+          rules?: Array<{ from: string; allow: string[] }>;
+        };
+      };
+      config.architecture = {
+        ...config.architecture,
+        layers: [
+          { name: "ui", pathPatterns: ["src/ui/**"] },
+          { name: "domain", pathPatterns: ["src/domain/**"] },
+        ],
+        rules: [
+          { from: "ui", allow: ["ui", "domain"] },
+          { from: "domain", allow: ["domain"] },
+        ],
+      };
+      await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+
+      const result = await runCli(["scan", "--evidence-only", "--json"], repo);
+      expect(result.code).toBe(0);
+      const payload = JSON.parse(result.stdout) as {
+        data: { runId: string; candidates: Array<{ title: string; readiness?: string }> };
+      };
+      const evidence = JSON.parse(
+        await readFile(path.join(repo, ".deepclean", "evidence", `${payload.data.runId}.json`), "utf8"),
+      ) as Array<{ kind: string; data: Record<string, unknown> }>;
+      const summary = evidence.find((record) => record.kind === "code-graph-summary");
+      expect(summary?.data["cycleCount"]).toBeGreaterThan(0);
+      expect(summary?.data["policyViolationCount"]).toBeGreaterThan(0);
+      expect(evidence.some((record) => record.kind === "dependency-cycle")).toBe(true);
+      expect(evidence.some((record) => record.kind === "architecture-boundary-violation")).toBe(true);
+      expect(payload.data.candidates.some((candidate) => candidate.title.includes("Dependency cycle"))).toBe(true);
+      expect(payload.data.candidates.some((candidate) => candidate.title.includes("Architecture boundary violation"))).toBe(true);
+    });
+  });
 }
 
 describe("deepclean cli", () => {
@@ -2381,6 +2426,32 @@ setInterval(() => {}, 1000);
       ], repo);
       const parent = await prepareSplittableCandidate(repo);
       await runCli(["split", parent.id, "--json"], repo);
+      await writeFile(path.join(repo, ".deepclean", "revalidations", "revalidation-fitness-progress.json"), `${JSON.stringify({
+        schemaVersion,
+        recordType: "revalidation",
+        id: "revalidation-fitness-progress",
+        targetType: "finding",
+        targetId: prepared.findingId,
+        runId: "run-progress",
+        outcome: "partially-resolved",
+        confidence: "medium",
+        rationale: "Fixture progress.",
+        nextAction: "Continue the campaign.",
+        evidenceIds: ["ev-before", "ev-after"],
+        verificationRunIds: [],
+        changedFiles: [],
+        progress: {
+          kind: "metric-reduction",
+          metric: "dependency-hotspot.incoming",
+          unit: "dependencies",
+          before: 12,
+          after: 8,
+          delta: 4,
+          evidenceIds: ["ev-before", "ev-after"],
+        },
+        diagnostics: [],
+        createdAt: "2026-05-24T00:00:00.000Z",
+      }, null, 2)}\n`, "utf8");
 
       const result = await runCli(["status", "--progress-events", "50", "--json"], repo);
       expect(result.code).toBe(0);
@@ -2390,6 +2461,7 @@ setInterval(() => {}, 1000);
             net: string;
             fixes: { attempts: number; verificationPassed: number; changedFiles: string[] };
             splits: { parents: number; children: number; parentCandidateIds: string[] };
+            fitnessDeltas: Array<{ metric: string; before: number; after: number; delta: number }>;
             notes: string[];
           };
         };
@@ -2401,11 +2473,18 @@ setInterval(() => {}, 1000);
       expect(payload.data.progress.splits.parents).toBeGreaterThan(0);
       expect(payload.data.progress.splits.children).toBeGreaterThan(0);
       expect(payload.data.progress.splits.parentCandidateIds).toContain(parent.id);
+      expect(payload.data.progress.fitnessDeltas[0]).toMatchObject({
+        metric: "dependency-hotspot.incoming",
+        before: 12,
+        after: 8,
+        delta: 4,
+      });
 
       const human = await runCli(["status", "--progress-events", "50"], repo);
       expect(human.stdout).toContain("progress: positive");
       expect(human.stdout).toContain("fixes:");
       expect(human.stdout).toContain("advanced:");
+      expect(human.stdout).toContain("fitness: dependency-hotspot.incoming 12->8 dependencies");
     });
   });
 

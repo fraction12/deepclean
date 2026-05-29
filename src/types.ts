@@ -176,6 +176,18 @@ export const configSchema = z.object({
     maxFiles: z.number().int().positive(),
     splitBroad: z.boolean(),
   }),
+  architecture: z.object({
+    layers: z.array(z.object({
+      name: z.string().min(1),
+      pathPatterns: z.array(z.string().min(1)).min(1),
+    })),
+    rules: z.array(z.object({
+      from: z.string().min(1),
+      allow: z.array(z.string().min(1)),
+    })),
+    maxCycles: z.number().int().nonnegative(),
+    maxPolicyViolations: z.number().int().nonnegative(),
+  }),
   reviewers: z.object({
     enabled: z.array(z.string()),
     customPaths: z.array(z.string()),

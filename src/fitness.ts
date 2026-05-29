@@ -90,6 +90,16 @@ function fitnessMetricValues(record: EvidenceRecord): FitnessMetricValue[] {
       values.push({ metric: "dependency-hotspot.outgoing", unit: "dependencies", value: outgoing });
     }
   }
+  if (record.kind === "code-graph-summary") {
+    const cycleCount = record.data["cycleCount"];
+    const policyViolationCount = record.data["policyViolationCount"];
+    if (typeof cycleCount === "number" && Number.isFinite(cycleCount)) {
+      values.push({ metric: "code-graph-summary.cycleCount", unit: "cycles", value: cycleCount });
+    }
+    if (typeof policyViolationCount === "number" && Number.isFinite(policyViolationCount)) {
+      values.push({ metric: "code-graph-summary.policyViolationCount", unit: "violations", value: policyViolationCount });
+    }
+  }
   return values;
 }
 
@@ -100,6 +110,9 @@ function metricComparisonKey(record: EvidenceRecord): string {
   }
   if (record.kind === "dependency-hotspot") {
     return `${record.kind}:${primary}`;
+  }
+  if (record.kind === "code-graph-summary") {
+    return record.kind;
   }
   const symbol = record.data["name"];
   return [
