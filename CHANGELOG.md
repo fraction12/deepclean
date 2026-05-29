@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Documented repeated `--verification` / `--verification-command` usage for guarded fix/work flows.
+- Fixed repeated verification flags so guarded fix/work runs every explicit verification command instead of only the last one.
+
 ## 0.1.0-beta.1 - 2026-05-29
 
 - Promoted the beta operating loop with candidate lifecycle state, richer status/progress output, guarded fix/work safety, proof-ledger revalidation, improved synthesis quality, dogfood gates, and beta onboarding.

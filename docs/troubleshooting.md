@@ -154,8 +154,12 @@ deepclean fix finding-abc123 \
   --patch ./fix.patch \
   --apply \
   --allow-source-mutation \
+  --verification "npm test" \
+  --verification "npm run typecheck" \
   --json
 ```
+
+Repeated `--verification` and `--verification-command` flags are additive. Use them when a candidate needs focused tests plus typecheck/build proof; Deepclean records and runs each command instead of keeping only the last one.
 
 Fix execution never pushes, opens pull requests, publishes packages, or performs external actions. It writes local fix attempt records, patch previews, verification outputs, and lifecycle events under `.deepclean/`.
 

@@ -123,8 +123,11 @@ deepclean fix <candidate-id> \
   --apply \
   --allow-source-mutation \
   --verification "npm test" \
+  --verification "npm run typecheck" \
   --json
 ```
+
+Repeat `--verification` or `--verification-command` for multi-command proof. Deepclean preserves every explicit verification flag and runs each command before marking the guarded attempt as passing.
 
 For branch-oriented local proof:
 
@@ -133,6 +136,7 @@ deepclean work <candidate-id> \
   --branch deepclean/<candidate-id> \
   --apply \
   --verification "npm test" \
+  --verification "npm run build" \
   --no-pr \
   --json
 ```

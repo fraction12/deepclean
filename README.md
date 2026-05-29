@@ -135,6 +135,8 @@ Deepclean recommendations are not automatic fixes. The safe implementation loop 
 
 `deepclean fix` and `deepclean work` are intentionally gated. They require one target, explicit source mutation, current proof inputs, and verification. They do not publish packages, push branches, or open PRs unless an explicit PR workflow is requested and local proof passes.
 
+Use repeated `--verification` or `--verification-command` flags when one proof command is not enough. Deepclean runs every explicit verification command in order before recording the fix/work attempt as passing.
+
 ## Local Evidence
 
 Deepclean runs local evidence first and model synthesis second unless evidence-only or local-only mode is selected. The built-in evidence layer includes:
