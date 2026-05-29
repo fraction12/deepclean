@@ -40,7 +40,11 @@ import {
   ensureState,
   latestRunId,
   readConfig,
+  readCandidateObservations,
   readCandidates,
+  readClusters,
+  readEvidence,
+  readFeatures,
   readFindings,
   readLatestCandidates,
   readLatestClusters,
@@ -48,6 +52,7 @@ import {
   readLatestFeatures,
   readLatestSynthesisAttempt,
   readLifecycleEvents,
+  readRuns,
   resolveStatePaths,
   updateLatestCandidates,
   writeCandidates,
@@ -59,6 +64,7 @@ import {
   writeFindings,
   writeFixAttempt,
   writeHandoff,
+  writeIdentityMatches,
   writeLifecycleEvents,
   writePlan,
   writeReport,
@@ -79,6 +85,7 @@ import {
   type Diagnostic,
   type EvidenceRecord,
   type FeatureRecord,
+  type FindingRecord,
   type FixAttemptRecord,
   type RetentionManifestRecord,
   type RevalidationRecord,
@@ -238,10 +245,12 @@ Commands:
   list                         List findings with shared filters
   findings                     Alias for list
   show <candidate-or-theme>    Show one candidate or cleanup theme with evidence
+    --run <run-id>             Resolve historical candidate observations by run
   explain <candidate-or-finding>
                                Explain evidence, validation, and fix-readiness for a finding
   history <finding-or-candidate-id>
                                Show lifecycle history for a finding
+    --run <run-id>             Resolve historical candidate ID from a specific run
   revalidate <finding-id|candidate-id|all>
                                Freshly recheck whether findings still hold
   unlock --stale               Remove stale project-local writer locks
@@ -807,6 +816,7 @@ async function splitCommand(context: CommandContext): Promise<number> {
   await updateLatestCandidates(context.paths, identity.candidates);
   await writeFindings(context.paths, identity.findings);
   await writeCandidateObservations(context.paths, state.runId, identity.observations);
+  await writeIdentityMatches(context.paths, identity.identityMatches);
   await writeLifecycleEvents(context.paths, [
     ...identity.lifecycleEvents,
     ...(result.parent.findingId
@@ -838,7 +848,7 @@ async function splitCommand(context: CommandContext): Promise<number> {
     children: result.children,
     strategy: result.strategy,
     childCandidateIds: result.children.map((child) => child.id),
-  }));
+  }, identity.diagnostics));
   if (!context.json && !context.quiet) {
     console.log(`Split ${result.parent.id} into ${result.children.length} child candidates (${result.strategy}).`);
     for (const child of result.children) {
@@ -1051,6 +1061,7 @@ async function executeScan(
   });
   const candidates = filterCandidatesByScanScope(identity.candidates, scope);
   const clusters = buildClusters(runId, candidates, evidence, completedAt, config.clusters);
+  diagnostics.push(...identity.diagnostics);
 
   await writeFeatures(context.paths, runId, features);
   await writeEvidence(context.paths, runId, evidence);
@@ -1061,6 +1072,7 @@ async function executeScan(
   await writeFindings(context.paths, identity.findings);
   await writeCandidateObservations(context.paths, runId, identity.observations);
   await writeLifecycleEvents(context.paths, identity.lifecycleEvents);
+  await writeIdentityMatches(context.paths, identity.identityMatches);
   await writeClusters(context.paths, runId, clusters);
   await writeRun(context.paths, {
     schemaVersion,
@@ -1280,15 +1292,26 @@ async function listCommand(context: CommandContext): Promise<number> {
 
 async function showCommand(context: CommandContext): Promise<number> {
   const id = requireCandidateId(context);
-  const { candidates, evidence, features, clusters, runId } = await latestState(context.paths);
+  const requestedRunId = flagString(context.parsed.flags, "run");
+  const migrationDiagnostics = await ensureLifecycleStateMigration(context.paths, requestedRunId);
+  let state: Awaited<ReturnType<typeof stateForRun>>;
+  try {
+    state = requestedRunId
+      ? await stateForRun(context.paths, requestedRunId)
+      : await latestState(context.paths);
+  } catch {
+    emit(context.json, fail("show", "run_not_found", `Run not found: ${requestedRunId ?? "latest"}`));
+    return 1;
+  }
+  const { candidates, clusters, runId } = state;
   const config = await ensureState(context.paths);
-  const availableClusters = clusters.length > 0 ? clusters : buildClusters(runId, candidates, evidence, new Date().toISOString(), config.clusters);
+  const availableClusters = clusters.length > 0 ? clusters : buildClusters(runId, candidates, state.evidence, new Date().toISOString(), config.clusters);
   const cluster = availableClusters.find((item) => item.id === id);
   if (cluster) {
     const clusterCandidates = candidates.filter((item) => cluster.candidateIds.includes(item.id));
-    const supportingEvidence = evidenceForIds(evidence, cluster.evidenceIds);
-    const affectedFeatures = featuresForCandidates(clusterCandidates, features);
-    emit(context.json, ok("show", { cluster, candidates: clusterCandidates, evidence: supportingEvidence, features: affectedFeatures }));
+    const supportingEvidence = evidenceForIds(state.evidence, cluster.evidenceIds);
+    const affectedFeatures = featuresForCandidates(clusterCandidates, state.features);
+    emit(context.json, ok("show", { cluster, candidates: clusterCandidates, evidence: supportingEvidence, features: affectedFeatures }, migrationDiagnostics));
     if (!context.json && !context.quiet) {
       printCluster(cluster);
       for (const candidate of clusterCandidates) {
@@ -1297,14 +1320,41 @@ async function showCommand(context: CommandContext): Promise<number> {
     }
     return 0;
   }
-  const candidate = candidates.find((item) => item.id === id);
+  const candidate = resolveCandidateFromRunState(candidates, id)
+    ?? await candidateForHistoryLookup(context.paths, id, requestedRunId);
   if (!candidate) {
-    emit(context.json, fail("show", "candidate_not_found", `Candidate not found: ${id}`));
+    emit(context.json, fail("show", "candidate_not_found", `Candidate or finding not found: ${id}`));
     return 1;
   }
-  const supportingEvidence = evidenceForIds(evidence, candidate.evidenceIds);
-  const affectedFeatures = featuresForCandidate(candidate, features);
-  emit(context.json, ok("show", { candidate, evidence: supportingEvidence, features: affectedFeatures }));
+  const [finding, observation, lifecycleEvents] = await Promise.all([
+    candidate.findingId ? findingForId(context.paths, candidate.findingId) : Promise.resolve(undefined),
+    readCandidateObservations(context.paths, candidate.runId)
+      .then((observations) => observations.find((item) => item.candidateId === candidate.id)),
+    readLifecycleEvents(context.paths),
+  ]);
+  const runScopedState = candidate.runId === state.runId
+    ? state
+    : await stateForRun(context.paths, candidate.runId).catch(() => state);
+  const supportingEvidence = evidenceForIds(runScopedState.evidence, candidate.evidenceIds);
+  const affectedFeatures = featuresForCandidate(candidate, runScopedState.features);
+  const links = {
+    parentFindingId: finding?.parentFindingId,
+    childFindingIds: finding?.childFindingIds ?? [],
+    supersededByFindingId: finding?.supersededByFindingId,
+    supersedesFindingIds: finding?.supersedesFindingIds ?? [],
+    replacementFromHistory: lifecycleEvents
+      .find((event) => event.kind === "superseded" && event.targetId === finding?.id)
+      ?.data?.["supersededByFindingId"],
+  };
+  emit(context.json, ok("show", {
+    runId: candidate.runId,
+    candidate,
+    finding,
+    observation,
+    links,
+    evidence: supportingEvidence,
+    features: affectedFeatures,
+  }, migrationDiagnostics));
   if (!context.json && !context.quiet) {
     printCandidate(candidate);
     for (const record of supportingEvidence) {
@@ -1392,6 +1442,7 @@ async function explainCommand(context: CommandContext): Promise<number> {
 async function historyCommand(context: CommandContext): Promise<number> {
   const id = requireCandidateId(context);
   const runId = flagString(context.parsed.flags, "run");
+  const migrationDiagnostics = await ensureLifecycleStateMigration(context.paths, runId);
   const [findings, events] = await Promise.all([
     readFindings(context.paths),
     readLifecycleEvents(context.paths),
@@ -1406,7 +1457,7 @@ async function historyCommand(context: CommandContext): Promise<number> {
     return 1;
   }
   const history = events.filter((event) => event.findingId === finding.id || event.targetId === finding.id);
-  emit(context.json, ok("history", { finding, candidate, events: history }));
+  emit(context.json, ok("history", { finding, candidate, events: history }, migrationDiagnostics));
   if (!context.json && !context.quiet) {
     console.log(`${finding.id}: ${finding.title}`);
     for (const event of history) {
@@ -1418,6 +1469,7 @@ async function historyCommand(context: CommandContext): Promise<number> {
 
 async function revalidateCommand(context: CommandContext): Promise<number> {
   const target = requireCandidateId(context);
+  await ensureLifecycleStateMigration(context.paths);
   const beforeFindings = await readFindings(context.paths);
   const targetFindings = await resolveRevalidationTargets(context.paths, target, beforeFindings);
   if (targetFindings.length === 0 && target !== "all") {
@@ -1693,15 +1745,26 @@ async function latestState(paths: StatePaths): Promise<{
   evidence: EvidenceRecord[];
   features: FeatureRecord[];
 }> {
+  await ensureLifecycleStateMigration(paths);
   const runId = await latestRunId(paths);
   if (!runId) {
     throw new Error("No scan run found. Run `deepclean scan` first.");
   }
+  return stateForRun(paths, runId);
+}
+
+async function stateForRun(paths: StatePaths, runId: string): Promise<{
+  runId: string;
+  candidates: CandidateRecord[];
+  clusters: ClusterRecord[];
+  evidence: EvidenceRecord[];
+  features: FeatureRecord[];
+}> {
   const [candidates, clusters, evidence, features] = await Promise.all([
-    readLatestCandidates(paths),
-    readLatestClusters(paths),
-    readLatestEvidence(paths),
-    readLatestFeatures(paths),
+    readCandidates(paths, runId),
+    readClusters(paths, runId),
+    readEvidence(paths, runId),
+    readFeatures(paths, runId).catch(() => []),
   ]);
   return { runId, candidates, clusters, evidence, features };
 }
@@ -2889,8 +2952,8 @@ function fixReadinessBlocker(candidate: CandidateRecord): { code: string; messag
   if (candidate.confidence === "low") {
     return { code: "fix_low_confidence", message: "Low-confidence findings must be confirmed before fix execution." };
   }
-  const lifecycleState = candidate.lifecycleState ?? "open";
-  if (["stale", "fixed", "superseded", "inconclusive", "suppressed"].includes(lifecycleState)) {
+  const lifecycleState = candidate.lifecycleState ?? "ready";
+  if (["stale", "resolved", "superseded", "suppressed", "needs-human", "split", "fixed", "inconclusive"].includes(lifecycleState)) {
     return { code: "fix_not_current", message: `Finding lifecycle state is ${lifecycleState}; revalidate or choose another finding.` };
   }
   if (candidate.risk === "design-needed") {
@@ -3062,9 +3125,79 @@ async function candidateForHistoryLookup(
   runId?: string | undefined,
 ): Promise<CandidateRecord | undefined> {
   if (runId) {
-    return (await readCandidates(paths, runId)).find((candidate) => candidate.id === id);
+    return resolveCandidateFromRunState(await readCandidates(paths, runId).catch(() => []), id);
   }
-  return (await readLatestCandidates(paths)).find((candidate) => candidate.id === id);
+  const latest = await readLatestCandidates(paths);
+  const inLatest = resolveCandidateFromRunState(latest, id);
+  if (inLatest) {
+    return inLatest;
+  }
+  const runs = await readRuns(paths);
+  for (const run of [...runs].reverse()) {
+    const candidates = await readCandidates(paths, run.id).catch(() => []);
+    const found = resolveCandidateFromRunState(candidates, id);
+    if (found) {
+      return found;
+    }
+  }
+  return undefined;
+}
+
+function resolveCandidateFromRunState(candidates: CandidateRecord[], id: string): CandidateRecord | undefined {
+  return candidates.find((candidate) => candidate.id === id)
+    ?? candidates.find((candidate) => candidate.findingId === id)
+    ?? candidates.find((candidate) => candidate.id === id || candidate.findingId === id);
+}
+
+async function findingForId(paths: StatePaths, findingId: string): Promise<FindingRecord | undefined> {
+  return (await readFindings(paths)).find((finding) => finding.id === findingId);
+}
+
+async function ensureLifecycleStateMigration(
+  paths: StatePaths,
+  runIdOverride?: string,
+): Promise<Diagnostic[]> {
+  const runId = runIdOverride ?? await latestRunId(paths);
+  if (!runId) {
+    return [];
+  }
+  const [candidates, findings, evidence, runs] = await Promise.all([
+    readCandidates(paths, runId).catch(() => []),
+    readFindings(paths),
+    readEvidence(paths, runId).catch(() => []),
+    readRuns(paths),
+  ]);
+  if (candidates.length === 0) {
+    return [];
+  }
+
+  const requiresMigration = candidates.some((candidate) => (
+    !candidate.findingId || !candidate.signature || !candidate.lifecycleState || !candidate.identityConfidence
+  ));
+  if (!requiresMigration) {
+    return [];
+  }
+
+  const observedAt = runs.find((run) => run.id === runId)?.completedAt ?? new Date().toISOString();
+  const identity = attachStableIdentity({
+    runId,
+    candidates,
+    evidence,
+    existingFindings: findings,
+    observedAt,
+  });
+  await writeCandidates(paths, runId, identity.candidates);
+  await writeFindings(paths, identity.findings);
+  await writeCandidateObservations(paths, runId, identity.observations);
+  await writeLifecycleEvents(paths, identity.lifecycleEvents);
+  await writeIdentityMatches(paths, identity.identityMatches);
+
+  return [{
+    level: "info",
+    code: "alpha_state_migrated",
+    message: `Migrated ${candidates.length} candidate records into lifecycle-aware finding state for ${runId}.`,
+    adapter: "state",
+  }, ...identity.diagnostics];
 }
 
 async function resolveRevalidationTargets(
@@ -3217,6 +3350,7 @@ async function missingStateDirectories(paths: StatePaths): Promise<string[]> {
     ["handoffs", paths.handoffsDir],
     ["plans", paths.plansDir],
     ["lifecycle", paths.lifecycleDir],
+    ["identity-matches", paths.identityMatchesDir],
     ["revalidations", paths.revalidationsDir],
     ["ci", paths.ciDir],
     ["locks", paths.locksDir],
@@ -3520,7 +3654,7 @@ function candidateQueueItem(candidate: CandidateRecord): Record<string, unknown>
     category: candidate.category,
     risk: candidate.risk,
     status: candidate.status,
-    lifecycleState: candidate.lifecycleState ?? "open",
+    lifecycleState: candidate.lifecycleState ?? "ready",
     baselineStatus: candidate.baselineStatus ?? "unknown",
     problem: candidate.whyItMatters,
     evidenceIds: candidate.evidenceIds,
@@ -3535,8 +3669,17 @@ function candidateQueueItem(candidate: CandidateRecord): Record<string, unknown>
 
 function handoffFreshnessWarnings(candidate: CandidateRecord): string[] {
   const warnings: string[] = [];
-  const lifecycleState = candidate.lifecycleState ?? "open";
-  if (["stale", "fixed", "superseded", "inconclusive"].includes(lifecycleState)) {
+  const lifecycleState = candidate.lifecycleState ?? "ready";
+  if ([
+    "stale",
+    "resolved",
+    "superseded",
+    "suppressed",
+    "needs-human",
+    "split",
+    "fixed",
+    "inconclusive",
+  ].includes(lifecycleState)) {
     warnings.push(`Finding lifecycle state is ${lifecycleState}; revalidate before assigning implementation work.`);
   }
   if (candidate.confidence === "low") {
@@ -3636,6 +3779,7 @@ async function buildRetentionManifest(context: CommandContext): Promise<Retentio
   const retainedCandidateIds = await candidateIdsForRuns(context.paths, retainedRunIds);
   await classifyRunLinkedArtifacts(context.paths, context.paths.reportsDir, retainedRunIds, retainedPaths, deletePaths, ["json", "md"]);
   await classifyRunLinkedArtifacts(context.paths, context.paths.plansDir, retainedRunIds, retainedPaths, deletePaths, ["json"]);
+  await classifyRunLinkedArtifacts(context.paths, context.paths.identityMatchesDir, retainedRunIds, retainedPaths, deletePaths, ["json"]);
   await classifyHandoffArtifacts(context.paths, retainedCandidateIds, retainedPaths, deletePaths);
 
   return {
@@ -4098,6 +4242,7 @@ async function stateArtifactCounts(paths: StatePaths): Promise<Record<string, nu
     ["handoffs", paths.handoffsDir],
     ["plans", paths.plansDir],
     ["lifecycle", paths.lifecycleDir],
+    ["identity-matches", paths.identityMatchesDir],
     ["revalidations", paths.revalidationsDir],
     ["ci", paths.ciDir],
     ["locks", paths.locksDir],
@@ -4132,19 +4277,19 @@ function countBy<T>(items: T[], keyFor: (item: T) => string): Record<string, num
 
 function revalidationOutcomeToLifecycleState(
   outcome: "unchanged" | "changed" | "fixed" | "stale" | "superseded" | "inconclusive",
-): "open" | "fixed" | "stale" | "superseded" | "inconclusive" {
+): "still-open" | "resolved" | "stale" | "superseded" | "needs-human" {
   switch (outcome) {
     case "fixed":
-      return "fixed";
+      return "resolved";
     case "stale":
       return "stale";
     case "superseded":
       return "superseded";
     case "inconclusive":
-      return "inconclusive";
+      return "needs-human";
     case "changed":
     case "unchanged":
-      return "open";
+      return "still-open";
   }
 }
 

@@ -278,7 +278,7 @@ function candidateMarkdown(candidate: CandidateRecord): string[] {
     "",
     `- Status: ${candidate.status}`,
     `- Finding: ${candidate.findingId ?? "unlinked"}`,
-    `- Revalidation: ${candidate.lifecycleState ?? "open"}`,
+    `- Revalidation: ${candidate.lifecycleState ?? "ready"}`,
     `- Category: ${candidate.category}`,
     `- Confidence: ${candidate.confidence}`,
     `- Impact: ${candidate.impact}`,

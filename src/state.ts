@@ -12,6 +12,7 @@ import {
   findingRecordSchema,
   fixAttemptRecordSchema,
   handoffRecordSchema,
+  identityMatchRecordSchema,
   lifecycleEventRecordSchema,
   lockRecordSchema,
   planRecordSchema,
@@ -31,6 +32,7 @@ import {
   type FindingRecord,
   type FixAttemptRecord,
   type HandoffRecord,
+  type IdentityMatchRecord,
   type LifecycleEventRecord,
   type LockRecord,
   type PlanRecord,
@@ -58,6 +60,7 @@ export interface StatePaths {
   handoffsDir: string;
   plansDir: string;
   lifecycleDir: string;
+  identityMatchesDir: string;
   revalidationsDir: string;
   ciDir: string;
   locksDir: string;
@@ -90,6 +93,7 @@ export function resolveStatePaths(options: {
     handoffsDir: path.join(stateDir, "handoffs"),
     plansDir: path.join(stateDir, "plans"),
     lifecycleDir: path.join(stateDir, "lifecycle"),
+    identityMatchesDir: path.join(stateDir, "identity-matches"),
     revalidationsDir: path.join(stateDir, "revalidations"),
     ciDir: path.join(stateDir, "ci"),
     locksDir: path.join(stateDir, "locks"),
@@ -113,6 +117,7 @@ export async function ensureState(paths: StatePaths): Promise<DeepcleanConfig> {
     mkdir(paths.handoffsDir, { recursive: true }),
     mkdir(paths.plansDir, { recursive: true }),
     mkdir(paths.lifecycleDir, { recursive: true }),
+    mkdir(paths.identityMatchesDir, { recursive: true }),
     mkdir(paths.revalidationsDir, { recursive: true }),
     mkdir(paths.ciDir, { recursive: true }),
     mkdir(paths.locksDir, { recursive: true }),
@@ -233,6 +238,27 @@ export async function writeLifecycleEvents(
   const written: string[] = [];
   for (const record of records) {
     written.push(await writeLifecycleEvent(paths, record));
+  }
+  return written;
+}
+
+export async function writeIdentityMatch(
+  paths: StatePaths,
+  record: IdentityMatchRecord,
+): Promise<string> {
+  identityMatchRecordSchema.parse(record);
+  const filePath = path.join(paths.identityMatchesDir, `${record.id}.json`);
+  await writeJson(filePath, record);
+  return filePath;
+}
+
+export async function writeIdentityMatches(
+  paths: StatePaths,
+  records: IdentityMatchRecord[],
+): Promise<string[]> {
+  const written: string[] = [];
+  for (const record of records) {
+    written.push(await writeIdentityMatch(paths, record));
   }
   return written;
 }
@@ -451,6 +477,16 @@ export async function readLifecycleEvents(paths: StatePaths): Promise<LifecycleE
     events.push(lifecycleEventRecordSchema.parse(JSON.parse(raw)));
   }
   return events.sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
+}
+
+export async function readIdentityMatches(paths: StatePaths): Promise<IdentityMatchRecord[]> {
+  const files = await jsonFiles(paths.identityMatchesDir);
+  const records: IdentityMatchRecord[] = [];
+  for (const file of files) {
+    const raw = await readFile(path.join(paths.identityMatchesDir, file), "utf8");
+    records.push(identityMatchRecordSchema.parse(JSON.parse(raw)));
+  }
+  return records.sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
 }
 
 export async function readFixAttempts(paths: StatePaths): Promise<FixAttemptRecord[]> {

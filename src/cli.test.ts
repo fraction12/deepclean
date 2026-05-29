@@ -17,6 +17,7 @@ import {
   featureRecordSchema,
   findingRecordSchema,
   fixAttemptRecordSchema,
+  identityMatchRecordSchema,
   lifecycleEventRecordSchema,
   lockRecordSchema,
   retentionManifestRecordSchema,
@@ -50,6 +51,7 @@ describe("deepclean cli", () => {
         "findings",
         "observations",
         "lifecycle",
+        "identity-matches",
         "revalidations",
         "ci",
         "locks",
@@ -694,6 +696,92 @@ ${Array.from({ length: 96 }, (_, index) => `  const value${index} = ${index};`).
     });
   });
 
+  test("show resolves historical candidate observations with --run", async () => {
+    await withTempRepo(async (repo) => {
+      await writeFixtureSource(repo);
+      const first = await runCli(["scan", "--evidence-only", "--json"], repo);
+      expect(first.code).toBe(0);
+      const firstPayload = JSON.parse(first.stdout) as {
+        data: { runId: string; candidates: Array<{ id: string; findingId?: string }> };
+      };
+      const firstRunId = firstPayload.data.runId;
+      const firstCandidateId = firstPayload.data.candidates[0]?.id;
+      expect(firstCandidateId).toBeTruthy();
+
+      const second = await runCli(["scan", "--evidence-only", "--json"], repo);
+      expect(second.code).toBe(0);
+
+      const show = await runCli(["show", firstCandidateId ?? "", "--run", firstRunId, "--json"], repo);
+      expect(show.code).toBe(0);
+      const showPayload = JSON.parse(show.stdout) as {
+        data: {
+          runId: string;
+          candidate: { id: string; runId: string; findingId?: string };
+          observation?: { runId: string; candidateId: string };
+          finding?: { id: string };
+        };
+      };
+      expect(showPayload.data.runId).toBe(firstRunId);
+      expect(showPayload.data.candidate.id).toBe(firstCandidateId);
+      expect(showPayload.data.candidate.runId).toBe(firstRunId);
+      expect(showPayload.data.observation?.runId).toBe(firstRunId);
+      expect(showPayload.data.observation?.candidateId).toBe(firstCandidateId);
+      expect(showPayload.data.finding?.id).toBe(showPayload.data.candidate.findingId);
+
+      const history = await runCli(["history", firstCandidateId ?? "", "--run", firstRunId, "--json"], repo);
+      expect(history.code).toBe(0);
+      const historyPayload = JSON.parse(history.stdout) as {
+        data: { candidate: { id: string; runId: string } };
+      };
+      expect(historyPayload.data.candidate.id).toBe(firstCandidateId);
+      expect(historyPayload.data.candidate.runId).toBe(firstRunId);
+    });
+  });
+
+  test("lazy migration upgrades alpha-style candidates and emits diagnostics", async () => {
+    await withTempRepo(async (repo) => {
+      await writeFixtureSource(repo);
+      const scan = await runCli(["scan", "--evidence-only", "--json"], repo);
+      expect(scan.code).toBe(0);
+      const scanPayload = JSON.parse(scan.stdout) as {
+        data: { runId: string; candidates: Array<{ id: string }> };
+      };
+      const runId = scanPayload.data.runId;
+      const candidateId = scanPayload.data.candidates[0]?.id;
+      expect(candidateId).toBeTruthy();
+
+      const candidatesPath = path.join(repo, ".deepclean", "candidates", `${runId}.json`);
+      const candidates = JSON.parse(await readFile(candidatesPath, "utf8")) as Array<Record<string, unknown>>;
+      const stripped = candidates.map((candidate) => {
+        const { findingId: _findingId, signature: _signature, identityConfidence: _identityConfidence, lifecycleState: _lifecycleState, baselineStatus: _baselineStatus, ...rest } = candidate;
+        return rest;
+      });
+      await writeFile(candidatesPath, `${JSON.stringify(stripped, null, 2)}\n`, "utf8");
+
+      for (const dir of ["findings", "observations", "lifecycle", "identity-matches"] as const) {
+        const full = path.join(repo, ".deepclean", dir);
+        await rm(full, { recursive: true, force: true });
+        await mkdir(full, { recursive: true });
+      }
+
+      const show = await runCli(["show", candidateId ?? "", "--json"], repo);
+      expect(show.code).toBe(0);
+      const payload = JSON.parse(show.stdout) as {
+        data: { candidate: { findingId?: string } };
+        diagnostics: Array<{ code: string }>;
+      };
+      expect(payload.data.candidate.findingId).toMatch(/^finding-/);
+      expect(payload.diagnostics.some((diagnostic) => diagnostic.code === "alpha_state_migrated")).toBe(true);
+
+      const findings = await readdir(path.join(repo, ".deepclean", "findings"));
+      const observations = await readdir(path.join(repo, ".deepclean", "observations"));
+      const identityMatches = await readdir(path.join(repo, ".deepclean", "identity-matches"));
+      expect(findings.length).toBeGreaterThan(0);
+      expect(observations.length).toBeGreaterThan(0);
+      expect(identityMatches.length).toBeGreaterThan(0);
+    });
+  });
+
   test("revalidate records an unchanged finding from a fresh scan", async () => {
     await withTempRepo(async (repo) => {
       await writeFixtureSource(repo);
@@ -827,7 +915,7 @@ ${Array.from({ length: 120 }, (_, index) => `  const dirtyValue${index} = ${inde
         "ci",
         "--evidence-only",
         "--json",
-        "--max-new-p2",
+        "--max-p2",
         "0",
         "--output",
         ".deepclean/ci/summary.md",
@@ -2260,6 +2348,8 @@ function validateFindingLifecycleRecordSchemas(now: string, signature: FindingRe
     risk: "moderate",
     files: [{ path: "src/example.ts", startLine: 1, endLine: 20 }],
     evidenceIds: ["ev-test"],
+    childFindingIds: [],
+    supersedesFindingIds: [],
     observationIds: ["observation-fixture"],
     currentObservationId: "observation-fixture",
     createdAt: now,
@@ -2278,6 +2368,21 @@ function validateFindingLifecycleRecordSchemas(now: string, signature: FindingRe
     baselineStatus: "new",
     evidenceFreshness: "fresh",
     observedAt: now,
+  });
+
+  identityMatchRecordSchema.parse({
+    schemaVersion,
+    recordType: "identity_match",
+    id: "identity-fixture",
+    runId: "run-test",
+    candidateId: "candidate-001",
+    signature,
+    matchedFindingId: "finding-fixture",
+    confidence: "medium",
+    reason: "title_and_anchor_overlap",
+    unsafeMergeRefused: false,
+    possiblePredecessorFindingIds: [],
+    createdAt: now,
   });
 
   lifecycleEventRecordSchema.parse({
@@ -2743,7 +2848,7 @@ function findingFixture(overrides: Partial<FindingRecord> = {}): FindingRecord {
       primaryAnchors: [{ path: "src/example.ts" }],
     },
   };
-  return {
+  const base: FindingRecord = {
     schemaVersion,
     recordType: "finding",
     id: "finding-fixture",
@@ -2760,11 +2865,18 @@ function findingFixture(overrides: Partial<FindingRecord> = {}): FindingRecord {
     risk: "moderate",
     files: [{ path: "src/example.ts", startLine: 1, endLine: 20 }],
     evidenceIds: ["ev-test"],
+    childFindingIds: [],
+    supersedesFindingIds: [],
     observationIds: ["observation-fixture"],
     currentObservationId: "observation-fixture",
     createdAt: now,
     updatedAt: now,
-    ...overrides,
+  };
+  const merged: FindingRecord = { ...base, ...overrides };
+  return {
+    ...merged,
+    childFindingIds: merged.childFindingIds ?? [],
+    supersedesFindingIds: merged.supersedesFindingIds ?? [],
   };
 }
 

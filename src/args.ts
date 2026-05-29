@@ -81,6 +81,7 @@ const valueFlags = new Set([
   "allow-files",
   "commit-message",
   "status",
+  "run",
   "priority",
   "category",
   "risk",
