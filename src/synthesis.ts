@@ -667,18 +667,19 @@ function buildAttemptBase(options: {
   };
 }
 
-function validateDraftCandidate(options: {
-  id: string;
+function validateDraftCandidateAnchors(options: {
   draft: SynthesisOutput["candidates"][number];
   evidence: EvidenceRecord[];
-  sourceText: Map<string, string>;
   seenStableIdentities: Set<string>;
-}): SynthesisAttemptRecord["validations"][number] {
+}): {
+  supportedIds: string[];
+  citedPaths: Set<string>;
+  diagnostics: Diagnostic[];
+} {
   const diagnostics: Diagnostic[] = [];
   const evidenceById = new Map(options.evidence.map((record) => [record.id, record]));
   const supportedIds = [...new Set(options.draft.evidenceIds.filter((id) => evidenceById.has(id)))];
-  const confidenceDowngradeReasons: string[] = [];
-  let readiness = options.draft.readiness;
+
   if (supportedIds.length === 0) {
     diagnostics.push({
       level: "warning",
@@ -703,6 +704,7 @@ function validateDraftCandidate(options: {
 
   const citedFileRefs = supportedIds.flatMap((id) => evidenceById.get(id)?.files ?? []);
   const citedPaths = new Set(citedFileRefs.map((file) => file.path));
+
   if (options.draft.files.length === 0) {
     diagnostics.push({
       level: "warning",
@@ -711,6 +713,27 @@ function validateDraftCandidate(options: {
       adapter: "codex-synthesis",
     });
   }
+
+  return { supportedIds, citedPaths, diagnostics };
+}
+
+function validateDraftCandidate(options: {
+  id: string;
+  draft: SynthesisOutput["candidates"][number];
+  evidence: EvidenceRecord[];
+  sourceText: Map<string, string>;
+  seenStableIdentities: Set<string>;
+}): SynthesisAttemptRecord["validations"][number] {
+  const anchorValidation = validateDraftCandidateAnchors({
+    draft: options.draft,
+    evidence: options.evidence,
+    seenStableIdentities: options.seenStableIdentities,
+  });
+  const diagnostics: Diagnostic[] = [...anchorValidation.diagnostics];
+  const supportedIds = anchorValidation.supportedIds;
+  const citedPaths = anchorValidation.citedPaths;
+  const confidenceDowngradeReasons: string[] = [];
+  let readiness = options.draft.readiness;
 
   for (const file of options.draft.files) {
     if (!citedPaths.has(file.path)) {
