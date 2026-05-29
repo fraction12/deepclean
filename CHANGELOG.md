@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.1.0-beta.2 - 2026-05-29
+
 - Documented repeated `--verification` / `--verification-command` usage for guarded fix/work flows.
 - Fixed repeated verification flags so guarded fix/work runs every explicit verification command instead of only the last one.
 
