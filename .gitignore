@@ -7,6 +7,7 @@ coverage/
 .clawpatch/
 .codex/
 .claude/
+docs/system-design-diagram.html
 .env
 .env.*
 *.tgz
