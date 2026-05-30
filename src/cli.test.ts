@@ -315,12 +315,7 @@ describe("deepclean cli", () => {
 
   test("status surfaces blocked work, stale artifacts, recent progress, and next action", async () => {
     await withTempRepo(async (repo) => {
-      await writeFixtureSource(repo);
-      await runCli(["scan", "--evidence-only", "--json"], repo);
-      await runCli(["report", "--json"], repo);
-      await runCli(["plan", "candidate-001", "--json"], repo);
-      await runCli(["handoff", "candidate-001", "--json"], repo);
-
+      await prepareStatusWorkflowState(repo);
       await writeStaleStatusFixture(repo);
 
       const status = await runCli(["status", "--json"], repo);
@@ -3398,6 +3393,14 @@ export function calculateInvoice(items: Array<{ price: number }>, coupon: boolea
 ${repeated.split("\n").map((line) => `  ${line}`).join("\n")}
 }
 `, "utf8");
+}
+
+async function prepareStatusWorkflowState(repo: string): Promise<void> {
+  await writeFixtureSource(repo);
+  await runCli(["scan", "--evidence-only", "--json"], repo);
+  await runCli(["report", "--json"], repo);
+  await runCli(["plan", "candidate-001", "--json"], repo);
+  await runCli(["handoff", "candidate-001", "--json"], repo);
 }
 
 async function writeStaleStatusFixture(repo: string): Promise<void> {
