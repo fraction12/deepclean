@@ -3653,6 +3653,82 @@ async function finalizeCandidateFixPrReadiness(input: {
   };
 }
 
+async function completeCandidateFixWorkflow(input: {
+  context: CommandContext;
+  options: FixWorkflowOptions;
+  attempt: FixAttemptRecord;
+  attemptPath: string;
+  attempts: FixAttemptRecord[];
+  attemptPaths: string[];
+  planResult: Awaited<ReturnType<typeof ensureFixPlan>>;
+  patchPreviewPath?: string | undefined;
+  candidate: CandidateRecord;
+  branch?: string | undefined;
+  dryRun: boolean;
+  changedFiles: string[];
+  outOfScopeFiles: string[];
+  allowedWriteScope: string[];
+  verificationResults: FixAttemptRecord["verificationResults"];
+  revalidation?: RevalidationRecord | undefined;
+  outcome: FixAttemptRecord["outcome"];
+  diagnostics: Diagnostic[];
+}): Promise<Extract<FixWorkflowResult, { ok: true }>> {
+  const prReadiness = await finalizeCandidateFixPrReadiness({
+    context: input.context,
+    options: input.options,
+    attempt: input.attempt,
+    candidate: input.candidate,
+    branch: input.branch,
+    dryRun: input.dryRun,
+    changedFiles: input.changedFiles,
+    outOfScopeFiles: input.outOfScopeFiles,
+    verificationResults: input.verificationResults,
+    revalidation: input.revalidation,
+    outcome: input.outcome,
+    planId: input.planResult.plan.id,
+    diagnostics: input.diagnostics,
+  });
+  const {
+    prSummaryPath,
+    pr,
+    finalStatus,
+    externalSideEffects,
+    prProofPassed,
+  } = prReadiness;
+  input.attempt.status = finalStatus;
+  input.attempt.pr = pr;
+  input.attempt.diagnostics = input.diagnostics;
+  input.attempt.updatedAt = new Date().toISOString();
+  await writeFixAttempt(input.context.paths, input.attempt);
+
+  const blockedPr = input.options.requirePrProof && !prProofPassed;
+  return {
+    ok: true,
+    exitCode: finalStatus === "failed" || finalStatus === "scope-failed" || blockedPr ? 3 : 0,
+    data: {
+      attempt: input.attempt,
+      attemptPath: input.attemptPath,
+      attempts: input.attempts,
+      attemptPaths: input.attemptPaths,
+      planPath: input.planResult.path,
+      ...(input.patchPreviewPath ? { patchPreviewPath: input.patchPreviewPath } : {}),
+      ...(prSummaryPath ? { prSummaryPath } : {}),
+      changedFiles: input.changedFiles,
+      outOfScopeFiles: input.outOfScopeFiles,
+      allowedWriteScope: input.allowedWriteScope,
+      ...(input.revalidation ? { revalidation: input.revalidation } : {}),
+      ...(pr ? { pr } : {}),
+      externalSideEffects,
+      next: nextFixWorkflowStep({
+        dryRun: input.dryRun,
+        outcome: input.outcome,
+        options: input.options,
+        pr,
+      }),
+    },
+  };
+}
+
 async function runCandidateFixWorkflow(
   context: CommandContext,
   target: string,
@@ -3857,55 +3933,26 @@ async function runCandidateFixWorkflow(
   const outcome = attempt.outcome;
   diagnostics.push(...attempt.diagnostics);
 
-  const prReadiness = await finalizeCandidateFixPrReadiness({
+  return completeCandidateFixWorkflow({
     context,
     options,
     attempt,
+    attemptPath,
+    attempts,
+    attemptPaths,
+    planResult,
     candidate: resolved.candidate,
     branch,
     dryRun,
     changedFiles,
     outOfScopeFiles,
+    allowedWriteScope,
     verificationResults,
     revalidation,
     outcome,
-    planId: planResult.plan.id,
     diagnostics,
+    patchPreviewPath,
   });
-  const {
-    prSummaryPath,
-    pr,
-    finalStatus,
-    externalSideEffects,
-    prProofPassed,
-  } = prReadiness;
-  attempt.status = finalStatus;
-  attempt.pr = pr;
-  attempt.diagnostics = diagnostics;
-  attempt.updatedAt = new Date().toISOString();
-  await writeFixAttempt(context.paths, attempt);
-
-  const blockedPr = options.requirePrProof && !prProofPassed;
-  return {
-    ok: true,
-    exitCode: finalStatus === "failed" || finalStatus === "scope-failed" || blockedPr ? 3 : 0,
-    data: {
-      attempt,
-      attemptPath,
-      attempts,
-      attemptPaths,
-      planPath: planResult.path,
-      ...(patchPreviewPath ? { patchPreviewPath } : {}),
-      ...(prSummaryPath ? { prSummaryPath } : {}),
-      changedFiles,
-      outOfScopeFiles,
-      allowedWriteScope,
-      ...(revalidation ? { revalidation } : {}),
-      ...(pr ? { pr } : {}),
-      externalSideEffects,
-      next: nextFixWorkflowStep({ dryRun, outcome, options, pr }),
-    },
-  };
 }
 
 async function resolveFixTarget(paths: StatePaths, target: string): Promise<{
