@@ -3558,6 +3558,101 @@ async function recordCandidateFixAttemptAndDecideRetry(input: {
   });
 }
 
+async function finalizeCandidateFixPrReadiness(input: {
+  context: CommandContext;
+  options: FixWorkflowOptions;
+  attempt: FixAttemptRecord;
+  candidate: CandidateRecord;
+  branch?: string | undefined;
+  dryRun: boolean;
+  changedFiles: string[];
+  outOfScopeFiles: string[];
+  verificationResults: FixAttemptRecord["verificationResults"];
+  revalidation?: RevalidationRecord | undefined;
+  outcome: FixAttemptRecord["outcome"];
+  planId: string;
+  diagnostics: Diagnostic[];
+}): Promise<{
+  prSummaryPath?: string;
+  pr?: FixAttemptRecord["pr"];
+  finalStatus: FixAttemptRecord["status"];
+  externalSideEffects: string[];
+  prProofPassed: boolean;
+}> {
+  let prSummaryPath: string | undefined;
+  let pr: FixAttemptRecord["pr"];
+  let finalStatus = input.attempt.status;
+  const externalSideEffects: string[] = [];
+  const campaignProgressAllowed = input.outcome === "partially-resolved"
+    && hasRevalidationProgress(input.revalidation)
+    && input.changedFiles.length > 0
+    && input.outOfScopeFiles.length === 0
+    && input.verificationResults.length > 0
+    && input.verificationResults.every((result) => result.passed);
+  let prReadyOutcome: "resolved" | "partially-resolved" | undefined;
+  if (input.outcome === "resolved") {
+    prReadyOutcome = input.outcome;
+  } else if (campaignProgressAllowed) {
+    prReadyOutcome = "partially-resolved";
+  }
+  const prProofPassed = Boolean(prReadyOutcome);
+  if (input.options.requirePrProof && !prProofPassed) {
+    input.diagnostics.push({
+      level: "error",
+      code: "pr_blocked",
+      message: "PR workflow requires in-scope changes, passing verification, and resolved revalidation or measurable campaign progress.",
+    });
+  }
+  if (!input.dryRun && prReadyOutcome && input.branch) {
+    prSummaryPath = await writePrReadySummary(input.context.paths, {
+      attemptId: input.attempt.id,
+      candidate: input.candidate,
+      branch: input.branch,
+      changedFiles: input.changedFiles,
+      verificationResults: input.verificationResults,
+      revalidation: input.revalidation,
+      outcome: prReadyOutcome,
+      planId: input.planId,
+    });
+    pr = {
+      branch: input.branch,
+      base: flagString(input.context.parsed.flags, "base"),
+      summaryPath: prSummaryPath,
+      externalSideEffects,
+    };
+    if (input.options.openPr) {
+      const prResult = await commitPushAndOpenPr(input.context, {
+        branch: input.branch,
+        base: pr.base,
+        title: flagString(input.context.parsed.flags, "title") ?? `${input.candidate.id}: ${input.candidate.title}`,
+        bodyPath: prSummaryPath,
+        commitMessage: flagString(input.context.parsed.flags, "commit-message") ?? `fix: address ${input.candidate.id}`,
+        changedFiles: input.changedFiles,
+      });
+      if (!prResult.ok) {
+        input.diagnostics.push({ level: "error", code: "pr_create_failed", message: prResult.error });
+        finalStatus = "failed";
+      } else {
+        pr = {
+          ...pr,
+          commitSha: prResult.commitSha,
+          url: prResult.url,
+          externalSideEffects: ["git commit", "git push", "gh pr create"],
+        };
+        externalSideEffects.push(...pr.externalSideEffects);
+      }
+    }
+  }
+
+  return {
+    ...(prSummaryPath ? { prSummaryPath } : {}),
+    ...(pr ? { pr } : {}),
+    finalStatus,
+    externalSideEffects,
+    prProofPassed,
+  };
+}
+
 async function runCandidateFixWorkflow(
   context: CommandContext,
   target: string,
@@ -3762,65 +3857,28 @@ async function runCandidateFixWorkflow(
   const outcome = attempt.outcome;
   diagnostics.push(...attempt.diagnostics);
 
-  let prSummaryPath: string | undefined;
-  let pr: FixAttemptRecord["pr"];
-  let finalStatus = attempt.status;
-  const externalSideEffects: string[] = [];
-  const campaignProgressAllowed = outcome === "partially-resolved"
-    && hasRevalidationProgress(revalidation)
-    && changedFiles.length > 0
-    && outOfScopeFiles.length === 0
-    && verificationResults.length > 0
-    && verificationResults.every((result) => result.passed);
-  const localSummaryAllowed = outcome === "resolved" || campaignProgressAllowed;
-  const prProofPassed = outcome === "resolved" || campaignProgressAllowed;
-  if (options.requirePrProof && !prProofPassed) {
-    diagnostics.push({
-      level: "error",
-      code: "pr_blocked",
-      message: "PR workflow requires in-scope changes, passing verification, and resolved revalidation or measurable campaign progress.",
-    });
-  }
-  if (!dryRun && localSummaryAllowed && branch) {
-    prSummaryPath = await writePrReadySummary(context.paths, {
-      attemptId: attempt.id,
-      candidate: resolved.candidate,
-      branch,
-      changedFiles,
-      verificationResults,
-      revalidation,
-      outcome,
-      planId: planResult.plan.id,
-    });
-    pr = {
-      branch,
-      base: flagString(context.parsed.flags, "base"),
-      summaryPath: prSummaryPath,
-      externalSideEffects,
-    };
-    if (options.openPr) {
-      const prResult = await commitPushAndOpenPr(context, {
-        branch,
-        base: pr.base,
-        title: flagString(context.parsed.flags, "title") ?? `${resolved.candidate.id}: ${resolved.candidate.title}`,
-        bodyPath: prSummaryPath,
-        commitMessage: flagString(context.parsed.flags, "commit-message") ?? `fix: address ${resolved.candidate.id}`,
-        changedFiles,
-      });
-      if (!prResult.ok) {
-        diagnostics.push({ level: "error", code: "pr_create_failed", message: prResult.error });
-        finalStatus = "failed";
-      } else {
-        pr = {
-          ...pr,
-          commitSha: prResult.commitSha,
-          url: prResult.url,
-          externalSideEffects: ["git commit", "git push", "gh pr create"],
-        };
-        externalSideEffects.push(...pr.externalSideEffects);
-      }
-    }
-  }
+  const prReadiness = await finalizeCandidateFixPrReadiness({
+    context,
+    options,
+    attempt,
+    candidate: resolved.candidate,
+    branch,
+    dryRun,
+    changedFiles,
+    outOfScopeFiles,
+    verificationResults,
+    revalidation,
+    outcome,
+    planId: planResult.plan.id,
+    diagnostics,
+  });
+  const {
+    prSummaryPath,
+    pr,
+    finalStatus,
+    externalSideEffects,
+    prProofPassed,
+  } = prReadiness;
   attempt.status = finalStatus;
   attempt.pr = pr;
   attempt.diagnostics = diagnostics;
