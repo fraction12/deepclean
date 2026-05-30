@@ -1,10 +1,12 @@
-import {
-  candidateId,
-} from "./ids.js";
+import { candidateId } from "./ids.js";
 import {
   churnContextProfile,
+  cliEntrypointComplexityProfile,
+  entrypointFanoutContextProfile,
   evidenceKindScore,
   stableUtilityDependencyHotspotProfile,
+  testComplexityContextProfile,
+  type CandidateScoringProfile,
 } from "./candidate-scoring.js";
 import { commandsForFiles, type VerificationProfile } from "./verification.js";
 import { schemaVersion, type DeepcleanConfig } from "./defaults.js";
@@ -243,6 +245,14 @@ function candidateForEvidence(
       return diagnosticOrArchitectureCandidateForEvidence(evidence, base, verification);
     case "large-file":
     case "large-function":
+      const cliComplexityProfile = evidence.kind === "large-file" ? cliEntrypointComplexityProfile(evidence) : undefined;
+      if (cliComplexityProfile) {
+        return candidateFromScoringProfile(evidence, base, verification, "complexity", "feature", cliComplexityProfile);
+      }
+      const testComplexityProfile = testComplexityContextProfile(evidence);
+      if (testComplexityProfile) {
+        return candidateFromScoringProfile(evidence, base, verification, "complexity", "feature", testComplexityProfile);
+      }
       return {
         ...base,
         title: evidence.title,
@@ -274,21 +284,7 @@ function candidateForEvidence(
       };
     case "churn-hotspot":
       const churnProfile = churnContextProfile(evidence);
-      return {
-        ...base,
-        title: evidence.title,
-        category: "architecture",
-        priority: churnProfile.priority,
-        confidence: evidence.confidence,
-        impact: "feature",
-        effort: churnProfile.effort,
-        risk: churnProfile.risk,
-        readiness: churnProfile.readiness,
-        whyItMatters: churnProfile.whyItMatters,
-        likelyRootCause: churnProfile.likelyRootCause,
-        suggestedDirection: churnProfile.suggestedDirection,
-        verification,
-      };
+      return candidateFromScoringProfile(evidence, base, verification, "architecture", "feature", churnProfile);
     case "shallow-wrapper-cluster":
       return {
         ...base,
@@ -331,23 +327,13 @@ function diagnosticOrArchitectureCandidateForEvidence(
         verification,
       };
     case "dependency-hotspot":
+      const entrypointProfile = entrypointFanoutContextProfile(evidence);
+      if (entrypointProfile) {
+        return candidateFromScoringProfile(evidence, base, verification, "architecture", "feature", entrypointProfile);
+      }
       const utilityProfile = stableUtilityDependencyHotspotProfile(evidence);
       if (utilityProfile) {
-        return {
-          ...base,
-          title: evidence.title,
-          category: "architecture",
-          priority: utilityProfile.priority,
-          confidence: evidence.confidence,
-          impact: "cross-cutting",
-          effort: utilityProfile.effort,
-          risk: utilityProfile.risk,
-          readiness: utilityProfile.readiness,
-          whyItMatters: utilityProfile.whyItMatters,
-          likelyRootCause: utilityProfile.likelyRootCause,
-          suggestedDirection: utilityProfile.suggestedDirection,
-          verification,
-        };
+        return candidateFromScoringProfile(evidence, base, verification, "architecture", "cross-cutting", utilityProfile);
       }
       return {
         ...base,
@@ -417,6 +403,31 @@ function duplicateCandidateForEvidence(
     whyItMatters: "Repeated code paths tend to drift after later AI edits, creating inconsistent behavior that tests may not cover.",
     likelyRootCause: "Similar behavior was implemented in multiple places instead of being pulled into one domain-level module or shared component.",
     suggestedDirection: "Inspect the duplicated call sites and decide whether the shared concept should become a single module, helper, component, or explicit abstraction.",
+    verification,
+  };
+}
+
+function candidateFromScoringProfile(
+  evidence: EvidenceRecord,
+  base: CandidateEvidenceBase,
+  verification: string[],
+  category: CandidateRecord["category"],
+  impact: CandidateRecord["impact"],
+  profile: CandidateScoringProfile,
+): CandidateRecord {
+  return {
+    ...base,
+    title: evidence.title,
+    category,
+    priority: profile.priority,
+    confidence: evidence.confidence,
+    impact,
+    effort: profile.effort,
+    risk: profile.risk,
+    readiness: profile.readiness,
+    whyItMatters: profile.whyItMatters,
+    likelyRootCause: profile.likelyRootCause,
+    suggestedDirection: profile.suggestedDirection,
     verification,
   };
 }

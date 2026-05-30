@@ -2604,6 +2604,38 @@ if (prompt.includes("Attempt: 1 of")) {
     expect(candidates[0]?.risk).toBe("safe");
   });
 
+  test("candidate scoring downgrades compatibility type barrels", () => {
+    const candidates = candidatesFromEvidence("run-test", [
+      evidenceFixture({
+        id: "ev-types-barrel",
+        kind: "dependency-hotspot",
+        title: "Dependency hotspot: src/types.ts",
+        files: [{ path: "src/types.ts" }],
+        data: {
+          incoming: 19,
+          outgoing: 9,
+          imports: [
+            "src/defaults.ts",
+            "src/file-references.ts",
+            "src/json.ts",
+            "src/type-kinds.ts",
+            "src/evidence-types.ts",
+            "src/candidate-types.ts",
+            "src/finding-types.ts",
+            "src/operation-types.ts",
+            "src/reporting-types.ts",
+          ],
+          importedBy: Array.from({ length: 19 }, (_, index) => `src/caller-${index}.ts`),
+        },
+        confidence: "high",
+      }),
+    ], "2026-05-24T00:00:00.000Z");
+
+    expect(candidates[0]?.priority).toBe("P2");
+    expect(candidates[0]?.readiness).toBe("defer");
+    expect(candidates[0]?.risk).toBe("safe");
+  });
+
   test("candidate scoring keeps mixed dependency hotspots actionable", () => {
     const candidates = candidatesFromEvidence("run-test", [
       evidenceFixture({
@@ -2623,6 +2655,68 @@ if (prompt.includes("Attempt: 1 of")) {
 
     expect(candidates[0]?.priority).toBe("P1");
     expect(candidates[0]?.risk).toBe("design-needed");
+  });
+
+  test("candidate scoring treats CLI entrypoint fan-out as context", () => {
+    const candidates = candidatesFromEvidence("run-test", [
+      evidenceFixture({
+        id: "ev-cli-entrypoint",
+        kind: "dependency-hotspot",
+        title: "Dependency hotspot: src/cli.ts",
+        files: [{ path: "src/cli.ts" }],
+        data: {
+          incoming: 0,
+          outgoing: 21,
+          imports: Array.from({ length: 21 }, (_, index) => `src/dependency-${index}.ts`),
+          importedBy: [],
+        },
+        confidence: "high",
+      }),
+    ], "2026-05-24T00:00:00.000Z");
+
+    expect(candidates[0]?.priority).toBe("P2");
+    expect(candidates[0]?.readiness).toBe("split-needed");
+    expect(candidates[0]?.risk).toBe("moderate");
+  });
+
+  test("candidate scoring downgrades large test-suite pressure", () => {
+    const candidates = candidatesFromEvidence("run-test", [
+      evidenceFixture({
+        id: "ev-large-test",
+        kind: "large-file",
+        title: "Large source file: src/cli.test.ts",
+        files: [{ path: "src/cli.test.ts" }],
+        data: {
+          nonBlankLines: 2200,
+          totalLines: 4100,
+        },
+        confidence: "high",
+      }),
+    ], "2026-05-24T00:00:00.000Z");
+
+    expect(candidates[0]?.priority).toBe("P2");
+    expect(candidates[0]?.readiness).toBe("split-needed");
+    expect(candidates[0]?.risk).toBe("moderate");
+  });
+
+  test("candidate scoring keeps oversized CLI entrypoints as split campaigns", () => {
+    const candidates = candidatesFromEvidence("run-test", [
+      evidenceFixture({
+        id: "ev-large-cli",
+        kind: "large-file",
+        title: "Large source file: src/cli.ts",
+        files: [{ path: "src/cli.ts" }],
+        data: {
+          nonBlankLines: 3600,
+          totalLines: 6600,
+        },
+        confidence: "high",
+      }),
+    ], "2026-05-24T00:00:00.000Z");
+
+    expect(candidates[0]?.priority).toBe("P2");
+    expect(candidates[0]?.readiness).toBe("split-needed");
+    expect(candidates[0]?.effort).toBe("large");
   });
 
   test("candidate scoring treats churn-only findings as context", () => {
