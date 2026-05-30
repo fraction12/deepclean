@@ -1,4 +1,9 @@
 import { z } from "zod";
+import { fileReferenceSchema } from "./file-references.js";
+import { diagnosticSchema } from "./json.js";
+
+export { fileReferenceSchema, type FileReference } from "./file-references.js";
+export { diagnosticSchema, type Diagnostic, type ErrorEnvelope, type JsonEnvelope } from "./json.js";
 
 export const schemaVersion = "0.1.0" as const;
 
@@ -139,13 +144,6 @@ export const featureKinds = [
 export const featureMapSources = ["heuristic", "auto", "agent"] as const;
 export const featureFileRoles = ["entrypoint", "owned", "context", "shared", "test", "config", "generated"] as const;
 
-export const diagnosticSchema = z.object({
-  level: z.enum(["info", "warning", "error"]),
-  code: z.string(),
-  message: z.string(),
-  adapter: z.string().optional(),
-});
-
 export const configSchema = z.object({
   schemaVersion: z.literal(schemaVersion),
   recordType: z.literal("config"),
@@ -222,14 +220,6 @@ export const configSchema = z.object({
 });
 
 export type DeepcleanConfig = z.infer<typeof configSchema>;
-
-export const fileReferenceSchema = z.object({
-  path: z.string(),
-  startLine: z.number().int().positive().optional(),
-  endLine: z.number().int().positive().optional(),
-});
-
-export type FileReference = z.infer<typeof fileReferenceSchema>;
 
 export const findingSignatureSchema = z.object({
   version: z.literal("1"),
@@ -826,24 +816,3 @@ export const handoffRecordSchema = z.object({
 });
 
 export type HandoffRecord = z.infer<typeof handoffRecordSchema>;
-
-export type Diagnostic = z.infer<typeof diagnosticSchema>;
-
-export interface CommandEnvelope<T> {
-  ok: true;
-  command: string;
-  data: T;
-  diagnostics: Diagnostic[];
-}
-
-export interface ErrorEnvelope {
-  ok: false;
-  command: string;
-  error: {
-    code: string;
-    message: string;
-  };
-  diagnostics: Diagnostic[];
-}
-
-export type JsonEnvelope<T> = CommandEnvelope<T> | ErrorEnvelope;
