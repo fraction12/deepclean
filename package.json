@@ -1,6 +1,6 @@
 {
   "name": "@fraction12/deepclean",
-  "version": "1.0.0-rc.1",
+  "version": "1.0.0",
   "private": false,
   "description": "Local structure reports and agent-ready plans for fast-moving codebases.",
   "type": "module",
