@@ -25,7 +25,7 @@ concurrency:
 jobs:
   publish:
     if: github.repository == 'fraction12/deepclean'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, dushyantpc, home-linux-trusted]
     environment: npm
     steps:
       - uses: actions/checkout@v6
