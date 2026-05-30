@@ -3781,6 +3781,33 @@ async function finishCandidateFixWorkflow(input: {
   });
 }
 
+type CandidateFixRetryState = {
+  candidate: CandidateRecord;
+  evidence: EvidenceRecord[];
+  features: FeatureRecord[];
+  remainingEvidence: EvidenceRecord[];
+};
+
+async function refreshCandidateFixRetryState(
+  paths: StatePaths,
+  findingId: string,
+  currentCandidate: CandidateRecord,
+  revalidation: RevalidationRecord | undefined,
+): Promise<CandidateFixRetryState> {
+  const latestCandidates = await readLatestCandidates(paths);
+  const evidence = await readLatestEvidence(paths);
+  const features = await readLatestFeatures(paths);
+  const candidate = latestCandidates.find((item) => item.findingId === findingId) ?? currentCandidate;
+  const evidenceIds = revalidation?.evidenceIds.length ? revalidation.evidenceIds : candidate.evidenceIds;
+
+  return {
+    candidate,
+    evidence,
+    features,
+    remainingEvidence: evidenceForIds(evidence, evidenceIds),
+  };
+}
+
 async function runCandidateFixWorkflow(
   context: CommandContext,
   target: string,
@@ -3957,14 +3984,11 @@ async function runCandidateFixWorkflow(
       break;
     }
 
-    const latestCandidates = await readLatestCandidates(context.paths);
-    currentEvidence = await readLatestEvidence(context.paths);
-    currentFeatures = await readLatestFeatures(context.paths);
-    currentCandidate = latestCandidates.find((candidate) => candidate.findingId === resolved.findingId) ?? currentCandidate;
-    remainingEvidence = evidenceForIds(
-      currentEvidence,
-      revalidation?.evidenceIds.length ? revalidation.evidenceIds : currentCandidate.evidenceIds,
-    );
+    const retryState = await refreshCandidateFixRetryState(context.paths, resolved.findingId, currentCandidate, revalidation);
+    currentCandidate = retryState.candidate;
+    currentEvidence = retryState.evidence;
+    currentFeatures = retryState.features;
+    remainingEvidence = retryState.remainingEvidence;
   }
 
   return finishCandidateFixWorkflow({
