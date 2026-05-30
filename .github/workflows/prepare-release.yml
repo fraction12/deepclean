@@ -33,7 +33,7 @@ concurrency:
 jobs:
   prepare:
     if: github.repository == 'fraction12/deepclean'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, dushyantpc, home-linux-trusted]
     steps:
       - uses: actions/checkout@v6
         with:

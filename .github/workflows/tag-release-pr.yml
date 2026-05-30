@@ -18,7 +18,7 @@ jobs:
       github.repository == 'fraction12/deepclean' &&
       github.event.pull_request.merged == true &&
       startsWith(github.event.pull_request.title, 'release: v')
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, dushyantpc, home-linux-trusted]
     steps:
       - uses: actions/checkout@v6
         with:
