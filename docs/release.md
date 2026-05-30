@@ -11,17 +11,7 @@ Configure npm trusted publishing for `@fraction12/deepclean`:
 - Workflow: `.github/workflows/release.yml`
 - Environment: `npm`
 
-The release workflow uses GitHub OIDC for `npm publish` and should not use a long-lived token for package publishing.
-
-Configure one GitHub environment secret for beta dist-tag promotion:
-
-- Environment: `npm`
-- Secret: `NPM_TOKEN`
-- Value: a granular npm token scoped to `@fraction12/deepclean` with write permission sufficient for `npm dist-tag add`
-
-This token is required because npm trusted publishing covers `npm publish`, while `npm dist-tag add` still requires normal npm authentication.
-
-If a repository-level `NPM_TOKEN` already exists, reuse that token value by moving or copying it into the `npm` environment secret and then remove the repository-level copy after the next release is verified. Environment secrets keep the token scoped to the protected release environment.
+The release workflow uses GitHub OIDC for `npm publish` and should not use a long-lived token for normal package publishing or beta latest-tag updates.
 
 ## One-Command Release Prep
 
@@ -81,10 +71,10 @@ The tag must match `package.json` exactly.
 Dist-tag behavior:
 
 - Alpha prereleases publish under `alpha`.
-- Beta prereleases publish under `beta` and then promote the same version to `latest`.
+- Beta prereleases publish under `latest` so default installs update through trusted publishing.
 - Stable versions publish under `latest`.
 
-Beta releases fail before `npm publish` if `NPM_TOKEN` is missing, so the package does not publish without updating the default install path.
+The tokenless release path does not automatically maintain a separate `beta` tag. If `@fraction12/deepclean@beta` needs to move, update it manually with an OTP or a temporary npm token that is allowed to bypass 2FA.
 
 ## Beta Dogfood Gate
 
@@ -100,7 +90,7 @@ Set `npm_tag` only when overriding the default tag is intentional.
 
 ## Promoting A Version
 
-Beta releases promote `latest` automatically. Use manual promotion only for emergency repair or intentional out-of-band registry changes:
+Beta releases publish as `latest` automatically. Use manual dist-tag changes only for emergency repair or intentional out-of-band registry changes:
 
 ```bash
 npm dist-tag add @fraction12/deepclean@0.1.0-beta.5 latest
@@ -108,4 +98,4 @@ npm dist-tag add @fraction12/deepclean@0.1.0-beta.5 latest
 
 ## Token Hygiene
 
-Rotate npm tokens after any accidental exposure. The only expected npm token in this repository is `NPM_TOKEN`, and it should be scoped to dist-tag maintenance for `@fraction12/deepclean` rather than used for package publishing.
+Rotate npm tokens after any accidental exposure. The normal release path should not require `NPM_TOKEN`; keep npm write tokens out of GitHub secrets unless there is a temporary, explicit dist-tag repair.

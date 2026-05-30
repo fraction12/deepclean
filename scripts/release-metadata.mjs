@@ -27,8 +27,9 @@ export function resolveReleaseMetadata({
 
   const explicitNpmTag = inputNpmTag.trim();
   const label = prereleaseLabel(packageVersion);
-  const npmTag = explicitNpmTag || label || "latest";
-  const promotionTags = explicitNpmTag || label !== "beta" ? [] : ["latest"];
+  const inferredNpmTag = label === "beta" ? "latest" : label || "latest";
+  const npmTag = explicitNpmTag || inferredNpmTag;
+  const promotionTags = [];
 
   return {
     packageName,

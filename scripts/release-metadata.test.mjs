@@ -12,7 +12,7 @@ describe("release metadata", () => {
     expect(prereleaseLabel("0.1.0")).toBe("");
   });
 
-  test("publishes beta under beta and promotes latest", () => {
+  test("publishes beta under latest without post-publish promotion", () => {
     expect(resolveReleaseMetadata({
       packageName: "@fraction12/deepclean",
       packageVersion: "0.1.0-beta.6",
@@ -21,8 +21,8 @@ describe("release metadata", () => {
     })).toEqual({
       packageName: "@fraction12/deepclean",
       packageVersion: "0.1.0-beta.6",
-      npmTag: "beta",
-      promotionTags: ["latest"],
+      npmTag: "latest",
+      promotionTags: [],
     });
   });
 
@@ -70,8 +70,8 @@ describe("release metadata", () => {
     expect(formatGithubOutputs({
       packageName: "@fraction12/deepclean",
       packageVersion: "0.1.0-beta.6",
-      npmTag: "beta",
-      promotionTags: ["latest"],
-    })).toContain("promotion_tags=latest\n");
+      npmTag: "latest",
+      promotionTags: [],
+    })).toContain("promotion_tags=\n");
   });
 });
