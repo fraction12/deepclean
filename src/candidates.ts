@@ -1,6 +1,11 @@
 import {
   candidateId,
 } from "./ids.js";
+import {
+  churnContextProfile,
+  evidenceKindScore,
+  stableUtilityDependencyHotspotProfile,
+} from "./candidate-scoring.js";
 import { commandsForFiles, type VerificationProfile } from "./verification.js";
 import { schemaVersion, type DeepcleanConfig } from "./defaults.js";
 
@@ -268,18 +273,20 @@ function candidateForEvidence(
         verification,
       };
     case "churn-hotspot":
+      const churnProfile = churnContextProfile(evidence);
       return {
         ...base,
         title: evidence.title,
         category: "architecture",
-        priority: evidence.confidence === "high" ? "P1" : "P2",
+        priority: churnProfile.priority,
         confidence: evidence.confidence,
         impact: "feature",
-        effort: "medium",
-        risk: "design-needed",
-        whyItMatters: "High-churn files are often where messy abstractions and changing product behavior collide.",
-        likelyRootCause: "The module may be absorbing multiple concerns or serving as the easiest place for repeated agent edits.",
-        suggestedDirection: "Compare the churn history with current responsibilities and look for concepts that should move closer to their owners.",
+        effort: churnProfile.effort,
+        risk: churnProfile.risk,
+        readiness: churnProfile.readiness,
+        whyItMatters: churnProfile.whyItMatters,
+        likelyRootCause: churnProfile.likelyRootCause,
+        suggestedDirection: churnProfile.suggestedDirection,
         verification,
       };
     case "shallow-wrapper-cluster":
@@ -324,6 +331,24 @@ function diagnosticOrArchitectureCandidateForEvidence(
         verification,
       };
     case "dependency-hotspot":
+      const utilityProfile = stableUtilityDependencyHotspotProfile(evidence);
+      if (utilityProfile) {
+        return {
+          ...base,
+          title: evidence.title,
+          category: "architecture",
+          priority: utilityProfile.priority,
+          confidence: evidence.confidence,
+          impact: "cross-cutting",
+          effort: utilityProfile.effort,
+          risk: utilityProfile.risk,
+          readiness: utilityProfile.readiness,
+          whyItMatters: utilityProfile.whyItMatters,
+          likelyRootCause: utilityProfile.likelyRootCause,
+          suggestedDirection: utilityProfile.suggestedDirection,
+          verification,
+        };
+      }
       return {
         ...base,
         title: evidence.title,
@@ -420,31 +445,6 @@ function compareEvidence(a: EvidenceRecord, b: EvidenceRecord): number {
     return confidenceDelta;
   }
   return a.id.localeCompare(b.id);
-}
-
-function evidenceKindScore(kind: string): number {
-  switch (kind) {
-    case "duplicate-cluster":
-      return 80;
-    case "dependency-hotspot":
-      return 75;
-    case "architecture-boundary-violation":
-      return 74;
-    case "dependency-cycle":
-      return 73;
-    case "large-function":
-      return 70;
-    case "large-file":
-      return 65;
-    case "churn-hotspot":
-      return 60;
-    case "test-gap":
-      return 45;
-    case "shallow-wrapper-cluster":
-      return 20;
-    default:
-      return 0;
-  }
 }
 
 function confidenceScore(confidence: CandidateRecord["confidence"]): number {

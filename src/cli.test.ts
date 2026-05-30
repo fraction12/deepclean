@@ -5,6 +5,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, test } from "vitest";
 import { buildLocalImportGraph } from "./architecture-graph.js";
+import { candidatesFromEvidence } from "./candidates.js";
 import { main } from "./cli.js";
 import type { SourceFile } from "./discovery.js";
 import { lockRecordSchema, readLockStatuses, withStateWriteLock, type LockRecord } from "./locks.js";
@@ -2579,6 +2580,69 @@ if (prompt.includes("Attempt: 1 of")) {
       };
       expect(payload.data.candidates.some((candidate) => candidate.category === "duplication")).toBe(false);
     });
+  });
+
+  test("candidate scoring downgrades stable utility fan-in hotspots", () => {
+    const candidates = candidatesFromEvidence("run-test", [
+      evidenceFixture({
+        id: "ev-utility",
+        kind: "dependency-hotspot",
+        title: "Dependency hotspot: src/ids.ts",
+        files: [{ path: "src/ids.ts" }],
+        data: {
+          incoming: 18,
+          outgoing: 0,
+          imports: [],
+          importedBy: Array.from({ length: 18 }, (_, index) => `src/caller-${index}.ts`),
+        },
+        confidence: "high",
+      }),
+    ], "2026-05-24T00:00:00.000Z");
+
+    expect(candidates[0]?.priority).toBe("P2");
+    expect(candidates[0]?.readiness).toBe("defer");
+    expect(candidates[0]?.risk).toBe("safe");
+  });
+
+  test("candidate scoring keeps mixed dependency hotspots actionable", () => {
+    const candidates = candidatesFromEvidence("run-test", [
+      evidenceFixture({
+        id: "ev-mixed",
+        kind: "dependency-hotspot",
+        title: "Dependency hotspot: src/cli.ts",
+        files: [{ path: "src/cli.ts" }],
+        data: {
+          incoming: 8,
+          outgoing: 16,
+          imports: Array.from({ length: 16 }, (_, index) => `src/dependency-${index}.ts`),
+          importedBy: Array.from({ length: 8 }, (_, index) => `src/caller-${index}.ts`),
+        },
+        confidence: "high",
+      }),
+    ], "2026-05-24T00:00:00.000Z");
+
+    expect(candidates[0]?.priority).toBe("P1");
+    expect(candidates[0]?.risk).toBe("design-needed");
+  });
+
+  test("candidate scoring treats churn-only findings as context", () => {
+    const candidates = candidatesFromEvidence("run-test", [
+      evidenceFixture({
+        id: "ev-churn",
+        kind: "churn-hotspot",
+        title: "High churn file: src/cli.ts",
+        files: [{ path: "src/cli.ts" }],
+        data: {
+          commits: 16,
+          changedLines: 1200,
+        },
+        confidence: "high",
+      }),
+    ], "2026-05-24T00:00:00.000Z");
+
+    expect(candidates[0]?.priority).toBe("P2");
+    expect(candidates[0]?.readiness).toBe("defer");
+    expect(candidates[0]?.risk).toBe("safe");
   });
 
   test("ingests SARIF findings from external analyzers", async () => {
