@@ -16,6 +16,7 @@ import { isTestPath, normalizePath, type SourceFile } from "./discovery.js";
 import { stableId } from "./ids.js";
 import { schemaVersion, type DeepcleanConfig } from "./defaults.js";
 import type { Diagnostic } from "./json.js";
+import { createTypeScriptSourceFile, isTypeScriptLikeSource } from "./source-policy.js";
 
 type EvidenceRecord = import("./types.js").EvidenceRecord;
 
@@ -452,16 +453,9 @@ async function importGraphAdapter(context: AdapterContext): Promise<AdapterResul
 async function typescriptStructureAdapter(context: AdapterContext): Promise<AdapterResult> {
   const evidence: EvidenceRecord[] = [];
 
-  const tsLikeExtensions = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts"]);
-  for (const file of context.files.filter((item) => tsLikeExtensions.has(item.extension))) {
+  for (const file of context.files.filter(isTypeScriptLikeSource)) {
     const shallowWrappers: Array<{ name: string; startLine: number; endLine: number }> = [];
-    const sourceFile = ts.createSourceFile(
-      file.path,
-      file.text,
-      ts.ScriptTarget.Latest,
-      true,
-      file.extension.includes("x") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
-    );
+    const sourceFile = createTypeScriptSourceFile(file);
 
     visitNode(sourceFile, (node) => {
       if (

@@ -4,7 +4,7 @@ import path from "node:path";
 import { z } from "zod";
 import { schemaVersion } from "./defaults.js";
 import { type Diagnostic } from "./json.js";
-import { type StatePaths } from "./state.js";
+import { type StatePaths } from "./state-paths.js";
 
 const stateWriterLockId = "state-writer";
 const defaultStaleLockMs = 30 * 60 * 1000;

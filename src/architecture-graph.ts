@@ -2,6 +2,7 @@ import path from "node:path";
 import ts from "typescript";
 import type { DeepcleanConfig } from "./defaults.js";
 import { normalizePath, type SourceFile } from "./discovery.js";
+import { createTypeScriptSourceFile } from "./source-policy.js";
 
 export type ArchitecturePolicy = DeepcleanConfig["architecture"];
 
@@ -352,13 +353,7 @@ export function collectImports(file: SourceFile): string[] {
   if (file.extension === ".py") {
     return collectPythonImports(file);
   }
-  const sourceFile = ts.createSourceFile(
-    file.path,
-    file.text,
-    ts.ScriptTarget.Latest,
-    true,
-    file.extension.includes("x") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
-  );
+  const sourceFile = createTypeScriptSourceFile(file);
   const imports: string[] = [];
   visitNode(sourceFile, (node) => {
     if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) {
