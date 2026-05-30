@@ -321,51 +321,7 @@ describe("deepclean cli", () => {
       await runCli(["plan", "candidate-001", "--json"], repo);
       await runCli(["handoff", "candidate-001", "--json"], repo);
 
-      const candidatesPath = path.join(repo, ".deepclean", "candidates", await latestRunFile(repo));
-      const candidates = JSON.parse(await readFile(candidatesPath, "utf8")) as Array<{
-        id: string;
-        findingId?: string;
-        lifecycleState?: string;
-        status?: string;
-        updatedAt?: string;
-      }>;
-      const targetIndex = candidates.findIndex((candidate) => candidate.id === "candidate-001");
-      const target = candidates[targetIndex];
-      expect(target?.findingId).toMatch(/^finding-/);
-      expect(candidates.length).toBeGreaterThan(2);
-      const revalidatedAt = new Date(Date.now() + 1000).toISOString();
-      candidates[targetIndex] = {
-        ...target!,
-        lifecycleState: "stale",
-        status: "stale",
-        updatedAt: revalidatedAt,
-      };
-      candidates[1] = {
-        ...candidates[1]!,
-        lifecycleState: "resolved",
-        status: "fixed",
-        updatedAt: revalidatedAt,
-      };
-      candidates[2] = {
-        ...candidates[2]!,
-        lifecycleState: "superseded",
-        status: "superseded",
-        updatedAt: revalidatedAt,
-      };
-      await writeFile(candidatesPath, `${JSON.stringify(candidates, null, 2)}\n`, "utf8");
-      await mkdir(path.join(repo, ".deepclean", "revalidations"), { recursive: true });
-      await writeFile(path.join(repo, ".deepclean", "revalidations", "revalidation-status-fixture.json"), `${JSON.stringify({
-        schemaVersion,
-        recordType: "revalidation",
-        id: "revalidation-status-fixture",
-        targetType: "finding",
-        targetId: target?.findingId,
-        runId: (await latestRunFile(repo)).replace(/\.json$/, ""),
-        outcome: "stale",
-        evidenceIds: [],
-        diagnostics: [],
-        createdAt: revalidatedAt,
-      }, null, 2)}\n`, "utf8");
+      await writeStaleStatusFixture(repo);
 
       const status = await runCli(["status", "--json"], repo);
       expect(status.code).toBe(0);
@@ -3498,6 +3454,55 @@ export function calculateInvoice(items: Array<{ price: number }>, coupon: boolea
 ${repeated.split("\n").map((line) => `  ${line}`).join("\n")}
 }
 `, "utf8");
+}
+
+async function writeStaleStatusFixture(repo: string): Promise<void> {
+  const latestRun = await latestRunFile(repo);
+  const candidatesPath = path.join(repo, ".deepclean", "candidates", latestRun);
+  const candidates = JSON.parse(await readFile(candidatesPath, "utf8")) as Array<{
+    id: string;
+    findingId?: string;
+    lifecycleState?: string;
+    status?: string;
+    updatedAt?: string;
+  }>;
+  const targetIndex = candidates.findIndex((candidate) => candidate.id === "candidate-001");
+  const target = candidates[targetIndex];
+  expect(target?.findingId).toMatch(/^finding-/);
+  expect(candidates.length).toBeGreaterThan(2);
+  const revalidatedAt = new Date(Date.now() + 1000).toISOString();
+  candidates[targetIndex] = {
+    ...target!,
+    lifecycleState: "stale",
+    status: "stale",
+    updatedAt: revalidatedAt,
+  };
+  candidates[1] = {
+    ...candidates[1]!,
+    lifecycleState: "resolved",
+    status: "fixed",
+    updatedAt: revalidatedAt,
+  };
+  candidates[2] = {
+    ...candidates[2]!,
+    lifecycleState: "superseded",
+    status: "superseded",
+    updatedAt: revalidatedAt,
+  };
+  await writeFile(candidatesPath, `${JSON.stringify(candidates, null, 2)}\n`, "utf8");
+  await mkdir(path.join(repo, ".deepclean", "revalidations"), { recursive: true });
+  await writeFile(path.join(repo, ".deepclean", "revalidations", "revalidation-status-fixture.json"), `${JSON.stringify({
+    schemaVersion,
+    recordType: "revalidation",
+    id: "revalidation-status-fixture",
+    targetType: "finding",
+    targetId: target?.findingId,
+    runId: latestRun.replace(/\.json$/, ""),
+    outcome: "stale",
+    evidenceIds: [],
+    diagnostics: [],
+    createdAt: revalidatedAt,
+  }, null, 2)}\n`, "utf8");
 }
 
 async function installFakeCodex(repo: string, source: string): Promise<void> {
