@@ -324,63 +324,7 @@ describe("deepclean cli", () => {
       await writeStaleStatusFixture(repo);
 
       const status = await runCli(["status", "--json"], repo);
-      expect(status.code).toBe(0);
-      const payload = JSON.parse(status.stdout) as {
-        data: {
-          latestRun: { id: string; path: string };
-          latestReport: { id: string; jsonPath: string; markdownPath: string };
-          queue: { stale: number; blocked: number; active: number; fixed: number; byLifecycleState: Record<string, number> };
-          activeItems: Array<{ id: string; status: string; lifecycleState?: string }>;
-          blockedItems: Array<{ id: string; reason: string }>;
-          staleArtifacts: Array<{ type: string; targetId?: string; reason: string; recommendation: string }>;
-          latestArtifacts: { latestReport?: { id: string }; latestPlan?: { id: string }; latestHandoff?: { id: string }; latestRevalidation?: { id: string } };
-          recentProgress: Array<{ type: string; kind: string; id: string }>;
-          nextAction: { command: string; reason: string };
-          pendingRevalidation: number;
-        };
-        diagnostics: Array<{ code: string }>;
-      };
-      expect(payload.data.latestRun.id).toMatch(/^run-/);
-      expect(payload.data.latestRun.path).toContain(".deepclean/runs/");
-      expect(payload.data.latestReport.jsonPath).toContain(".deepclean/reports/");
-      expect(payload.data.latestReport.markdownPath).toContain(".deepclean/reports/");
-      expect(payload.data.queue.stale).toBeGreaterThanOrEqual(1);
-      expect(payload.data.queue.blocked).toBeGreaterThanOrEqual(1);
-      expect(payload.data.queue.fixed).toBeGreaterThanOrEqual(1);
-      expect(payload.data.queue.byLifecycleState["stale"]).toBeGreaterThanOrEqual(1);
-      expect(payload.data.queue.byLifecycleState["resolved"]).toBeGreaterThanOrEqual(1);
-      expect(payload.data.queue.byLifecycleState["superseded"]).toBeGreaterThanOrEqual(1);
-      expect(payload.data.activeItems.some((item) => (
-        item.status === "fixed"
-        || item.status === "superseded"
-        || item.lifecycleState === "stale"
-        || item.lifecycleState === "resolved"
-      ))).toBe(false);
-      expect(payload.data.pendingRevalidation).toBeGreaterThanOrEqual(1);
-      expect(payload.data.blockedItems.some((item) => (
-        item.id === "candidate-001"
-        && item.reason.includes("revalidation")
-      ))).toBe(true);
-      expect(payload.data.staleArtifacts.some((artifact) => (
-        artifact.type === "plan"
-        && artifact.targetId === "candidate-001"
-        && artifact.recommendation.includes("deepclean plan")
-      ))).toBe(true);
-      expect(payload.data.staleArtifacts.some((artifact) => (
-        artifact.type === "handoff"
-        && artifact.targetId === "candidate-001"
-        && artifact.reason.includes("not ready")
-      ))).toBe(true);
-      expect(payload.data.latestArtifacts.latestReport?.id).toMatch(/^report-/);
-      expect(payload.data.latestArtifacts.latestPlan?.id).toMatch(/^plan-/);
-      expect(payload.data.latestArtifacts.latestHandoff?.id).toMatch(/^handoff-/);
-      expect(payload.data.latestArtifacts.latestRevalidation?.id).toBe("revalidation-status-fixture");
-      expect(payload.data.recentProgress.some((event) => event.type === "report")).toBe(true);
-      expect(payload.data.recentProgress.some((event) => event.type === "plan")).toBe(true);
-      expect(payload.data.recentProgress.some((event) => event.type === "handoff")).toBe(true);
-      expect(payload.data.recentProgress.some((event) => event.kind === "revalidation:stale")).toBe(true);
-      expect(payload.data.nextAction.command).toBe("deepclean revalidate all");
-      expect(payload.diagnostics.some((diagnostic) => diagnostic.code === "stale_state")).toBe(true);
+      expectStatusWorkflowPayload(status);
     });
   });
 
@@ -3991,6 +3935,73 @@ async function runJsonCli<T = unknown>(argv: string[], cwd: string): Promise<T> 
   const result = await runCli(argv, cwd);
   expect(result.code).toBe(0);
   return JSON.parse(result.stdout) as T;
+}
+
+type StatusWorkflowPayload = {
+  data: {
+    latestRun: { id: string; path: string };
+    latestReport: { id: string; jsonPath: string; markdownPath: string };
+    queue: { stale: number; blocked: number; active: number; fixed: number; byLifecycleState: Record<string, number> };
+    activeItems: Array<{ id: string; status: string; lifecycleState?: string }>;
+    blockedItems: Array<{ id: string; reason: string }>;
+    staleArtifacts: Array<{ type: string; targetId?: string; reason: string; recommendation: string }>;
+    latestArtifacts: {
+      latestReport?: { id: string };
+      latestPlan?: { id: string };
+      latestHandoff?: { id: string };
+      latestRevalidation?: { id: string };
+    };
+    recentProgress: Array<{ type: string; kind: string; id: string }>;
+    nextAction: { command: string; reason: string };
+    pendingRevalidation: number;
+  };
+  diagnostics: Array<{ code: string }>;
+};
+
+function expectStatusWorkflowPayload(result: Awaited<ReturnType<typeof runCli>>): void {
+  expect(result.code).toBe(0);
+  const payload = JSON.parse(result.stdout) as StatusWorkflowPayload;
+  expect(payload.data.latestRun.id).toMatch(/^run-/);
+  expect(payload.data.latestRun.path).toContain(".deepclean/runs/");
+  expect(payload.data.latestReport.jsonPath).toContain(".deepclean/reports/");
+  expect(payload.data.latestReport.markdownPath).toContain(".deepclean/reports/");
+  expect(payload.data.queue.stale).toBeGreaterThanOrEqual(1);
+  expect(payload.data.queue.blocked).toBeGreaterThanOrEqual(1);
+  expect(payload.data.queue.fixed).toBeGreaterThanOrEqual(1);
+  expect(payload.data.queue.byLifecycleState["stale"]).toBeGreaterThanOrEqual(1);
+  expect(payload.data.queue.byLifecycleState["resolved"]).toBeGreaterThanOrEqual(1);
+  expect(payload.data.queue.byLifecycleState["superseded"]).toBeGreaterThanOrEqual(1);
+  expect(payload.data.activeItems.some((item) => (
+    item.status === "fixed"
+    || item.status === "superseded"
+    || item.lifecycleState === "stale"
+    || item.lifecycleState === "resolved"
+  ))).toBe(false);
+  expect(payload.data.pendingRevalidation).toBeGreaterThanOrEqual(1);
+  expect(payload.data.blockedItems.some((item) => (
+    item.id === "candidate-001"
+    && item.reason.includes("revalidation")
+  ))).toBe(true);
+  expect(payload.data.staleArtifacts.some((artifact) => (
+    artifact.type === "plan"
+    && artifact.targetId === "candidate-001"
+    && artifact.recommendation.includes("deepclean plan")
+  ))).toBe(true);
+  expect(payload.data.staleArtifacts.some((artifact) => (
+    artifact.type === "handoff"
+    && artifact.targetId === "candidate-001"
+    && artifact.reason.includes("not ready")
+  ))).toBe(true);
+  expect(payload.data.latestArtifacts.latestReport?.id).toMatch(/^report-/);
+  expect(payload.data.latestArtifacts.latestPlan?.id).toMatch(/^plan-/);
+  expect(payload.data.latestArtifacts.latestHandoff?.id).toMatch(/^handoff-/);
+  expect(payload.data.latestArtifacts.latestRevalidation?.id).toBe("revalidation-status-fixture");
+  expect(payload.data.recentProgress.some((event) => event.type === "report")).toBe(true);
+  expect(payload.data.recentProgress.some((event) => event.type === "plan")).toBe(true);
+  expect(payload.data.recentProgress.some((event) => event.type === "handoff")).toBe(true);
+  expect(payload.data.recentProgress.some((event) => event.kind === "revalidation:stale")).toBe(true);
+  expect(payload.data.nextAction.command).toBe("deepclean revalidate all");
+  expect(payload.diagnostics.some((diagnostic) => diagnostic.code === "stale_state")).toBe(true);
 }
 
 function expectDoctorPackageUpdate(
