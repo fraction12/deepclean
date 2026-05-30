@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.1.0-beta.7 - 2026-05-29
+
+- Changed beta releases to publish directly under `latest` through trusted publishing, removing the token-dependent post-publish dist-tag promotion step.
+- Continued beta cleanup across candidate reference serialization and stale lock state handling.
+
 ## 0.1.0-beta.6 - 2026-05-29
 
 - Added beta release automation so GitHub releases publish under `beta`, promote the same version to `latest`, and verify the npm dist-tags before reporting success.
