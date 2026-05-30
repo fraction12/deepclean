@@ -3729,6 +3729,58 @@ async function completeCandidateFixWorkflow(input: {
   };
 }
 
+async function finishCandidateFixWorkflow(input: {
+  context: CommandContext;
+  options: FixWorkflowOptions;
+  attempts: FixAttemptRecord[];
+  attemptPaths: string[];
+  planResult: Awaited<ReturnType<typeof ensureFixPlan>>;
+  candidate: CandidateRecord;
+  branch?: string | undefined;
+  dryRun: boolean;
+  allowedWriteScope: string[];
+  revalidation?: RevalidationRecord | undefined;
+  diagnostics: Diagnostic[];
+}): Promise<FixWorkflowResult> {
+  const attempt = input.attempts.at(-1);
+  const attemptPath = input.attemptPaths.at(-1);
+  if (!attempt || !attemptPath) {
+    return {
+      ok: false,
+      exitCode: 1,
+      code: "fix_attempt_missing",
+      message: "Fix workflow did not record an attempt.",
+    };
+  }
+  const patchPreviewPath = attempt.patchPreviewPath;
+  const changedFiles = attempt.changedFiles;
+  const outOfScopeFiles = attempt.outOfScopeFiles ?? [];
+  const verificationResults = attempt.verificationResults;
+  const outcome = attempt.outcome;
+  input.diagnostics.push(...attempt.diagnostics);
+
+  return completeCandidateFixWorkflow({
+    context: input.context,
+    options: input.options,
+    attempt,
+    attemptPath,
+    attempts: input.attempts,
+    attemptPaths: input.attemptPaths,
+    planResult: input.planResult,
+    candidate: input.candidate,
+    branch: input.branch,
+    dryRun: input.dryRun,
+    changedFiles,
+    outOfScopeFiles,
+    allowedWriteScope: input.allowedWriteScope,
+    verificationResults,
+    revalidation: input.revalidation,
+    outcome,
+    diagnostics: input.diagnostics,
+    patchPreviewPath,
+  });
+}
+
 async function runCandidateFixWorkflow(
   context: CommandContext,
   target: string,
@@ -3915,43 +3967,18 @@ async function runCandidateFixWorkflow(
     );
   }
 
-  const attempt = attempts.at(-1);
-  const attemptPath = attemptPaths.at(-1);
-  if (!attempt || !attemptPath) {
-    return {
-      ok: false,
-      exitCode: 1,
-      code: "fix_attempt_missing",
-      message: "Fix workflow did not record an attempt.",
-    };
-  }
-  const patchPreviewPath = attempt.patchPreviewPath;
-  const changedFiles = attempt.changedFiles;
-  const outOfScopeFiles = attempt.outOfScopeFiles ?? [];
-  const verificationResults = attempt.verificationResults;
-  const revalidation = lastRevalidation;
-  const outcome = attempt.outcome;
-  diagnostics.push(...attempt.diagnostics);
-
-  return completeCandidateFixWorkflow({
+  return finishCandidateFixWorkflow({
     context,
     options,
-    attempt,
-    attemptPath,
     attempts,
     attemptPaths,
     planResult,
     candidate: resolved.candidate,
     branch,
     dryRun,
-    changedFiles,
-    outOfScopeFiles,
     allowedWriteScope,
-    verificationResults,
-    revalidation,
-    outcome,
+    revalidation: lastRevalidation,
     diagnostics,
-    patchPreviewPath,
   });
 }
 
