@@ -6,7 +6,11 @@ import {
   type StatePaths,
 } from "./state.js";
 import { asRecord } from "./json.js";
-import type { FixAttemptRecord, LifecycleEventRecord, RevalidationRecord, RunRecord } from "./types.js";
+
+type FixAttemptRecord = Awaited<ReturnType<typeof readFixAttempts>>[number];
+type LifecycleEventRecord = Awaited<ReturnType<typeof readLifecycleEvents>>[number];
+type RevalidationRecord = Awaited<ReturnType<typeof readRevalidations>>[number];
+type RunRecord = Awaited<ReturnType<typeof readRuns>>[number];
 
 export type ProgressNet = "positive" | "weak" | "neutral";
 

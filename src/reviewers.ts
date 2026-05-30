@@ -1,5 +1,35 @@
 import { candidateArea as surfaceArea } from "./candidates.js";
-import type { CandidateRecord, EvidenceRecord, FileReference } from "./types.js";
+import type { FileReference } from "./file-references.js";
+
+type CleanupCandidateCategory =
+  | "architecture"
+  | "complexity"
+  | "duplication"
+  | "testability"
+  | "dead-weight"
+  | "ai-slop"
+  | "domain-drift"
+  | "diagnostic";
+
+type CleanupEvidenceConfidence = "low" | "medium" | "high";
+
+export interface CleanupCandidateInput {
+  id: string;
+  title: string;
+  category: CleanupCandidateCategory;
+  priority: string;
+  evidenceIds: string[];
+  files: FileReference[];
+}
+
+export interface CleanupEvidenceInput {
+  id: string;
+  kind: string;
+  title: string;
+  confidence: CleanupEvidenceConfidence;
+  files: FileReference[];
+  data: Record<string, unknown>;
+}
 
 export interface ReviewerRubric {
   id: string;
@@ -295,8 +325,8 @@ export const reviewerRubrics: ReviewerRubric[] = [
 ];
 
 export function buildCleanupSurfaces(
-  evidence: EvidenceRecord[],
-  candidates: CandidateRecord[],
+  evidence: CleanupEvidenceInput[],
+  candidates: CleanupCandidateInput[],
   limit = 12,
 ): CleanupSurface[] {
   const surfaces = new Map<string, SurfaceDraft>();
@@ -376,7 +406,7 @@ function getSurface(surfaces: Map<string, SurfaceDraft>, key: string): SurfaceDr
   return surface;
 }
 
-function addGraphDirectorySurfaces(surfaces: Map<string, SurfaceDraft>, evidence: EvidenceRecord[]): void {
+function addGraphDirectorySurfaces(surfaces: Map<string, SurfaceDraft>, evidence: CleanupEvidenceInput[]): void {
   for (const record of evidence) {
     if (record.kind !== "code-graph-summary") {
       continue;
@@ -415,7 +445,7 @@ function addGraphDirectorySurfaces(surfaces: Map<string, SurfaceDraft>, evidence
   }
 }
 
-function evidenceAreas(record: EvidenceRecord): string[] {
+function evidenceAreas(record: CleanupEvidenceInput): string[] {
   const fileAreas = record.files.map((file) => surfaceArea(file.path));
   if (fileAreas.length > 0) {
     return unique(fileAreas);
@@ -438,7 +468,7 @@ function addFile(surface: SurfaceDraft, file: FileReference): void {
   });
 }
 
-function reviewersForCandidate(candidate: CandidateRecord): string[] {
+function reviewersForCandidate(candidate: CleanupCandidateInput): string[] {
   switch (candidate.category) {
     case "architecture":
       return ["architecture-deepening", "deep-module-discipline", "dependency-graph"];
@@ -459,7 +489,7 @@ function reviewersForCandidate(candidate: CandidateRecord): string[] {
   }
 }
 
-function reviewersForEvidence(record: EvidenceRecord): string[] {
+function reviewersForEvidence(record: CleanupEvidenceInput): string[] {
   switch (record.kind) {
     case "duplicate-cluster":
       return ["duplication-consolidation"];
@@ -478,7 +508,7 @@ function reviewersForEvidence(record: EvidenceRecord): string[] {
   }
 }
 
-function scoreEvidence(record: EvidenceRecord): number {
+function scoreEvidence(record: CleanupEvidenceInput): number {
   const confidenceScore = record.confidence === "high" ? 5 : record.confidence === "medium" ? 3 : 1;
   const kindScore = record.kind === "code-graph-summary" ? 4
     : record.kind === "duplicate-cluster" ? 5
