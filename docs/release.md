@@ -93,7 +93,7 @@ Set `npm_tag` only when overriding the default tag is intentional.
 Beta releases publish as `latest` automatically. Use manual dist-tag changes only for emergency repair or intentional out-of-band registry changes:
 
 ```bash
-npm dist-tag add @fraction12/deepclean@0.1.0-beta.5 latest
+npm dist-tag add @fraction12/deepclean@0.1.0-beta.7 beta
 ```
 
 ## Token Hygiene

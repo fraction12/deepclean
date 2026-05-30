@@ -15,19 +15,19 @@ Public beta. TypeScript, JavaScript, and Python evidence are supported.
 ## Install
 
 ```bash
-npm install -g @fraction12/deepclean@beta
+npm install -g @fraction12/deepclean
 deepclean --version
 ```
 
 Update with:
 
 ```bash
-npm install -g @fraction12/deepclean@beta
+npm install -g @fraction12/deepclean
 deepclean --version
 deepclean doctor
 ```
 
-`deepclean doctor` checks the installed package against the npm `beta` channel and warns when a newer beta is available. Use `deepclean doctor --no-update-check`, `--offline`, or `--local-only` when the command must avoid network access.
+`deepclean doctor` checks the installed package against the npm `latest` channel and warns when a newer beta is available. Use `deepclean doctor --update-channel beta` only when intentionally checking the older beta dist-tag. Use `deepclean doctor --no-update-check`, `--offline`, or `--local-only` when the command must avoid network access.
 
 ## Quick Start
 

@@ -101,6 +101,7 @@ const valueFlags = new Set([
   "reviewers",
   "output",
   "sarif",
+  "update-channel",
   "lock-timeout-ms",
   "stale-lock-ms",
   "keep-runs",

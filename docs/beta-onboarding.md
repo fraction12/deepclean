@@ -7,24 +7,24 @@ Deepclean is not an autonomous cleanup bot. It does not edit source during `doct
 ## Install Or Update
 
 ```bash
-npm install -g @fraction12/deepclean@beta
+npm install -g @fraction12/deepclean
 deepclean --version
 ```
 
 To update an existing install:
 
 ```bash
-npm install -g @fraction12/deepclean@beta
+npm install -g @fraction12/deepclean
 deepclean --version
 deepclean doctor
 ```
 
-`deepclean doctor` checks the installed package against the npm `beta` channel and emits `package_update_available` when a newer beta exists. Use `deepclean doctor --no-update-check`, `--offline`, or `--local-only` when the run must avoid npm network access.
+`deepclean doctor` checks the installed package against the npm `latest` channel and emits `package_update_available` when a newer beta exists. Use `deepclean doctor --update-channel beta` only when intentionally checking the older beta dist-tag. Use `deepclean doctor --no-update-check`, `--offline`, or `--local-only` when the run must avoid npm network access.
 
 For one-off runs without a global install:
 
 ```bash
-npx @fraction12/deepclean@beta doctor
+npx @fraction12/deepclean@latest doctor
 ```
 
 ## First Read-Only Run
