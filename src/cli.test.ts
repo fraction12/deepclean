@@ -236,15 +236,12 @@ describe("deepclean cli", () => {
     await withEnv({ DEEPCLEAN_UPDATE_CHECK_LATEST_VERSION: "99.0.0-beta.0" }, async () => {
       await withTempRepo(async (repo) => {
         const result = await runCli(["doctor", "--offline", "--json"], repo);
-        expect(result.code).toBe(0);
-        const payload = JSON.parse(result.stdout) as {
-          data: { packageUpdate: { checked: boolean; skippedReason?: string; stale: boolean } };
-          diagnostics: Array<{ code: string }>;
-        };
-        expect(payload.data.packageUpdate.checked).toBe(false);
-        expect(payload.data.packageUpdate.stale).toBe(false);
-        expect(payload.data.packageUpdate.skippedReason).toBe("offline mode");
-        expect(payload.diagnostics.some((diagnostic) => diagnostic.code === "package_update_check_skipped")).toBe(true);
+        expectDoctorPackageUpdate(result, {
+          checked: false,
+          stale: false,
+          skippedReason: "offline mode",
+          diagnosticCode: "package_update_check_skipped",
+        });
       });
     });
   });
@@ -253,15 +250,12 @@ describe("deepclean cli", () => {
     await withEnv({ DEEPCLEAN_UPDATE_CHECK_ERROR: "npm unavailable" }, async () => {
       await withTempRepo(async (repo) => {
         const result = await runCli(["doctor", "--json"], repo);
-        expect(result.code).toBe(0);
-        const payload = JSON.parse(result.stdout) as {
-          data: { packageUpdate: { checked: boolean; error?: string; stale: boolean } };
-          diagnostics: Array<{ code: string }>;
-        };
-        expect(payload.data.packageUpdate.checked).toBe(false);
-        expect(payload.data.packageUpdate.stale).toBe(false);
-        expect(payload.data.packageUpdate.error).toBe("npm unavailable");
-        expect(payload.diagnostics.some((diagnostic) => diagnostic.code === "package_update_check_failed")).toBe(true);
+        expectDoctorPackageUpdate(result, {
+          checked: false,
+          stale: false,
+          error: "npm unavailable",
+          diagnosticCode: "package_update_check_failed",
+        });
       });
     });
   });
@@ -3992,6 +3986,32 @@ async function runJsonCli<T = unknown>(argv: string[], cwd: string): Promise<T> 
   const result = await runCli(argv, cwd);
   expect(result.code).toBe(0);
   return JSON.parse(result.stdout) as T;
+}
+
+function expectDoctorPackageUpdate(
+  result: Awaited<ReturnType<typeof runCli>>,
+  expected: {
+    checked: boolean;
+    stale: boolean;
+    diagnosticCode: string;
+    error?: string;
+    skippedReason?: string;
+  },
+): void {
+  expect(result.code).toBe(0);
+  const payload = JSON.parse(result.stdout) as {
+    data: { packageUpdate: { checked: boolean; error?: string; skippedReason?: string; stale: boolean } };
+    diagnostics: Array<{ code: string }>;
+  };
+  expect(payload.data.packageUpdate.checked).toBe(expected.checked);
+  expect(payload.data.packageUpdate.stale).toBe(expected.stale);
+  if (expected.error !== undefined) {
+    expect(payload.data.packageUpdate.error).toBe(expected.error);
+  }
+  if (expected.skippedReason !== undefined) {
+    expect(payload.data.packageUpdate.skippedReason).toBe(expected.skippedReason);
+  }
+  expect(payload.diagnostics.some((diagnostic) => diagnostic.code === expected.diagnosticCode)).toBe(true);
 }
 
 async function expectDeepcleanStateDirectories(repo: string): Promise<void> {
