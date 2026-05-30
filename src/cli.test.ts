@@ -355,18 +355,7 @@ describe("deepclean cli", () => {
 
   test("validates operating-loop foundation record schemas", () => {
     const now = "2026-05-24T00:00:00.000Z";
-    const signature = {
-      version: "1" as const,
-      value: "sig-fixture",
-      components: {
-        category: "architecture",
-        normalizedTitle: "fixture candidate",
-        evidenceKinds: ["dependency-hotspot"],
-        primaryAnchors: [{ path: "src/example.ts", startLine: 1, endLine: 20 }],
-        graphNeighborhood: ["src/example.ts->src/other.ts"],
-        analyzerRuleIds: ["rule.fixture"],
-      },
-    };
+    const signature = findingSignatureFixture();
 
     validateFindingLifecycleRecordSchemas(now, signature);
     validateStateManagementRecordSchemas(now);
@@ -3113,6 +3102,21 @@ process.exit(7);
     });
   });
 });
+
+function findingSignatureFixture(): FindingRecord["signature"] {
+  return {
+    version: "1",
+    value: "sig-fixture",
+    components: {
+      category: "architecture",
+      normalizedTitle: "fixture candidate",
+      evidenceKinds: ["dependency-hotspot"],
+      primaryAnchors: [{ path: "src/example.ts", startLine: 1, endLine: 20 }],
+      graphNeighborhood: ["src/example.ts->src/other.ts"],
+      analyzerRuleIds: ["rule.fixture"],
+    },
+  };
+}
 
 function validateFindingLifecycleRecordSchemas(now: string, signature: FindingRecord["signature"]): void {
   findingRecordSchema.parse({
