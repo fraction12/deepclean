@@ -1,0 +1,46 @@
+profile: deepclean-check
+provider: ssh
+target: linux
+static:
+  host: 100.113.203.102
+  user: root
+  port: "2222"
+  workRoot: /root/crabbox/deepclean
+ssh:
+  key: ~/.ssh/dushyantpc_ci_ed25519
+sync:
+  delete: true
+  checksum: false
+  gitSeed: true
+  fingerprint: true
+  timeout: 15m
+  warnFiles: 50000
+  warnBytes: 5368709120
+  failFiles: 150000
+  failBytes: 21474836480
+  exclude:
+    - .cache
+    - .turbo
+    - dist
+    - node_modules
+    - .npm
+    - .yarn/cache
+    - .venv
+run:
+  preflightTools:
+    - node
+    - npm
+env:
+  allow:
+    - CI
+    - NODE_OPTIONS
+jobs:
+  ci:
+    shell: true
+    command: |
+      set -euo pipefail
+      export CI=true
+      npm ci
+      npm run ci
+      node scripts/spec-validate.mjs
+    stop: auto
