@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 1.0.0-rc.1 - 2026-05-30
+
+- Added the GA release-candidate contracts for `review-pr`, machine-readable schemas, and explicit guarded autofix mode.
+- Hardened guarded fix/work so PR creation requires explicit guarded mode and branch intent instead of falling back silently.
+- Hardened `review-pr` diff handling, output path safety, renamed/deleted path reporting, and emitted schema coverage for OctoCheck integration.
+
 ## 0.1.0-beta.9 - 2026-05-30
 
 - Consolidated DeepClean architecture boundaries across evidence collection, state persistence, candidate scoring, domain contracts, and synthesis modules.
