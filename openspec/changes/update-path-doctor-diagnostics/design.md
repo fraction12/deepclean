@@ -5,10 +5,10 @@
 ## Version Check
 
 - Current version comes from local package metadata.
-- Latest version comes from `npm view @fraction12/deepclean@beta version`.
-- The default channel is `beta` while Deepclean is in beta.
+- Latest version comes from `npm view @fraction12/deepclean@latest version`.
+- The default channel is `latest`, because trusted publishing moves beta releases through the default npm install path.
 - `--offline`, `--local-only`, or `--no-update-check` skips the network call.
-- `--update-channel <tag>` may override the npm dist-tag for development or alpha users.
+- `--update-channel <tag>` may override the npm dist-tag for development, alpha users, or intentional `beta` dist-tag checks.
 
 ## Diagnostics
 

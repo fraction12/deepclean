@@ -243,7 +243,7 @@ Commands:
   init                         Create or validate .deepclean state
   doctor                       Check environment, config, state, git, provider, and privacy readiness
     --no-update-check          Skip npm release-channel freshness check
-    --update-channel <tag>     npm dist-tag to check for updates; default beta
+    --update-channel <tag>     npm dist-tag to check for updates; default latest
   status                       Read-only lifecycle summary for current Deepclean state
     --progress-events <n>      Recent lifecycle/fix artifacts used for progress summary; default 200
                                --json includes latest artifacts, active/blocked work,
@@ -6423,8 +6423,8 @@ async function packageVersion(): Promise<string> {
 
 async function packageUpdateStatus(context: CommandContext, currentVersion: string): Promise<PackageUpdateStatus> {
   const packageName = "@fraction12/deepclean";
-  const channel = flagString(context.parsed.flags, "update-channel") ?? "beta";
-  const updateCommand = `npm install -g ${packageName}@${channel}`;
+  const channel = flagString(context.parsed.flags, "update-channel") ?? "latest";
+  const updateCommand = channel === "latest" ? `npm install -g ${packageName}` : `npm install -g ${packageName}@${channel}`;
   const skipReason = packageUpdateSkipReason(context);
   if (skipReason) {
     return {

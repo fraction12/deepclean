@@ -206,8 +206,22 @@ describe("deepclean cli", () => {
         expect(payload.data.packageUpdate.checked).toBe(true);
         expect(payload.data.packageUpdate.latestVersion).toBe("99.0.0-beta.0");
         expect(payload.data.packageUpdate.stale).toBe(true);
-        expect(payload.data.packageUpdate.updateCommand).toBe("npm install -g @fraction12/deepclean@beta");
+        expect(payload.data.packageUpdate.updateCommand).toBe("npm install -g @fraction12/deepclean");
         expect(payload.diagnostics.some((diagnostic) => diagnostic.code === "package_update_available")).toBe(true);
+      });
+    });
+  });
+
+  test("doctor keeps beta as an explicit update-channel override", async () => {
+    await withEnv({ DEEPCLEAN_UPDATE_CHECK_LATEST_VERSION: "99.0.0-beta.0" }, async () => {
+      await withTempRepo(async (repo) => {
+        const result = await runCli(["doctor", "--update-channel", "beta", "--json"], repo);
+        expect(result.code).toBe(0);
+        const payload = JSON.parse(result.stdout) as {
+          data: { packageUpdate: { channel: string; updateCommand: string } };
+        };
+        expect(payload.data.packageUpdate.channel).toBe("beta");
+        expect(payload.data.packageUpdate.updateCommand).toBe("npm install -g @fraction12/deepclean@beta");
       });
     });
   });

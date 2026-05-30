@@ -4,8 +4,8 @@
 The system SHALL let `deepclean doctor` report whether the installed package is current for a selected npm release channel.
 
 #### Scenario: Installed package is stale
-- **WHEN** an agent runs `deepclean doctor --json` and the npm beta tag is newer than the installed package
-- **THEN** Deepclean reports the installed version, latest beta version, release channel, stale status, and update command
+- **WHEN** an agent runs `deepclean doctor --json` and the npm latest tag is newer than the installed package
+- **THEN** Deepclean reports the installed version, latest package version, release channel, stale status, and update command
 - **AND** Deepclean emits a `package_update_available` diagnostic
 
 #### Scenario: Installed package is current
@@ -22,8 +22,8 @@ The system SHALL let `deepclean doctor` report whether the installed package is 
 - **THEN** Deepclean reports the failure as a warning diagnostic without failing doctor
 
 ### Requirement: Documented beta update path
-The system SHALL document the package-manager update command for the public beta channel.
+The system SHALL document the package-manager update command for the public install channel.
 
 #### Scenario: User updates global install
 - **WHEN** a user follows README or beta onboarding update instructions
-- **THEN** the documented command installs the current `@fraction12/deepclean@beta` package and tells the user to verify with `deepclean --version`
+- **THEN** the documented command installs the current `@fraction12/deepclean` package and tells the user to verify with `deepclean --version`

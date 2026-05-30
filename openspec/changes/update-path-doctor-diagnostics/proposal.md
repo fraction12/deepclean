@@ -6,8 +6,8 @@ Beta users need a clear way to keep a globally installed `deepclean` current. To
 
 ## What Changes
 
-- Document beta install and update commands as the primary public path.
-- Add optional `doctor` version freshness diagnostics against the npm `beta` dist-tag.
+- Document default install and update commands as the primary public beta path.
+- Add optional `doctor` version freshness diagnostics against the npm `latest` dist-tag.
 - Keep version checks privacy-safe: no source code, repository paths, or generated state are sent to npm.
 - Allow offline/local-only runs to skip network version checks cleanly.
 
