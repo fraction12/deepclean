@@ -3405,6 +3405,90 @@ async function executeCandidateFixAttempt(input: {
   };
 }
 
+async function recordCandidateFixAttempt(input: {
+  context: CommandContext;
+  command: FixWorkflowOptions["command"];
+  attempts: FixAttemptRecord[];
+  attemptId: string;
+  resolved: FixWorkflowTargetContext["resolved"];
+  planId: string;
+  status: FixAttemptRecord["status"];
+  outcome: FixAttemptRecord["outcome"];
+  dryRun: boolean;
+  attemptNumber: number;
+  maxAttempts: number;
+  dirtyBefore: string[];
+  allowedWriteScope: string[];
+  outOfScopeFiles: string[];
+  revalidation: RevalidationRecord | undefined;
+  changedFiles: string[];
+  patchPreviewPath: string | undefined;
+  verificationCommands: string[];
+  verificationResults: FixAttemptRecord["verificationResults"];
+  worker: FixAttemptRecord["worker"] | undefined;
+  attemptDiagnostics: Diagnostic[];
+}): Promise<{
+  attempt: FixAttemptRecord;
+  attemptPath: string;
+  previousAttemptSummary: FixWorkerPreviousAttempt;
+}> {
+  const now = new Date().toISOString();
+  const previousAttemptIds = input.attempts.map((attempt) => attempt.id);
+  const dirtyAfter = !input.dryRun
+    ? (await dirtyFileEntries(input.context.paths.root)).map((entry) => entry.file)
+    : input.dirtyBefore;
+  const activeBranch = flagString(input.context.parsed.flags, "branch") ?? await currentGitBranch(input.context.paths.root);
+  const attempt: FixAttemptRecord = {
+    schemaVersion,
+    recordType: "fix_attempt",
+    id: input.attemptId,
+    findingId: input.resolved.findingId,
+    candidateId: input.resolved.candidate.id,
+    planId: input.planId,
+    status: input.status,
+    outcome: input.outcome,
+    dryRun: input.dryRun,
+    attemptNumber: input.attemptNumber,
+    maxAttempts: input.maxAttempts,
+    previousAttemptIds,
+    branch: activeBranch,
+    dirtyBefore: input.dirtyBefore,
+    dirtyAfter,
+    allowedWriteScope: input.allowedWriteScope,
+    outOfScopeFiles: input.outOfScopeFiles,
+    noExternalSideEffects: true,
+    beforeEvidenceIds: input.resolved.candidate.evidenceIds,
+    afterRevalidationId: input.revalidation?.id,
+    changedFiles: input.changedFiles,
+    patchPreviewPath: input.patchPreviewPath,
+    verificationCommands: input.verificationCommands,
+    verificationResults: input.verificationResults,
+    worker: input.worker,
+    diagnostics: input.attemptDiagnostics,
+    createdAt: now,
+    updatedAt: now,
+  };
+  const attemptPath = await writeFixAttempt(input.context.paths, attempt);
+  await writeFixLifecycleEvents(input.context.paths, attempt, input.command, input.revalidation);
+  return {
+    attempt,
+    attemptPath,
+    previousAttemptSummary: {
+      id: attempt.id,
+      status: input.status,
+      outcome: input.outcome,
+      changedFiles: input.changedFiles,
+      revalidationOutcome: input.revalidation?.outcome,
+      remainingEvidenceIds: input.revalidation?.evidenceIds ?? [],
+      diagnostics: input.attemptDiagnostics.map((diagnostic) => `${diagnostic.code}: ${diagnostic.message}`),
+      verificationFailures: input.verificationResults.filter((result) => !result.passed).map((result) => ({
+        command: result.command,
+        outputPath: result.outputPath,
+      })),
+    },
+  };
+}
+
 async function runCandidateFixWorkflow(
   context: CommandContext,
   target: string,
@@ -3550,58 +3634,33 @@ async function runCandidateFixWorkflow(
       status = "failed";
     }
 
-    const now = new Date().toISOString();
-    const previousAttemptIds = attempts.map((attempt) => attempt.id);
-    const dirtyAfter = !dryRun ? (await dirtyFileEntries(context.paths.root)).map((entry) => entry.file) : dirtyBefore;
-    const activeBranch = flagString(context.parsed.flags, "branch") ?? await currentGitBranch(context.paths.root);
-    const attempt: FixAttemptRecord = {
-      schemaVersion,
-      recordType: "fix_attempt",
-      id: attemptId,
-      findingId: resolved.findingId,
-      candidateId: resolved.candidate.id,
+    const recordedAttempt = await recordCandidateFixAttempt({
+      context,
+      command: options.command,
+      attempts,
+      attemptId,
+      resolved,
       planId: planResult.plan.id,
       status,
       outcome,
       dryRun,
       attemptNumber,
       maxAttempts,
-      previousAttemptIds,
-      branch: activeBranch,
       dirtyBefore,
-      dirtyAfter,
       allowedWriteScope,
       outOfScopeFiles,
-      noExternalSideEffects: true,
-      beforeEvidenceIds: resolved.candidate.evidenceIds,
-      afterRevalidationId: revalidation?.id,
+      revalidation,
       changedFiles,
       patchPreviewPath,
       verificationCommands,
       verificationResults,
       worker,
-      diagnostics: attemptDiagnostics,
-      createdAt: now,
-      updatedAt: now,
-    };
-    const attemptPath = await writeFixAttempt(context.paths, attempt);
-    await writeFixLifecycleEvents(context.paths, attempt, options.command, revalidation);
+      attemptDiagnostics,
+    });
+    const { attempt, attemptPath, previousAttemptSummary } = recordedAttempt;
     attempts.push(attempt);
     attemptPaths.push(attemptPath);
-
-    previousAttemptSummaries.push({
-      id: attempt.id,
-      status,
-      outcome,
-      changedFiles,
-      revalidationOutcome: revalidation?.outcome,
-      remainingEvidenceIds: revalidation?.evidenceIds ?? [],
-      diagnostics: attemptDiagnostics.map((diagnostic) => `${diagnostic.code}: ${diagnostic.message}`),
-      verificationFailures: verificationResults.filter((result) => !result.passed).map((result) => ({
-        command: result.command,
-        outputPath: result.outputPath,
-      })),
-    });
+    previousAttemptSummaries.push(previousAttemptSummary);
 
     const retry = shouldRetryFixAttempt({
       dryRun,
