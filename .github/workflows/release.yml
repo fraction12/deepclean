@@ -53,32 +53,10 @@ jobs:
           GITHUB_REF_TYPE: ${{ github.ref_type }}
         run: node scripts/release-metadata.mjs
 
-      - name: Preflight npm dist-tag promotion credentials
-        if: steps.meta.outputs.promotion_tags != ''
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          if [ -z "$NODE_AUTH_TOKEN" ]; then
-            echo "NPM_TOKEN is required for beta releases that promote npm latest." >&2
-            exit 1
-          fi
-          npm whoami --registry https://registry.npmjs.org
-
       - name: Publish to npm
         env:
           NODE_AUTH_TOKEN: ""
         run: npm publish --access public --tag "${{ steps.meta.outputs.npm_tag }}" --provenance
-
-      - name: Promote npm dist-tags
-        if: steps.meta.outputs.promotion_tags != ''
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          PACKAGE_SPEC: ${{ steps.meta.outputs.package_name }}@${{ steps.meta.outputs.package_version }}
-          PROMOTION_TAGS: ${{ steps.meta.outputs.promotion_tags }}
-        run: |
-          for tag in $PROMOTION_TAGS; do
-            npm dist-tag add "$PACKAGE_SPEC" "$tag" --registry https://registry.npmjs.org
-          done
 
       - name: Verify npm dist-tags
         env:
@@ -120,4 +98,3 @@ jobs:
         run: |
           echo "${{ steps.meta.outputs.package_name }}@${{ steps.meta.outputs.package_version }}"
           echo "dist-tag: ${{ steps.meta.outputs.npm_tag }}"
-          echo "promoted-tags: ${{ steps.meta.outputs.promotion_tags }}"
