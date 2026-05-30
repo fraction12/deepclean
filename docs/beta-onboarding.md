@@ -19,7 +19,7 @@ deepclean --version
 deepclean doctor
 ```
 
-`deepclean doctor` checks the installed package against the npm `latest` channel and emits `package_update_available` when a newer beta exists. Use `deepclean doctor --update-channel beta` only when intentionally checking the older beta dist-tag. Use `deepclean doctor --no-update-check`, `--offline`, or `--local-only` when the run must avoid npm network access.
+`deepclean doctor` checks the installed package against the npm `latest` channel and emits `package_update_available` when a newer beta exists. Use `deepclean doctor --no-update-check`, `--offline`, or `--local-only` when the run must avoid npm network access.
 
 For one-off runs without a global install:
 

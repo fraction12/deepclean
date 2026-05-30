@@ -74,7 +74,7 @@ Dist-tag behavior:
 - Beta prereleases publish under `latest` so default installs update through trusted publishing.
 - Stable versions publish under `latest`.
 
-The tokenless release path does not automatically maintain a separate `beta` tag. If `@fraction12/deepclean@beta` needs to move, update it manually with an OTP or a temporary npm token that is allowed to bypass 2FA.
+Do not maintain a separate `beta` dist-tag. Beta releases publish under `latest` so the default install path stays current without a second registry pointer.
 
 ## Beta Dogfood Gate
 
@@ -88,14 +88,6 @@ Use the GitHub Actions `Release` workflow dispatch when a tag release needs to b
 
 Set `npm_tag` only when overriding the default tag is intentional.
 
-## Promoting A Version
-
-Beta releases publish as `latest` automatically. Use manual dist-tag changes only for emergency repair or intentional out-of-band registry changes:
-
-```bash
-npm dist-tag add @fraction12/deepclean@0.1.0-beta.7 beta
-```
-
 ## Token Hygiene
 
-Rotate npm tokens after any accidental exposure. The normal release path should not require `NPM_TOKEN`; keep npm write tokens out of GitHub secrets unless there is a temporary, explicit dist-tag repair.
+Rotate npm tokens after any accidental exposure. The normal release path should not require `NPM_TOKEN`; keep npm write tokens out of GitHub secrets unless there is a temporary, explicit registry repair.
