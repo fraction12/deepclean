@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.1.0-beta.9 - 2026-05-30
+
+- Consolidated DeepClean architecture boundaries across evidence collection, state persistence, candidate scoring, domain contracts, and synthesis modules.
+- Downgraded stable utility fan-in and churn-only findings so DeepClean reports actionable P1s instead of historical or intentional architecture noise.
+- Split large type and synthesis surfaces into domain modules while preserving compatibility barrels for safer migration.
+
 ## 0.1.0-beta.8 - 2026-05-30
 
 - Changed `deepclean doctor` to check the npm `latest` channel by default so trusted-published beta releases are detected without relying on the separate `beta` dist-tag.
