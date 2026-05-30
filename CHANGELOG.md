@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.1.0-beta.6 - 2026-05-29
+
+- Added beta release automation so GitHub releases publish under `beta`, promote the same version to `latest`, and verify the npm dist-tags before reporting success.
+- Continued beta dogfood cleanup across synthesis and reviewer hotspot candidates from recent fix PRs.
+
 ## 0.1.0-beta.5 - 2026-05-29
 
 - Added beta update-path diagnostics to `deepclean doctor`, including stale package warnings, offline/local-only skip handling, and beta install/update docs.
