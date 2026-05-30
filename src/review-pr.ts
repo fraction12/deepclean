@@ -140,7 +140,7 @@ function candidatesRelatedToChangedFiles(
   changedFiles: string[],
 ): CandidateRecord[] {
   if (changedFiles.length === 0) {
-    return candidates;
+    return [];
   }
   const evidenceById = new Map(evidence.map((record) => [record.id, record]));
   const featuresById = new Map(features.map((feature) => [feature.featureId, feature]));
@@ -170,10 +170,7 @@ function buildReviewNeighborhoods(options: {
   evidence: EvidenceRecord[];
   features: FeatureRecord[];
 }): ReviewPrContext["architectureNeighborhoods"] {
-  const paths = options.changedFiles.length > 0
-    ? options.changedFiles
-    : uniqueSorted(options.candidates.flatMap((candidate) => candidate.files.map((file) => file.path))).slice(0, 12);
-  return paths.map((changedPath) => {
+  return options.changedFiles.map((changedPath) => {
     const candidates = options.candidates.filter((candidate) => candidateTouchesPath(candidate, changedPath));
     const evidence = options.evidence.filter((record) => record.files.some((file) => pathTouchesChangedFiles(file.path, [changedPath])));
     const features = options.features.filter((feature) => featureTouchesPath(feature, changedPath));

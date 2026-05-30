@@ -28,7 +28,7 @@ After a scan finds a broad candidate, this works:
 
 ```bash
 deepclean split candidate-004
-deepclean work candidate-057 --branch chore/deepclean-candidate-057 --apply --verification "npm test" --pr
+deepclean work candidate-057 --mode guarded --branch chore/deepclean-candidate-057 --apply --verification "npm test" --pr
 ```
 
 The split command should produce child candidates small enough for one PR each. The parent candidate remains traceable, but fix execution targets the child.

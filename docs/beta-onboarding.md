@@ -106,7 +106,7 @@ Fix execution is deliberately local and explicit. It requires one target, a curr
 Preview a patch without touching source:
 
 ```bash
-deepclean fix <candidate-id> --patch ./fix.patch --dry-run --json
+deepclean fix <candidate-id> --mode guarded --patch ./fix.patch --dry-run --json
 ```
 
 Apply only after enabling fix execution in `.deepclean/config.json`:
@@ -122,6 +122,7 @@ Apply only after enabling fix execution in `.deepclean/config.json`:
 
 ```bash
 deepclean fix <candidate-id> \
+  --mode guarded \
   --patch ./fix.patch \
   --apply \
   --allow-source-mutation \
@@ -136,6 +137,7 @@ For branch-oriented local proof:
 
 ```bash
 deepclean work <candidate-id> \
+  --mode guarded \
   --branch deepclean/<candidate-id> \
   --apply \
   --verification "npm test" \

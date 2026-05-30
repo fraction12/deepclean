@@ -1248,16 +1248,14 @@ ${Array.from({ length: 120 }, (_, index) => `  const dirtyValue${index} = ${inde
       await execFileAsync("git", ["config", "user.name", "Deepclean Test"], { cwd: repo });
       await execFileAsync("git", ["add", "."], { cwd: repo });
       await execFileAsync("git", ["commit", "-m", "initial"], { cwd: repo });
+      await execFileAsync("git", ["update-ref", "refs/remotes/origin/main", "HEAD"], { cwd: repo });
       const changedBody = Array.from({ length: 120 }, (_, index) => `  const changed${index} = ${index};`).join("\n");
       await writeFile(path.join(repo, "src", "checkout.ts"), `export function checkoutChanged() {\n${changedBody}\n  return true;\n}\n`, "utf8");
+      await execFileAsync("git", ["add", "."], { cwd: repo });
+      await execFileAsync("git", ["commit", "-m", "change checkout"], { cwd: repo });
 
       const result = await runCli([
         "review-pr",
-        "--base",
-        "HEAD",
-        "--head",
-        "HEAD",
-        "--include-dirty",
         "--state-dir",
         ".octocheck/deepclean",
         "--output",
@@ -1278,12 +1276,77 @@ ${Array.from({ length: 120 }, (_, index) => `  const dirtyValue${index} = ${inde
         };
       };
       expect(payload.data.recordType).toBe("review_pr_context");
-      expect(payload.data.base).toBe("HEAD");
+      expect(payload.data.base).toBe("origin/main");
       expect(payload.data.head).toBe("HEAD");
       expect(payload.data.changedFiles).toEqual(["src/checkout.ts"]);
       expect(payload.data.relatedCandidates.length).toBeGreaterThan(0);
       expect(payload.data.promptContext).toContain("# Deepclean PR Context");
       await expect(stat(payload.data.outputPath)).resolves.toBeTruthy();
+    });
+  });
+
+  test("review-pr emits an empty related context for a zero-change diff", async () => {
+    await withTempRepo(async (repo) => {
+      await writeFixtureSource(repo);
+      await execFileAsync("git", ["init"], { cwd: repo });
+      await execFileAsync("git", ["config", "user.email", "deepclean@example.com"], { cwd: repo });
+      await execFileAsync("git", ["config", "user.name", "Deepclean Test"], { cwd: repo });
+      await execFileAsync("git", ["add", "."], { cwd: repo });
+      await execFileAsync("git", ["commit", "-m", "initial"], { cwd: repo });
+      await execFileAsync("git", ["update-ref", "refs/remotes/origin/main", "HEAD"], { cwd: repo });
+
+      const result = await runCli(["review-pr", "--state-dir", ".octocheck/deepclean", "--json"], repo);
+      expect(result.code).toBe(0);
+      const payload = JSON.parse(result.stdout) as {
+        data: { changedFiles: string[]; relatedCandidates: unknown[]; architectureNeighborhoods: unknown[]; riskSummary: { level: string; reasons: string[] } };
+      };
+      expect(payload.data.changedFiles).toEqual([]);
+      expect(payload.data.relatedCandidates).toEqual([]);
+      expect(payload.data.architectureNeighborhoods).toEqual([]);
+      expect(payload.data.riskSummary.level).toBe("low");
+      expect(payload.data.riskSummary.reasons[0]).toContain("No related");
+    });
+  });
+
+  test("review-pr fails when the PR diff cannot be resolved", async () => {
+    await withTempRepo(async (repo) => {
+      await writeFixtureSource(repo);
+      await execFileAsync("git", ["init"], { cwd: repo });
+      await execFileAsync("git", ["config", "user.email", "deepclean@example.com"], { cwd: repo });
+      await execFileAsync("git", ["config", "user.name", "Deepclean Test"], { cwd: repo });
+      await execFileAsync("git", ["add", "."], { cwd: repo });
+      await execFileAsync("git", ["commit", "-m", "initial"], { cwd: repo });
+
+      const result = await runCli(["review-pr", "--base", "refs/remotes/origin/missing", "--json"], repo);
+      expect(result.code).toBe(2);
+      const payload = JSON.parse(result.stdout) as { error: { code: string }; diagnostics: Array<{ code: string }> };
+      expect(payload.error.code).toBe("review_pr_diff_unresolved");
+      expect(payload.diagnostics.map((diagnostic) => diagnostic.code)).toContain("review_pr_diff_unresolved");
+    });
+  });
+
+  test("review-pr refuses output outside the configured state directory", async () => {
+    await withTempRepo(async (repo) => {
+      await writeFixtureSource(repo);
+      await execFileAsync("git", ["init"], { cwd: repo });
+      await execFileAsync("git", ["config", "user.email", "deepclean@example.com"], { cwd: repo });
+      await execFileAsync("git", ["config", "user.name", "Deepclean Test"], { cwd: repo });
+      await execFileAsync("git", ["add", "."], { cwd: repo });
+      await execFileAsync("git", ["commit", "-m", "initial"], { cwd: repo });
+      await execFileAsync("git", ["update-ref", "refs/remotes/origin/main", "HEAD"], { cwd: repo });
+
+      const result = await runCli([
+        "review-pr",
+        "--state-dir",
+        ".octocheck/deepclean",
+        "--output",
+        "../outside.json",
+        "--json",
+      ], repo);
+      expect(result.code).toBe(2);
+      const payload = JSON.parse(result.stdout) as { error: { code: string; message: string } };
+      expect(payload.error.code).toBe("review_pr_output_outside_state_dir");
+      expect(payload.error.message).toContain("state directory");
     });
   });
 
@@ -1887,7 +1950,7 @@ process.exit(0);
       const prepared = await prepareFixableRepo(repo);
       await enableFixExecution(repo);
       const before = await readFile(path.join(repo, "src", "invoice.ts"), "utf8");
-      const result = await runCli(["fix", prepared.candidateId, "--patch", prepared.patchPath, "--dry-run", "--json"], repo);
+      const result = await runCli(["fix", prepared.candidateId, "--mode", "guarded", "--patch", prepared.patchPath, "--dry-run", "--json"], repo);
       expect(result.code).toBe(0);
       const payload = JSON.parse(result.stdout) as {
         data: { attempt: { status: string; dryRun: boolean; changedFiles: string[] }; patchPreviewPath: string; externalSideEffects: unknown[] };
@@ -1904,7 +1967,7 @@ process.exit(0);
   test("fix refuses when fix execution is disabled in config", async () => {
     await withTempRepo(async (repo) => {
       const prepared = await prepareFixableRepo(repo);
-      const result = await runCli(["fix", prepared.candidateId, "--patch", prepared.patchPath, "--dry-run", "--json"], repo);
+      const result = await runCli(["fix", prepared.candidateId, "--mode", "guarded", "--patch", prepared.patchPath, "--dry-run", "--json"], repo);
       expect(result.code).toBe(2);
       const payload = JSON.parse(result.stdout) as { error: { code: string; message: string } };
       expect(payload.error.code).toBe("fix_execution_disabled");
@@ -1921,11 +1984,41 @@ process.exit(0);
       const refusedPayload = JSON.parse(refused.stdout) as { error: { code: string } };
       expect(refusedPayload.error.code).toBe("unsupported_fix_mode");
 
+      const missing = await runCli(["fix", prepared.candidateId, "--patch", prepared.patchPath, "--dry-run", "--json"], repo);
+      expect(missing.code).toBe(2);
+      const missingPayload = JSON.parse(missing.stdout) as { error: { code: string } };
+      expect(missingPayload.error.code).toBe("fix_mode_required");
+
       const guarded = await runCli(["fix", prepared.candidateId, "--mode", "guarded", "--patch", prepared.patchPath, "--dry-run", "--json"], repo);
       expect(guarded.code).toBe(0);
       const guardedPayload = JSON.parse(guarded.stdout) as { data: { attempt: { status: string; dryRun: boolean } } };
       expect(guardedPayload.data.attempt.status).toBe("previewed");
       expect(guardedPayload.data.attempt.dryRun).toBe(true);
+    });
+  });
+
+  test("fix PR mode requires an isolated branch", async () => {
+    await withTempRepo(async (repo) => {
+      const prepared = await prepareFixableRepo(repo);
+      await enableFixExecution(repo);
+      const result = await runCli([
+        "fix",
+        prepared.candidateId,
+        "--mode",
+        "guarded",
+        "--patch",
+        prepared.patchPath,
+        "--apply",
+        "--allow-source-mutation",
+        "--verification",
+        "test -f src/invoice.ts",
+        "--pr",
+        "--json",
+      ], repo);
+      expect(result.code).toBe(2);
+      const payload = JSON.parse(result.stdout) as { error: { code: string; message: string } };
+      expect(payload.error.code).toBe("branch_required");
+      expect(payload.error.message).toContain("--branch");
     });
   });
 
@@ -1936,6 +2029,8 @@ process.exit(0);
       const result = await runCli([
         "fix",
         prepared.candidateId,
+        "--mode",
+        "guarded",
         "--patch",
         prepared.patchPath,
         "--apply",
@@ -1984,6 +2079,8 @@ process.exit(0);
       const result = await runCli([
         "fix",
         prepared.candidateId,
+        "--mode",
+        "guarded",
         "--patch",
         prepared.patchPath,
         "--apply",
@@ -2025,6 +2122,8 @@ process.exit(0);
       const result = await runCli([
         "fix",
         prepared.candidateId,
+        "--mode",
+        "guarded",
         "--branch",
         "chore/deepclean-safe-fix",
         "--patch",
@@ -2053,6 +2152,8 @@ process.exit(0);
       const result = await runCli([
         "fix",
         prepared.candidateId,
+        "--mode",
+        "guarded",
         "--patch",
         prepared.patchPath,
         "--apply",
@@ -2080,6 +2181,8 @@ fs.writeFileSync("outside.ts", "export const outside = true;\\n");
       const result = await runCli([
         "fix",
         prepared.candidateId,
+        "--mode",
+        "guarded",
         "--apply",
         "--verification",
         "true",
@@ -2109,6 +2212,8 @@ fs.writeFileSync("outside.ts", "export const outside = true;\\n");
       const result = await runCli([
         "fix",
         prepared.candidateId,
+        "--mode",
+        "guarded",
         "--patch",
         prepared.patchPath,
         "--apply",
@@ -2152,6 +2257,8 @@ fs.writeFileSync(target, source.replace("export function", "// worker fix applie
       const result = await runCli([
         "fix",
         prepared.candidateId,
+        "--mode",
+        "guarded",
         "--apply",
         "--verification",
         "test -f src/invoice.ts",
@@ -2222,6 +2329,8 @@ fs.writeFileSync(target, source.replace("export function", "// fresh plan worker
       const result = await runCli([
         "fix",
         prepared.candidateId,
+        "--mode",
+        "guarded",
         "--apply",
         "--verification",
         "test -f src/invoice.ts",
@@ -2262,6 +2371,8 @@ setInterval(() => {
       const result = await runCli([
         "fix",
         prepared.candidateId,
+        "--mode",
+        "guarded",
         "--apply",
         "--verification",
         "test -f src/invoice.ts",
@@ -2302,6 +2413,8 @@ setInterval(() => {}, 1000);
       const result = await runCli([
         "fix",
         prepared.candidateId,
+        "--mode",
+        "guarded",
         "--apply",
         "--verification",
         "test -f src/invoice.ts",
@@ -2335,6 +2448,8 @@ setInterval(() => {}, 1000);
       const result = await runCli([
         "work",
         prepared.candidateId,
+        "--mode",
+        "guarded",
         "--branch",
         "chore/deepclean-candidate-001",
         "--patch",
@@ -2349,6 +2464,28 @@ setInterval(() => {}, 1000);
       expect(payload.error.code).toBe("fix_execution_disabled");
       const branchAfter = await execFileAsync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: repo });
       expect(branchAfter.stdout.trim()).toBe(branchBefore.stdout.trim());
+    });
+  });
+
+  test("work requires the guarded GA autofix mode", async () => {
+    await withTempRepo(async (repo) => {
+      const prepared = await prepareFixableRepo(repo);
+      await enableFixExecution(repo);
+      const missing = await runCli([
+        "work",
+        prepared.candidateId,
+        "--branch",
+        "chore/deepclean-missing-mode",
+        "--patch",
+        prepared.patchPath,
+        "--apply",
+        "--verification",
+        "true",
+        "--json",
+      ], repo);
+      expect(missing.code).toBe(2);
+      const payload = JSON.parse(missing.stdout) as { error: { code: string } };
+      expect(payload.error.code).toBe("fix_mode_required");
     });
   });
 
@@ -2403,6 +2540,8 @@ setInterval(() => {}, 1000);
       await runCli([
         "fix",
         prepared.candidateId,
+        "--mode",
+        "guarded",
         "--patch",
         prepared.patchPath,
         "--apply",
@@ -2481,6 +2620,8 @@ setInterval(() => {}, 1000);
       const result = await runCli([
         "work",
         parent.id,
+        "--mode",
+        "guarded",
         "--branch",
         "chore/deepclean-broad-parent",
         "--apply",
@@ -2513,6 +2654,8 @@ export function calculateInvoice(items, coupon) {
       const result = await runCli([
         "work",
         prepared.candidateId,
+        "--mode",
+        "guarded",
         "--branch",
         "chore/deepclean-candidate-001",
         "--apply",
@@ -2569,6 +2712,8 @@ export function calculateInvoice(items, coupon) {
       const result = await runCli([
         "work",
         prepared.candidateId,
+        "--mode",
+        "guarded",
         "--branch",
         "chore/deepclean-retry-candidate-001",
         "--apply",
@@ -2618,6 +2763,8 @@ if (prompt.includes("Attempt: 1 of")) {
       const result = await runCli([
         "work",
         prepared.candidateId,
+        "--mode",
+        "guarded",
         "--branch",
         "chore/deepclean-retry-no-progress",
         "--apply",

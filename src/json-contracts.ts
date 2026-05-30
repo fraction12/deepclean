@@ -42,6 +42,8 @@ export function buildJsonContractCatalog(packageVersion: string): {
           "recordType",
           "id",
           "runId",
+          "root",
+          "stateDir",
           "base",
           "head",
           "changedFiles",
@@ -50,6 +52,7 @@ export function buildJsonContractCatalog(packageVersion: string): {
           "riskSummary",
           "suggestedVerificationCommands",
           "promptContext",
+          "createdAt",
         ],
         notes: [
           "The command runs without provider synthesis and is safe for OctoCheck scratch state.",
