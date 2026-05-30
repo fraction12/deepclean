@@ -11,7 +11,17 @@ Configure npm trusted publishing for `@fraction12/deepclean`:
 - Workflow: `.github/workflows/release.yml`
 - Environment: `npm`
 
-The release workflow uses GitHub OIDC and does not require a long-lived npm token.
+The release workflow uses GitHub OIDC for `npm publish` and should not use a long-lived token for package publishing.
+
+Configure one GitHub environment secret for beta dist-tag promotion:
+
+- Environment: `npm`
+- Secret: `NPM_TOKEN`
+- Value: a granular npm token scoped to `@fraction12/deepclean` with write permission sufficient for `npm dist-tag add`
+
+This token is required because npm trusted publishing covers `npm publish`, while `npm dist-tag add` still requires normal npm authentication.
+
+If a repository-level `NPM_TOKEN` already exists, reuse that token value by moving or copying it into the `npm` environment secret and then remove the repository-level copy after the next release is verified. Environment secrets keep the token scoped to the protected release environment.
 
 ## One-Command Release Prep
 
@@ -66,7 +76,15 @@ git tag v0.1.0-alpha.1
 git push origin v0.1.0-alpha.1
 ```
 
-The tag must match `package.json` exactly. For prereleases, the workflow publishes under the prerelease label, such as `alpha`. Stable versions publish under `latest`.
+The tag must match `package.json` exactly.
+
+Dist-tag behavior:
+
+- Alpha prereleases publish under `alpha`.
+- Beta prereleases publish under `beta` and then promote the same version to `latest`.
+- Stable versions publish under `latest`.
+
+Beta releases fail before `npm publish` if `NPM_TOKEN` is missing, so the package does not publish without updating the default install path.
 
 ## Beta Dogfood Gate
 
@@ -82,12 +100,12 @@ Set `npm_tag` only when overriding the default tag is intentional.
 
 ## Promoting A Version
 
-To promote an already-published alpha to latest:
+Beta releases promote `latest` automatically. Use manual promotion only for emergency repair or intentional out-of-band registry changes:
 
 ```bash
-npm dist-tag add @fraction12/deepclean@0.1.0-alpha.0 latest
+npm dist-tag add @fraction12/deepclean@0.1.0-beta.5 latest
 ```
 
 ## Token Hygiene
 
-Rotate npm tokens after any accidental exposure. This repository release path should not need one going forward.
+Rotate npm tokens after any accidental exposure. The only expected npm token in this repository is `NPM_TOKEN`, and it should be scoped to dist-tag maintenance for `@fraction12/deepclean` rather than used for package publishing.
