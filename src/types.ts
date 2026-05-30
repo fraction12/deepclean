@@ -505,20 +505,6 @@ export const ciRunRecordSchema = z.object({
 
 export type CiRunRecord = z.infer<typeof ciRunRecordSchema>;
 
-export const lockRecordSchema = z.object({
-  schemaVersion: z.literal(schemaVersion),
-  recordType: z.literal("lock"),
-  id: z.string(),
-  owner: z.string(),
-  pid: z.number().int().nonnegative(),
-  command: z.string(),
-  statePath: z.string(),
-  createdAt: z.string(),
-  expiresAt: z.string().optional(),
-});
-
-export type LockRecord = z.infer<typeof lockRecordSchema>;
-
 export const retentionManifestRecordSchema = z.object({
   schemaVersion: z.literal(schemaVersion),
   recordType: z.literal("retention_manifest"),
