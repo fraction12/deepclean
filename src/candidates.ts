@@ -1,6 +1,13 @@
+import { candidateId } from "./ids.js";
 import {
-  candidateId,
-} from "./ids.js";
+  churnContextProfile,
+  cliEntrypointComplexityProfile,
+  entrypointFanoutContextProfile,
+  evidenceKindScore,
+  stableUtilityDependencyHotspotProfile,
+  testComplexityContextProfile,
+  type CandidateScoringProfile,
+} from "./candidate-scoring.js";
 import { commandsForFiles, type VerificationProfile } from "./verification.js";
 import { schemaVersion, type DeepcleanConfig } from "./defaults.js";
 
@@ -238,6 +245,14 @@ function candidateForEvidence(
       return diagnosticOrArchitectureCandidateForEvidence(evidence, base, verification);
     case "large-file":
     case "large-function":
+      const cliComplexityProfile = evidence.kind === "large-file" ? cliEntrypointComplexityProfile(evidence) : undefined;
+      if (cliComplexityProfile) {
+        return candidateFromScoringProfile(evidence, base, verification, "complexity", "feature", cliComplexityProfile);
+      }
+      const testComplexityProfile = testComplexityContextProfile(evidence);
+      if (testComplexityProfile) {
+        return candidateFromScoringProfile(evidence, base, verification, "complexity", "feature", testComplexityProfile);
+      }
       return {
         ...base,
         title: evidence.title,
@@ -268,20 +283,8 @@ function candidateForEvidence(
         verification,
       };
     case "churn-hotspot":
-      return {
-        ...base,
-        title: evidence.title,
-        category: "architecture",
-        priority: evidence.confidence === "high" ? "P1" : "P2",
-        confidence: evidence.confidence,
-        impact: "feature",
-        effort: "medium",
-        risk: "design-needed",
-        whyItMatters: "High-churn files are often where messy abstractions and changing product behavior collide.",
-        likelyRootCause: "The module may be absorbing multiple concerns or serving as the easiest place for repeated agent edits.",
-        suggestedDirection: "Compare the churn history with current responsibilities and look for concepts that should move closer to their owners.",
-        verification,
-      };
+      const churnProfile = churnContextProfile(evidence);
+      return candidateFromScoringProfile(evidence, base, verification, "architecture", "feature", churnProfile);
     case "shallow-wrapper-cluster":
       return {
         ...base,
@@ -324,6 +327,14 @@ function diagnosticOrArchitectureCandidateForEvidence(
         verification,
       };
     case "dependency-hotspot":
+      const entrypointProfile = entrypointFanoutContextProfile(evidence);
+      if (entrypointProfile) {
+        return candidateFromScoringProfile(evidence, base, verification, "architecture", "feature", entrypointProfile);
+      }
+      const utilityProfile = stableUtilityDependencyHotspotProfile(evidence);
+      if (utilityProfile) {
+        return candidateFromScoringProfile(evidence, base, verification, "architecture", "cross-cutting", utilityProfile);
+      }
       return {
         ...base,
         title: evidence.title,
@@ -396,6 +407,31 @@ function duplicateCandidateForEvidence(
   };
 }
 
+function candidateFromScoringProfile(
+  evidence: EvidenceRecord,
+  base: CandidateEvidenceBase,
+  verification: string[],
+  category: CandidateRecord["category"],
+  impact: CandidateRecord["impact"],
+  profile: CandidateScoringProfile,
+): CandidateRecord {
+  return {
+    ...base,
+    title: evidence.title,
+    category,
+    priority: profile.priority,
+    confidence: evidence.confidence,
+    impact,
+    effort: profile.effort,
+    risk: profile.risk,
+    readiness: profile.readiness,
+    whyItMatters: profile.whyItMatters,
+    likelyRootCause: profile.likelyRootCause,
+    suggestedDirection: profile.suggestedDirection,
+    verification,
+  };
+}
+
 function featureScopeForEvidence(evidence: EvidenceRecord): CandidateRecord["featureScope"] {
   if (evidence.affectedFeatureIds.length === 0) {
     return "unmapped";
@@ -420,31 +456,6 @@ function compareEvidence(a: EvidenceRecord, b: EvidenceRecord): number {
     return confidenceDelta;
   }
   return a.id.localeCompare(b.id);
-}
-
-function evidenceKindScore(kind: string): number {
-  switch (kind) {
-    case "duplicate-cluster":
-      return 80;
-    case "dependency-hotspot":
-      return 75;
-    case "architecture-boundary-violation":
-      return 74;
-    case "dependency-cycle":
-      return 73;
-    case "large-function":
-      return 70;
-    case "large-file":
-      return 65;
-    case "churn-hotspot":
-      return 60;
-    case "test-gap":
-      return 45;
-    case "shallow-wrapper-cluster":
-      return 20;
-    default:
-      return 0;
-  }
 }
 
 function confidenceScore(confidence: CandidateRecord["confidence"]): number {

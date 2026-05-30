@@ -3,8 +3,8 @@ import {
   readLifecycleEvents,
   readRevalidations,
   readRuns,
-  type StatePaths,
 } from "./state.js";
+import { type StatePaths } from "./state-paths.js";
 import { asRecord } from "./json.js";
 
 type FixAttemptRecord = Awaited<ReturnType<typeof readFixAttempts>>[number];
