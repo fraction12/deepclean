@@ -1,4 +1,6 @@
-import type { EvidenceRecord, FindingRecord, RevalidationRecord } from "./types.js";
+type EvidenceRecord = import("./types.js").EvidenceRecord;
+type FindingRecord = import("./types.js").FindingRecord;
+type RevalidationRecord = import("./types.js").RevalidationRecord;
 
 type FitnessProgress = NonNullable<RevalidationRecord["progress"]>;
 

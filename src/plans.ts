@@ -1,14 +1,13 @@
-import {
-  schemaVersion,
-  type CandidateRecord,
-  type ClusterRecord,
-  type EvidenceRecord,
-  type FeatureRecord,
-  type FileReference,
-  type PlanRecord,
-} from "./types.js";
+import { schemaVersion } from "./defaults.js";
+import type { FileReference } from "./file-references.js";
 import { timestampId } from "./ids.js";
 import { formatFile } from "./reporting.js";
+
+type CandidateRecord = import("./types.js").CandidateRecord;
+type ClusterRecord = import("./types.js").ClusterRecord;
+type EvidenceRecord = import("./types.js").EvidenceRecord;
+type FeatureRecord = import("./types.js").FeatureRecord;
+type PlanRecord = import("./types.js").PlanRecord;
 
 export function buildCandidatePlan(
   runId: string,

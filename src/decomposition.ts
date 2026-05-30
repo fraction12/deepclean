@@ -1,14 +1,13 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { candidateId } from "./ids.js";
-import {
-  schemaVersion,
-  type CandidateDecomposition,
-  type CandidateRecord,
-  type EvidenceRecord,
-  type FeatureRecord,
-  type FileReference,
-} from "./types.js";
+import { schemaVersion } from "./defaults.js";
+
+type CandidateDecomposition = import("./types.js").CandidateDecomposition;
+type CandidateRecord = import("./types.js").CandidateRecord;
+type EvidenceRecord = import("./types.js").EvidenceRecord;
+type FeatureRecord = import("./types.js").FeatureRecord;
+type FileReference = import("./types.js").FileReference;
 
 export interface CandidateSplitResult {
   parent: CandidateRecord;

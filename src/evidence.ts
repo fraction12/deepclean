@@ -14,7 +14,10 @@ import {
 } from "./architecture-graph.js";
 import { isTestPath, normalizePath, type SourceFile } from "./discovery.js";
 import { stableId } from "./ids.js";
-import { schemaVersion, type DeepcleanConfig, type Diagnostic, type EvidenceRecord } from "./types.js";
+import { schemaVersion, type DeepcleanConfig } from "./defaults.js";
+import type { Diagnostic } from "./json.js";
+
+type EvidenceRecord = import("./types.js").EvidenceRecord;
 
 const execFileAsync = promisify(execFile);
 

@@ -1,15 +1,14 @@
 import { stableId } from "./ids.js";
-import {
-  schemaVersion,
-  type CandidateObservationRecord,
-  type CandidateRecord,
-  type Diagnostic,
-  type EvidenceRecord,
-  type FindingRecord,
-  type FindingSignature,
-  type IdentityMatchRecord,
-  type LifecycleEventRecord,
-} from "./types.js";
+import { schemaVersion } from "./defaults.js";
+import type { Diagnostic } from "./json.js";
+
+type CandidateObservationRecord = import("./types.js").CandidateObservationRecord;
+type CandidateRecord = import("./types.js").CandidateRecord;
+type EvidenceRecord = import("./types.js").EvidenceRecord;
+type FindingRecord = import("./types.js").FindingRecord;
+type FindingSignature = import("./types.js").FindingSignature;
+type IdentityMatchRecord = import("./types.js").IdentityMatchRecord;
+type LifecycleEventRecord = import("./types.js").LifecycleEventRecord;
 
 export interface IdentityResult {
   candidates: CandidateRecord[];

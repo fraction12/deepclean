@@ -2,12 +2,10 @@ import {
   candidateId,
 } from "./ids.js";
 import { commandsForFiles, type VerificationProfile } from "./verification.js";
-import {
-  schemaVersion,
-  type CandidateRecord,
-  type DeepcleanConfig,
-  type EvidenceRecord,
-} from "./types.js";
+import { schemaVersion, type DeepcleanConfig } from "./defaults.js";
+
+type CandidateRecord = import("./types.js").CandidateRecord;
+type EvidenceRecord = import("./types.js").EvidenceRecord;
 
 export type CandidateCaps = DeepcleanConfig["candidateCaps"];
 

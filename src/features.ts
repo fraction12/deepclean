@@ -1,18 +1,15 @@
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { buildLocalImportGraph } from "./architecture-graph.js";
-import { defaultExcludeDirs } from "./defaults.js";
+import { defaultExcludeDirs, schemaVersion } from "./defaults.js";
 import { isTestPath, normalizePath, type SourceFile } from "./discovery.js";
-import { uniqueFileReferences } from "./file-references.js";
+import { uniqueFileReferences, type FileReference } from "./file-references.js";
 import { stableId } from "./ids.js";
-import {
-  schemaVersion,
-  type CandidateRecord,
-  type EvidenceRecord,
-  type FeatureRecord,
-  type FileReference,
-} from "./types.js";
 import { commandsForFiles, type VerificationProfile } from "./verification.js";
+
+type CandidateRecord = import("./types.js").CandidateRecord;
+type EvidenceRecord = import("./types.js").EvidenceRecord;
+type FeatureRecord = import("./types.js").FeatureRecord;
 
 interface FeatureMapOptions {
   root: string;
