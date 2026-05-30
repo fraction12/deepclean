@@ -134,7 +134,7 @@ Share source-safe exports for support. Do not share raw `.deepclean/` from priva
 Preview without modifying source:
 
 ```bash
-deepclean fix finding-abc123 --patch ./fix.patch --dry-run --json
+deepclean fix finding-abc123 --mode guarded --patch ./fix.patch --dry-run --json
 ```
 
 Apply locally only after enabling fix execution in `.deepclean/config.json` and passing the explicit source-mutation flag:
@@ -151,6 +151,7 @@ Apply locally only after enabling fix execution in `.deepclean/config.json` and 
 
 ```bash
 deepclean fix finding-abc123 \
+  --mode guarded \
   --patch ./fix.patch \
   --apply \
   --allow-source-mutation \

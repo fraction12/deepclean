@@ -8,7 +8,7 @@ The system SHALL provide an agent-first CLI workflow with `init`, `scan`, `repor
 - **THEN** the command runs non-interactively, updates project-local Deepclean state, and returns structured parent and child candidate data
 
 #### Scenario: Agent targets a broad parent for work
-- **WHEN** an agent runs `deepclean work candidate-004 --apply --verification "npm test" --json` for a broad splittable parent
+- **WHEN** an agent runs `deepclean work candidate-004 --mode guarded --apply --verification "npm test" --json` for a broad splittable parent
 - **THEN** Deepclean refuses before invoking a patch worker and instructs the agent to run `deepclean split candidate-004`
 
 ### Requirement: Predictable exit behavior

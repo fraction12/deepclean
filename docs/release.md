@@ -20,7 +20,7 @@ Use the GitHub Actions `Prepare Release` workflow for normal releases.
 Inputs:
 
 - `bump`: `alpha`, `patch`, `minor`, or `major`
-- `exact_version`: optional exact version, such as `0.1.0-alpha.1`
+- `exact_version`: optional exact version, such as `1.0.0-rc.1`
 
 The workflow:
 
@@ -32,18 +32,18 @@ The workflow:
 
 After the release PR is reviewed and merged, the `Tag Release PR` workflow creates the matching `v<version>` tag and dispatches the `Release` workflow against that tag. The existing `Release` workflow publishes to npm with provenance.
 
-For an alpha release, use `bump=alpha`. From `0.1.0-alpha.0`, this prepares `0.1.0-alpha.1`.
+For the GA release-candidate path, use an exact version first. The normal target is `1.0.0-rc.1`, then `1.0.0` after dogfooding Deepclean, LightningITB, and OctoCheck.
 
 From the CLI:
 
 ```bash
-gh workflow run prepare-release.yml --ref main -f bump=alpha
+gh workflow run prepare-release.yml --ref main -f bump=patch -f exact_version=1.0.0-rc.1
 ```
 
 For an exact version:
 
 ```bash
-gh workflow run prepare-release.yml --ref main -f bump=alpha -f exact_version=0.1.0-alpha.1
+gh workflow run prepare-release.yml --ref main -f bump=patch -f exact_version=1.0.0
 ```
 
 ## Manual Release
@@ -58,8 +58,9 @@ npm run release:check
 
 4. For operating-loop changes, run or cite the latest dogfood scorecard in `docs/`.
 5. For beta releases, complete `docs/beta-release-checklist.md` and ensure the source-safe scorecards in `docs/beta-dogfood/scorecards/` cover every required matrix slot from `docs/beta-dogfood/matrix.md`.
-6. Commit and push.
-7. Tag the exact package version:
+6. For GA releases, verify `deepclean schemas --json`, `deepclean review-pr --json`, and at least one `deepclean fix --mode guarded` proof run on real repos before tagging.
+7. Commit and push.
+8. Tag the exact package version:
 
 ```bash
 git tag v0.1.0-alpha.1

@@ -4,13 +4,13 @@ Local repo structure reports for fast-moving codebases.
 
 `deepclean` scans a repository, gathers local evidence, and writes reports and agent-ready plans under `.deepclean/`. It is built for the point where a project is already working and the next step is clearer boundaries, less duplication, safer refactors, stronger tests, and better sequencing.
 
-Deepclean does not edit your source code.
+Deepclean is report-first. Source edits are only available through the explicit guarded fix lane.
 
 Website: https://fraction12.github.io/deepclean/
 
 ## Status
 
-Public beta. TypeScript, JavaScript, and Python evidence are supported.
+Public beta with GA-candidate machine contracts. TypeScript, JavaScript, and Python evidence are supported.
 
 ## Install
 
@@ -27,7 +27,7 @@ deepclean --version
 deepclean doctor
 ```
 
-`deepclean doctor` checks the installed package against the npm `latest` channel and warns when a newer beta is available. Use `deepclean doctor --no-update-check`, `--offline`, or `--local-only` when the command must avoid network access.
+`deepclean doctor` checks the installed package against the npm `latest` channel and warns when a newer version is available. Use `deepclean doctor --no-update-check`, `--offline`, or `--local-only` when the command must avoid network access.
 
 ## Quick Start
 
@@ -106,6 +106,7 @@ deepclean scan --json
 deepclean map --json
 deepclean scan --evidence-only --json
 deepclean status --json
+deepclean review-pr --base origin/main --head HEAD --json --state-dir .octocheck/deepclean
 deepclean report --json
 deepclean cluster --json
 deepclean plan theme-001 --json
@@ -113,6 +114,7 @@ deepclean next --json
 deepclean show candidate-001 --json
 deepclean explain candidate-001 --json
 deepclean handoff candidate-001 --json
+deepclean schemas --json
 ```
 
 Useful global flags:
@@ -126,6 +128,10 @@ Useful global flags:
 
 `deepclean status --json` is the safest first command for a returning agent. It is read-only and reports the latest run/report, active queue, blocked items, stale artifacts, recent progress events, pending revalidation, latest artifact paths, locks, and a recommended next command.
 
+`deepclean review-pr --json` is the stable review-agent entrypoint. It runs source-safe local evidence for a PR diff and emits changed files, related findings, architecture neighborhoods, a risk summary, suggested verification commands, and prompt context. OctoCheck should own GitHub publishing; Deepclean supplies the context.
+
+`deepclean schemas --json` emits the GA-candidate JSON contracts for `review-pr` and the guarded autofix lane.
+
 ## Guarded Fix Workflow
 
 Deepclean recommendations are not automatic fixes. The safe implementation loop is:
@@ -136,7 +142,16 @@ Deepclean recommendations are not automatic fixes. The safe implementation loop 
 4. Apply one local patch only through an explicit guarded fix path.
 5. Run verification and `deepclean revalidate <candidate-id>` before treating the work as resolved.
 
-`deepclean fix` and `deepclean work` are intentionally gated. They require one target, explicit source mutation, current proof inputs, and verification. They do not publish packages, push branches, or open PRs unless an explicit PR workflow is requested and local proof passes.
+`deepclean fix --mode guarded` and `deepclean work --mode guarded` are intentionally gated. They require one target, explicit source mutation, current proof inputs, and verification. They do not publish packages, push branches, or open PRs unless an explicit PR workflow is requested and local proof passes.
+
+For the GA autofix lane:
+
+```bash
+deepclean fix <candidate-id> --mode guarded --apply --verification "npm test"
+deepclean fix <candidate-id> --mode guarded --apply --branch chore/deepclean-fix --pr --verification "npm test"
+```
+
+Only guarded mode is supported. Broad architecture redesign, ambiguous ownership changes, and fix classes Deepclean cannot prove remain outside the GA autofix contract.
 
 Use repeated `--verification` or `--verification-command` flags when one proof command is not enough. Deepclean runs every explicit verification command in order before recording the fix/work attempt as passing.
 

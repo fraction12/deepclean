@@ -45,6 +45,17 @@ The project SHALL include CI that runs typecheck, tests, build, and package smok
 - **WHEN** CI runs on a pull request
 - **THEN** it verifies the package can build, test, and smoke-test from a packed tarball
 
+### Requirement: GA guarded autofix lane
+The project SHALL treat autofix as a guarded GA lane rather than a broad rewrite promise.
+
+#### Scenario: User requests GA autofix
+- **WHEN** a user runs `deepclean fix <candidate-id> --mode guarded --apply --verification <command>`
+- **THEN** Deepclean only proceeds for one fix-ready candidate, records verification, blocks out-of-scope edits, and refuses unsupported fix modes
+
+#### Scenario: User requests PR publication from autofix
+- **WHEN** a user adds `--pr --branch <name>`
+- **THEN** Deepclean requires PR proof before opening a PR: scoped changes, passing verification, and resolved or measurable revalidation progress
+
 ### Requirement: Release artifact hygiene
 The project SHALL reject release packages that include private state, local agent folders, dependencies, source-only development files, or dogfood reports.
 
