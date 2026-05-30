@@ -1,16 +1,15 @@
 import { stat } from "node:fs/promises";
 import path from "node:path";
-import {
-  schemaVersion,
-  type CandidateRecord,
-  type Diagnostic,
-  type EvidenceRecord,
-  type FindingRecord,
-  type FixAttemptRecord,
-  type RevalidationRecord,
-} from "./types.js";
+import { schemaVersion } from "./defaults.js";
+import type { Diagnostic } from "./json.js";
 import { timestampId } from "./ids.js";
 import { fitnessProgressForFinding } from "./fitness.js";
+
+type CandidateRecord = import("./types.js").CandidateRecord;
+type EvidenceRecord = import("./types.js").EvidenceRecord;
+type FindingRecord = import("./types.js").FindingRecord;
+type FixAttemptRecord = import("./types.js").FixAttemptRecord;
+type RevalidationRecord = import("./types.js").RevalidationRecord;
 
 type ClassifyRevalidationOptions = {
   root: string;

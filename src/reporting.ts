@@ -1,13 +1,12 @@
-import {
-  schemaVersion,
-  type CandidateRecord,
-  type ClusterRecord,
-  type EvidenceRecord,
-  type FeatureRecord,
-  type HandoffRecord,
-  type ReportRecord,
-} from "./types.js";
+import { schemaVersion } from "./defaults.js";
 import { timestampId } from "./ids.js";
+
+type CandidateRecord = import("./types.js").CandidateRecord;
+type ClusterRecord = import("./types.js").ClusterRecord;
+type EvidenceRecord = import("./types.js").EvidenceRecord;
+type FeatureRecord = import("./types.js").FeatureRecord;
+type HandoffRecord = import("./types.js").HandoffRecord;
+type ReportRecord = import("./types.js").ReportRecord;
 
 export function buildReportRecord(
   runId: string,
