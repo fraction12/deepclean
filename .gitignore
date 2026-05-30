@@ -5,7 +5,6 @@ coverage/
 .DS_Store
 .deepclean/
 .clawpatch/
-.octocheck/
 .codex/
 .claude/
 docs/system-design-diagram.html
