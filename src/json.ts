@@ -1,4 +1,32 @@
-import type { Diagnostic, ErrorEnvelope, JsonEnvelope } from "./types.js";
+import { z } from "zod";
+
+export const diagnosticSchema = z.object({
+  level: z.enum(["info", "warning", "error"]),
+  code: z.string(),
+  message: z.string(),
+  adapter: z.string().optional(),
+});
+
+export type Diagnostic = z.infer<typeof diagnosticSchema>;
+
+export interface CommandEnvelope<T> {
+  ok: true;
+  command: string;
+  data: T;
+  diagnostics: Diagnostic[];
+}
+
+export interface ErrorEnvelope {
+  ok: false;
+  command: string;
+  error: {
+    code: string;
+    message: string;
+  };
+  diagnostics: Diagnostic[];
+}
+
+export type JsonEnvelope<T> = CommandEnvelope<T> | ErrorEnvelope;
 
 export function asRecord(value: unknown): Record<string, unknown> {
   if (typeof value === "object" && value !== null && !Array.isArray(value)) {

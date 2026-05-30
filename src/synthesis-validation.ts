@@ -1,4 +1,4 @@
-import type { Diagnostic } from "./types.js";
+import type { Diagnostic } from "./json.js";
 
 const rejectingDiagnosticCodes = new Set([
   "synthesis_candidate_without_evidence",

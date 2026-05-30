@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
+import type { Diagnostic } from "./json.js";
 import { isRejectingDiagnostic } from "./synthesis-validation.js";
-import type { Diagnostic } from "./types.js";
 
 function diagnostic(code: string): Diagnostic {
   return {

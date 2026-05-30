@@ -1,4 +1,12 @@
-import type { FileReference } from "./types.js";
+import { z } from "zod";
+
+export const fileReferenceSchema = z.object({
+  path: z.string(),
+  startLine: z.number().int().positive().optional(),
+  endLine: z.number().int().positive().optional(),
+});
+
+export type FileReference = z.infer<typeof fileReferenceSchema>;
 
 export function uniqueFileReferences(files: FileReference[]): FileReference[] {
   const seen = new Set<string>();
