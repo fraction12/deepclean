@@ -3489,6 +3489,75 @@ async function recordCandidateFixAttempt(input: {
   };
 }
 
+async function recordCandidateFixAttemptAndDecideRetry(input: {
+  context: CommandContext;
+  command: FixWorkflowOptions["command"];
+  attempts: FixAttemptRecord[];
+  attemptPaths: string[];
+  previousAttemptSummaries: FixWorkerPreviousAttempt[];
+  attemptId: string;
+  resolved: FixWorkflowTargetContext["resolved"];
+  planId: string;
+  status: FixAttemptRecord["status"];
+  outcome: FixAttemptRecord["outcome"];
+  dryRun: boolean;
+  patchPath: string | undefined;
+  attemptNumber: number;
+  maxAttempts: number;
+  dirtyBefore: string[];
+  allowedWriteScope: string[];
+  outOfScopeFiles: string[];
+  revalidation: RevalidationRecord | undefined;
+  revalidationRequired: boolean;
+  changedFiles: string[];
+  patchPreviewPath: string | undefined;
+  verificationCommands: string[];
+  verificationResults: FixAttemptRecord["verificationResults"];
+  worker: FixAttemptRecord["worker"] | undefined;
+  attemptDiagnostics: Diagnostic[];
+}): Promise<boolean> {
+  const recordedAttempt = await recordCandidateFixAttempt({
+    context: input.context,
+    command: input.command,
+    attempts: input.attempts,
+    attemptId: input.attemptId,
+    resolved: input.resolved,
+    planId: input.planId,
+    status: input.status,
+    outcome: input.outcome,
+    dryRun: input.dryRun,
+    attemptNumber: input.attemptNumber,
+    maxAttempts: input.maxAttempts,
+    dirtyBefore: input.dirtyBefore,
+    allowedWriteScope: input.allowedWriteScope,
+    outOfScopeFiles: input.outOfScopeFiles,
+    revalidation: input.revalidation,
+    changedFiles: input.changedFiles,
+    patchPreviewPath: input.patchPreviewPath,
+    verificationCommands: input.verificationCommands,
+    verificationResults: input.verificationResults,
+    worker: input.worker,
+    attemptDiagnostics: input.attemptDiagnostics,
+  });
+  const { attempt, attemptPath, previousAttemptSummary } = recordedAttempt;
+  input.attempts.push(attempt);
+  input.attemptPaths.push(attemptPath);
+  input.previousAttemptSummaries.push(previousAttemptSummary);
+
+  return shouldRetryFixAttempt({
+    dryRun: input.dryRun,
+    hasPatchPath: Boolean(input.patchPath),
+    attemptNumber: input.attemptNumber,
+    maxAttempts: input.maxAttempts,
+    changedFiles: input.changedFiles,
+    outOfScopeFiles: input.outOfScopeFiles,
+    verificationResults: input.verificationResults,
+    outcome: input.outcome,
+    revalidation: input.revalidation,
+    revalidationRequired: input.revalidationRequired,
+  });
+}
+
 async function runCandidateFixWorkflow(
   context: CommandContext,
   target: string,
@@ -3634,45 +3703,32 @@ async function runCandidateFixWorkflow(
       status = "failed";
     }
 
-    const recordedAttempt = await recordCandidateFixAttempt({
+    const retry = await recordCandidateFixAttemptAndDecideRetry({
       context,
       command: options.command,
       attempts,
+      attemptPaths,
+      previousAttemptSummaries,
       attemptId,
       resolved,
       planId: planResult.plan.id,
       status,
       outcome,
       dryRun,
+      patchPath,
       attemptNumber,
       maxAttempts,
       dirtyBefore,
       allowedWriteScope,
       outOfScopeFiles,
       revalidation,
+      revalidationRequired,
       changedFiles,
       patchPreviewPath,
       verificationCommands,
       verificationResults,
       worker,
       attemptDiagnostics,
-    });
-    const { attempt, attemptPath, previousAttemptSummary } = recordedAttempt;
-    attempts.push(attempt);
-    attemptPaths.push(attemptPath);
-    previousAttemptSummaries.push(previousAttemptSummary);
-
-    const retry = shouldRetryFixAttempt({
-      dryRun,
-      hasPatchPath: Boolean(patchPath),
-      attemptNumber,
-      maxAttempts,
-      changedFiles,
-      outOfScopeFiles,
-      verificationResults,
-      outcome,
-      revalidation,
-      revalidationRequired,
     });
     if (!retry) {
       break;
