@@ -1,11 +1,11 @@
 import { z } from "zod";
+import { schemaVersion } from "./defaults.js";
 import { fileReferenceSchema } from "./file-references.js";
 import { diagnosticSchema } from "./json.js";
 
+export { configSchema, schemaVersion, type DeepcleanConfig } from "./defaults.js";
 export { fileReferenceSchema, type FileReference } from "./file-references.js";
 export { diagnosticSchema, type Diagnostic, type ErrorEnvelope, type JsonEnvelope } from "./json.js";
-
-export const schemaVersion = "0.1.0" as const;
 
 export const candidateStatuses = [
   "open",
@@ -143,83 +143,6 @@ export const featureKinds = [
 ] as const;
 export const featureMapSources = ["heuristic", "auto", "agent"] as const;
 export const featureFileRoles = ["entrypoint", "owned", "context", "shared", "test", "config", "generated"] as const;
-
-export const configSchema = z.object({
-  schemaVersion: z.literal(schemaVersion),
-  recordType: z.literal("config"),
-  enabledAdapters: z.array(z.string()),
-  exclude: z.array(z.string()),
-  reviewSynthesis: z.object({
-    enabled: z.boolean(),
-    provider: z.literal("codex"),
-    command: z.string(),
-    model: z.string().optional(),
-    effort: z.string().optional(),
-    timeoutMs: z.number().int().positive(),
-    retries: z.number().int().nonnegative(),
-    rpm: z.number().int().positive(),
-    concurrency: z.number().int().positive(),
-    tokenBudget: z.number().int().positive(),
-    excerptBudget: z.number().int().nonnegative(),
-    offline: z.boolean(),
-    privacyMode: z.enum(["local-only", "metadata", "source-ok"]),
-    maxCandidates: z.number().int().positive(),
-  }),
-  candidateCaps: z.object({
-    byKind: z.record(z.string(), z.number().int().nonnegative()),
-    byKindAndArea: z.record(z.string(), z.number().int().nonnegative()),
-  }),
-  clusters: z.object({
-    maxCandidates: z.number().int().positive(),
-    maxFiles: z.number().int().positive(),
-    splitBroad: z.boolean(),
-  }),
-  architecture: z.object({
-    layers: z.array(z.object({
-      name: z.string().min(1),
-      pathPatterns: z.array(z.string().min(1)).min(1),
-    })),
-    rules: z.array(z.object({
-      from: z.string().min(1),
-      allow: z.array(z.string().min(1)),
-    })),
-    maxCycles: z.number().int().nonnegative(),
-    maxPolicyViolations: z.number().int().nonnegative(),
-  }),
-  reviewers: z.object({
-    enabled: z.array(z.string()),
-    customPaths: z.array(z.string()),
-  }),
-  externalAnalyzers: z.object({
-    jscpd: z.object({
-      enabled: z.boolean(),
-      command: z.string(),
-      minTokens: z.number().int().positive(),
-      maxFindings: z.number().int().positive(),
-    }),
-    semgrep: z.object({
-      enabled: z.boolean(),
-      command: z.string(),
-      config: z.string(),
-      timeoutMs: z.number().int().positive(),
-      maxFindings: z.number().int().positive(),
-    }),
-    sarifPaths: z.array(z.string()),
-  }),
-  privacy: z.object({
-    allowSourceInModel: z.boolean(),
-    allowWebResearch: z.boolean(),
-  }),
-  fixExecution: z.object({
-    enabled: z.boolean(),
-    verificationCommands: z.array(z.string()),
-    maxAttempts: z.number().int().positive(),
-    workerIdleTimeoutMs: z.number().int().positive(),
-    workerHardTimeoutMs: z.number().int().positive(),
-  }),
-});
-
-export type DeepcleanConfig = z.infer<typeof configSchema>;
 
 export const findingSignatureSchema = z.object({
   version: z.literal("1"),
