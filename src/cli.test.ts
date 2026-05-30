@@ -7,7 +7,7 @@ import { describe, expect, test } from "vitest";
 import { buildLocalImportGraph } from "./architecture-graph.js";
 import { main } from "./cli.js";
 import type { SourceFile } from "./discovery.js";
-import { readLockStatuses, withStateWriteLock } from "./locks.js";
+import { lockRecordSchema, readLockStatuses, withStateWriteLock, type LockRecord } from "./locks.js";
 import { buildCandidatePlan } from "./plans.js";
 import { buildReportRecord } from "./reporting.js";
 import { classifyRevalidation } from "./revalidation.js";
@@ -21,7 +21,6 @@ import {
   fixAttemptRecordSchema,
   identityMatchRecordSchema,
   lifecycleEventRecordSchema,
-  lockRecordSchema,
   retentionManifestRecordSchema,
   revalidationRecordSchema,
   schemaVersion,
@@ -30,7 +29,6 @@ import {
   type EvidenceRecord,
   type FeatureRecord,
   type FindingRecord,
-  type LockRecord,
 } from "./types.js";
 
 const execFileAsync = promisify(execFile);

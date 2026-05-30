@@ -1,6 +1,7 @@
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { defaultConfig, stateDirName } from "./defaults.js";
+import { lockRecordSchema, type LockRecord } from "./locks.js";
 import {
   candidateRecordSchema,
   clusterRecordSchema,
@@ -14,7 +15,6 @@ import {
   handoffRecordSchema,
   identityMatchRecordSchema,
   lifecycleEventRecordSchema,
-  lockRecordSchema,
   planRecordSchema,
   reportRecordSchema,
   retentionManifestRecordSchema,
@@ -34,7 +34,6 @@ import {
   type HandoffRecord,
   type IdentityMatchRecord,
   type LifecycleEventRecord,
-  type LockRecord,
   type PlanRecord,
   type ReportRecord,
   type RetentionManifestRecord,

@@ -1,13 +1,29 @@
 import { mkdir, open, readFile, readdir, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { schemaVersion, lockRecordSchema, type Diagnostic, type LockRecord } from "./types.js";
+import { z } from "zod";
+import { schemaVersion } from "./defaults.js";
+import { type Diagnostic } from "./json.js";
 import { type StatePaths } from "./state.js";
 
 const stateWriterLockId = "state-writer";
 const defaultStaleLockMs = 30 * 60 * 1000;
 const defaultLockPollMs = 100;
 const defaultLockTimeoutMs = 0;
+
+export const lockRecordSchema = z.object({
+  schemaVersion: z.literal(schemaVersion),
+  recordType: z.literal("lock"),
+  id: z.string(),
+  owner: z.string(),
+  pid: z.number().int().nonnegative(),
+  command: z.string(),
+  statePath: z.string(),
+  createdAt: z.string(),
+  expiresAt: z.string().optional(),
+});
+
+export type LockRecord = z.infer<typeof lockRecordSchema>;
 
 export class LockContentionError extends Error {
   readonly diagnostic: Diagnostic;
