@@ -1,7 +1,7 @@
 import path from "node:path";
 import ts from "typescript";
+import type { DeepcleanConfig } from "./defaults.js";
 import { normalizePath, type SourceFile } from "./discovery.js";
-import type { DeepcleanConfig } from "./types.js";
 
 export type ArchitecturePolicy = DeepcleanConfig["architecture"];
 
