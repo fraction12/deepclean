@@ -28,6 +28,7 @@ import {
 } from "./fix-workflow-policy.js";
 import { attachStableIdentity } from "./identity.js";
 import { asRecord, fail, ok } from "./json.js";
+import { buildJsonContractCatalog } from "./json-contracts.js";
 import {
   LockContentionError,
   lockRecoveryCommand,
@@ -44,6 +45,7 @@ import {
   renderMarkdownReportWithClusters,
 } from "./reporting.js";
 import { buildProgressSummary, renderProgressSummary } from "./progress.js";
+import { buildReviewPrContext } from "./review-pr.js";
 import {
   ensureState,
   latestRunId,
@@ -123,6 +125,7 @@ const commands = [
   "ci",
   "map",
   "scan",
+  "review-pr",
   "report",
   "next",
   "list",
@@ -136,6 +139,7 @@ const commands = [
   "scrub",
   "fix",
   "work",
+  "schemas",
   "split",
   "cluster",
   "plan",
@@ -282,6 +286,10 @@ Commands:
     --reviewers <a,b>          Record reviewer-surface scope for synthesis/metadata
     --only-existing            Keep only findings previously known to Deepclean
     --new-only                 Keep only newly discovered findings
+  review-pr                    Emit source-safe PR context for review agents
+    --base <ref>               Base ref for PR diff, default origin/main
+    --head <ref>               Head ref for PR diff, default HEAD
+    --output <file>            Also write the JSON context to a file
   report                       Write and print a ranked report
   next                         Show the highest-priority open candidate
   list                         List findings with shared filters
@@ -302,6 +310,7 @@ Commands:
     --keep-days <n>            Also keep runs newer than n days
   scrub                        Emit source-safe generated-state export
   fix <finding-or-candidate>   Preview or apply a guarded local patch
+    --mode guarded             Stable GA autofix lane; other modes are refused
     --patch <file>             Patch file to preview/apply
     --dry-run                  Persist preview without changing source
     --apply                    Apply the patch locally
@@ -310,6 +319,7 @@ Commands:
     --verification <c>         Required verification command for --apply
     --verification-command <c> Alias for --verification
     --allow-files <glob>       Explicitly allow additional changed files
+    --pr                       With --branch, prepare/push/open a PR after proof passes
   work <finding-or-candidate>  Candidate-first branch and PR workflow
     --branch <name>            Create or switch to a candidate branch
     --apply                    Apply the bounded patch
@@ -323,6 +333,7 @@ Commands:
   handoff <candidate-id>       Generate an agent-ready handoff packet
   export <candidate-id>        Alias for handoff
   export --source-safe         Alias for scrub
+  schemas                      Emit stable machine-consumer JSON contracts
 
 Global flags:
   --json                       Emit JSON envelope
@@ -343,12 +354,13 @@ Examples:
   deepclean scan
   deepclean status
   deepclean report
+  deepclean review-pr --base origin/main --head HEAD --json --state-dir .octocheck/deepclean
   deepclean next --json
   deepclean show <candidate-id>
   deepclean plan <candidate-id>
   deepclean handoff <candidate-id> --format codex
   deepclean revalidate <candidate-id>
-  deepclean fix <candidate-id> --patch ./fix.patch --dry-run --json`);
+  deepclean fix <candidate-id> --mode guarded --patch ./fix.patch --dry-run --json`);
 }
 
 export async function main(argv: string[], cwd = process.cwd()): Promise<number> {
@@ -401,6 +413,8 @@ export async function main(argv: string[], cwd = process.cwd()): Promise<number>
         return await withWriteLock(context, () => mapCommand(context));
       case "scan":
         return await withWriteLock(context, () => scanCommand(context));
+      case "review-pr":
+        return await withWriteLock(context, () => reviewPrCommand(context));
       case "report":
         return await withWriteLock(context, () => reportCommand(context));
       case "next":
@@ -426,6 +440,8 @@ export async function main(argv: string[], cwd = process.cwd()): Promise<number>
         return await withWriteLock(context, () => fixCommand(context));
       case "work":
         return await withWriteLock(context, () => workCommand(context));
+      case "schemas":
+        return schemasCommand(context);
       case "split":
         return await withWriteLock(context, () => splitCommand(context));
       case "cluster":
@@ -1880,11 +1896,17 @@ async function scrubCommand(context: CommandContext): Promise<number> {
 
 async function fixCommand(context: CommandContext): Promise<number> {
   const target = requireCandidateId(context);
+  const mode = flagString(context.parsed.flags, "mode");
+  if (mode && mode !== "guarded") {
+    emit(context.json, fail("fix", "unsupported_fix_mode", "Only `--mode guarded` is supported for the GA autofix lane."));
+    return 2;
+  }
+  const prRequested = flagBoolean(context.parsed.flags, "pr");
   const result = await runCandidateFixWorkflow(context, target, {
     command: "fix",
-    requirePrProof: false,
+    requirePrProof: prRequested,
     createBranch: Boolean(flagString(context.parsed.flags, "branch")),
-    openPr: false,
+    openPr: prRequested,
   });
   if (!result.ok) {
     emit(context.json, fail("fix", result.code, result.message, result.diagnostics));
@@ -1899,6 +1921,11 @@ async function fixCommand(context: CommandContext): Promise<number> {
 
 async function workCommand(context: CommandContext): Promise<number> {
   const target = requireCandidateId(context);
+  const mode = flagString(context.parsed.flags, "mode");
+  if (mode && mode !== "guarded") {
+    emit(context.json, fail("work", "unsupported_fix_mode", "Only `--mode guarded` is supported for the GA autofix lane."));
+    return 2;
+  }
   const result = await runCandidateFixWorkflow(context, target, {
     command: "work",
     requirePrProof: flagBoolean(context.parsed.flags, "pr"),
@@ -2150,6 +2177,56 @@ async function scanCommand(context: CommandContext): Promise<number> {
       : "";
     console.log(`Scan complete: ${result.data.evidenceCount} evidence records, ${result.data.candidateCount} candidates, ${result.data.clusterCount} clusters${synthesisText}`);
     printCandidateSummary(result.data.candidates);
+  }
+  return 0;
+}
+
+async function reviewPrCommand(context: CommandContext): Promise<number> {
+  const base = flagString(context.parsed.flags, "base") ?? "origin/main";
+  const head = flagString(context.parsed.flags, "head") ?? "HEAD";
+  const scanContext = withReviewPrScope(context, base, head);
+  const scan = await executeScan(scanContext, { synthesize: false });
+  const outputFlag = flagString(context.parsed.flags, "output");
+  const outputPath = outputFlag ? path.resolve(context.paths.root, outputFlag) : undefined;
+  const data = buildReviewPrContext({
+    id: timestampId("review-pr"),
+    runId: scan.runId,
+    root: context.paths.root,
+    stateDir: context.paths.stateDir,
+    base,
+    head,
+    changedFiles: scan.data.scope.changedPaths,
+    candidates: scan.data.candidates,
+    evidence: await readEvidence(context.paths, scan.runId),
+    features: await readFeatures(context.paths, scan.runId).catch(() => []),
+    createdAt: new Date().toISOString(),
+    ...(outputPath ? { outputPath } : {}),
+  });
+  if (outputPath) {
+    await mkdir(path.dirname(outputPath), { recursive: true });
+    await writeFile(outputPath, `${JSON.stringify(data, null, 2)}\n`, "utf8");
+  }
+  emit(context.json, ok("review-pr", data, scan.diagnostics));
+  if (!context.json && !context.quiet) {
+    console.log(`Review context ${data.id}: ${data.changedFiles.length} changed file${data.changedFiles.length === 1 ? "" : "s"}, ${data.relatedCandidates.length} related finding${data.relatedCandidates.length === 1 ? "" : "s"}, risk ${data.riskSummary.level}`);
+    for (const reason of data.riskSummary.reasons) {
+      console.log(`  ${reason}`);
+    }
+    if (data.outputPath) {
+      console.log(`output: ${data.outputPath}`);
+    }
+  }
+  return 0;
+}
+
+async function schemasCommand(context: CommandContext): Promise<number> {
+  const data = buildJsonContractCatalog(await packageVersion());
+  emit(context.json, ok("schemas", data));
+  if (!context.json && !context.quiet) {
+    console.log(`Deepclean JSON contracts ${data.schemaVersion} (${data.stability})`);
+    for (const contract of data.contracts) {
+      console.log(`- ${contract.command}: ${contract.status}`);
+    }
   }
   return 0;
 }
@@ -3234,7 +3311,7 @@ async function prepareCandidateFixWorkflow(
         ok: false,
         exitCode: 2,
         code: "branch_required",
-        message: "`deepclean work` requires --branch so the patch has an isolated PR lane.",
+        message: "`deepclean fix --pr` and `deepclean work` require --branch so the patch has an isolated PR lane.",
       };
     }
     if (!dryRun) {
@@ -5146,6 +5223,22 @@ function scopedRevalidationContext(
   };
 }
 
+function withReviewPrScope(context: CommandContext, base: string, head: string): CommandContext {
+  return {
+    ...context,
+    parsed: {
+      ...context.parsed,
+      flags: {
+        ...context.parsed.flags,
+        "merge-base": flagString(context.parsed.flags, "merge-base") ?? base,
+        head,
+        "local-only": true,
+        "evidence-only": true,
+      },
+    },
+  };
+}
+
 async function withWriteLock(context: CommandContext, fn: () => Promise<number>): Promise<number> {
   const lockOptions = {
     command: context.parsed.command ?? "unknown",
@@ -5555,6 +5648,7 @@ async function providerDoctor(root: string, command: string): Promise<{
 async function resolveScanScope(context: CommandContext, files: SourceFile[]): Promise<ScanScope> {
   const since = flagString(context.parsed.flags, "since");
   const mergeBaseRef = flagString(context.parsed.flags, "merge-base");
+  const headRef = flagString(context.parsed.flags, "head") ?? "HEAD";
   const includeDirty = flagBoolean(context.parsed.flags, "include-dirty");
   const paths = csvFlag(context, "paths");
   const categories = csvFlag(context, "categories");
@@ -5562,7 +5656,7 @@ async function resolveScanScope(context: CommandContext, files: SourceFile[]): P
   const dirtyPaths = includeDirty ? await gitChangedPaths(context.paths.root, ["diff", "--name-only"]) : [];
   const untrackedPaths = includeDirty ? await gitChangedPaths(context.paths.root, ["ls-files", "--others", "--exclude-standard"]) : [];
   const committedChangedPaths = mergeBaseRef
-    ? await gitMergeBaseChangedPaths(context.paths.root, mergeBaseRef)
+    ? await gitMergeBaseChangedPaths(context.paths.root, mergeBaseRef, headRef)
     : since
       ? await gitChangedPaths(context.paths.root, ["diff", "--name-only", `${since}...HEAD`])
       : [];
@@ -6173,11 +6267,11 @@ function numberPolicy(policy: Record<string, unknown>, key: string): number | un
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
-async function gitMergeBaseChangedPaths(root: string, ref: string): Promise<string[]> {
+async function gitMergeBaseChangedPaths(root: string, ref: string, head = "HEAD"): Promise<string[]> {
   try {
-    const { stdout } = await execFileAsync("git", ["merge-base", ref, "HEAD"], { cwd: root, timeout: 5000 });
+    const { stdout } = await execFileAsync("git", ["merge-base", ref, head], { cwd: root, timeout: 5000 });
     const mergeBase = stdout.trim();
-    return mergeBase ? gitChangedPaths(root, ["diff", "--name-only", `${mergeBase}...HEAD`]) : [];
+    return mergeBase ? gitChangedPaths(root, ["diff", "--name-only", `${mergeBase}...${head}`]) : [];
   } catch {
     return [];
   }

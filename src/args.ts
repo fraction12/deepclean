@@ -75,6 +75,8 @@ const valueFlags = new Set([
   "patch",
   "branch",
   "base",
+  "head",
+  "mode",
   "title",
   "verification",
   "verification-command",

@@ -78,12 +78,13 @@ function registerCliSmokeTests(): void {
       expect(result.stdout).toContain("deepclean scan");
       expect(result.stdout).toContain("deepclean status");
       expect(result.stdout).toContain("deepclean report");
+      expect(result.stdout).toContain("deepclean review-pr --base origin/main --head HEAD --json --state-dir .octocheck/deepclean");
       expect(result.stdout).toContain("deepclean next --json");
       expect(result.stdout).toContain("deepclean show <candidate-id>");
       expect(result.stdout).toContain("deepclean plan <candidate-id>");
       expect(result.stdout).toContain("deepclean handoff <candidate-id> --format codex");
       expect(result.stdout).toContain("deepclean revalidate <candidate-id>");
-      expect(result.stdout).toContain("deepclean fix <candidate-id> --patch ./fix.patch --dry-run --json");
+      expect(result.stdout).toContain("deepclean fix <candidate-id> --mode guarded --patch ./fix.patch --dry-run --json");
     });
   });
 
@@ -1225,6 +1226,67 @@ ${Array.from({ length: 120 }, (_, index) => `  const dirtyValue${index} = ${inde
     });
   });
 
+  test("schemas emits GA candidate machine contracts", async () => {
+    await withTempRepo(async (repo) => {
+      const result = await runCli(["schemas", "--json"], repo);
+      expect(result.code).toBe(0);
+      const payload = JSON.parse(result.stdout) as {
+        data: { stability: string; contracts: Array<{ command: string; requiredFields: string[] }> };
+      };
+      expect(payload.data.stability).toBe("ga-candidate");
+      expect(payload.data.contracts.map((contract) => contract.command)).toContain("review-pr");
+      expect(payload.data.contracts.map((contract) => contract.command)).toContain("fix --mode guarded");
+      expect(payload.data.contracts.find((contract) => contract.command === "review-pr")?.requiredFields).toContain("riskSummary");
+    });
+  });
+
+  test("review-pr emits source-safe PR context for review agents", async () => {
+    await withTempRepo(async (repo) => {
+      await writeFixtureSource(repo);
+      await execFileAsync("git", ["init"], { cwd: repo });
+      await execFileAsync("git", ["config", "user.email", "deepclean@example.com"], { cwd: repo });
+      await execFileAsync("git", ["config", "user.name", "Deepclean Test"], { cwd: repo });
+      await execFileAsync("git", ["add", "."], { cwd: repo });
+      await execFileAsync("git", ["commit", "-m", "initial"], { cwd: repo });
+      const changedBody = Array.from({ length: 120 }, (_, index) => `  const changed${index} = ${index};`).join("\n");
+      await writeFile(path.join(repo, "src", "checkout.ts"), `export function checkoutChanged() {\n${changedBody}\n  return true;\n}\n`, "utf8");
+
+      const result = await runCli([
+        "review-pr",
+        "--base",
+        "HEAD",
+        "--head",
+        "HEAD",
+        "--include-dirty",
+        "--state-dir",
+        ".octocheck/deepclean",
+        "--output",
+        ".octocheck/deepclean/review-pr.json",
+        "--json",
+      ], repo);
+      expect(result.code).toBe(0);
+      const payload = JSON.parse(result.stdout) as {
+        data: {
+          recordType: string;
+          base: string;
+          head: string;
+          changedFiles: string[];
+          relatedCandidates: Array<{ id: string; suggestedDirection: string }>;
+          riskSummary: { level: string };
+          promptContext: string;
+          outputPath: string;
+        };
+      };
+      expect(payload.data.recordType).toBe("review_pr_context");
+      expect(payload.data.base).toBe("HEAD");
+      expect(payload.data.head).toBe("HEAD");
+      expect(payload.data.changedFiles).toEqual(["src/checkout.ts"]);
+      expect(payload.data.relatedCandidates.length).toBeGreaterThan(0);
+      expect(payload.data.promptContext).toContain("# Deepclean PR Context");
+      await expect(stat(payload.data.outputPath)).resolves.toBeTruthy();
+    });
+  });
+
   test("ci mode uses synthesis by default when a provider is configured", async () => {
     await withTempRepo(async (repo) => {
       await writeFixtureSource(repo);
@@ -1847,6 +1909,23 @@ process.exit(0);
       const payload = JSON.parse(result.stdout) as { error: { code: string; message: string } };
       expect(payload.error.code).toBe("fix_execution_disabled");
       expect(payload.error.message).toContain("fixExecution.enabled");
+    });
+  });
+
+  test("fix accepts only the guarded GA autofix mode", async () => {
+    await withTempRepo(async (repo) => {
+      const prepared = await prepareFixableRepo(repo);
+      await enableFixExecution(repo);
+      const refused = await runCli(["fix", prepared.candidateId, "--mode", "experimental", "--patch", prepared.patchPath, "--dry-run", "--json"], repo);
+      expect(refused.code).toBe(2);
+      const refusedPayload = JSON.parse(refused.stdout) as { error: { code: string } };
+      expect(refusedPayload.error.code).toBe("unsupported_fix_mode");
+
+      const guarded = await runCli(["fix", prepared.candidateId, "--mode", "guarded", "--patch", prepared.patchPath, "--dry-run", "--json"], repo);
+      expect(guarded.code).toBe(0);
+      const guardedPayload = JSON.parse(guarded.stdout) as { data: { attempt: { status: string; dryRun: boolean } } };
+      expect(guardedPayload.data.attempt.status).toBe("previewed");
+      expect(guardedPayload.data.attempt.dryRun).toBe(true);
     });
   });
 

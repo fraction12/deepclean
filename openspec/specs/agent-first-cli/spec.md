@@ -17,6 +17,20 @@ The system SHALL provide machine-readable JSON output for every core command tha
 - **WHEN** an agent runs a core command with `--json`
 - **THEN** the command emits a valid JSON document matching the command's documented schema
 
+### Requirement: Stable machine contracts
+The system SHALL expose the stable JSON contracts that review agents and release tooling can consume without reading implementation internals.
+
+#### Scenario: Agent discovers JSON contracts
+- **WHEN** an agent runs `deepclean schemas --json`
+- **THEN** the command emits the GA-candidate contracts for `review-pr` and guarded autofix output
+
+### Requirement: PR review context
+The system SHALL provide a source-safe PR context command for external review agents.
+
+#### Scenario: Review agent asks for PR context
+- **WHEN** an agent runs `deepclean review-pr --base <ref> --head <ref> --json --state-dir <scratch-dir>`
+- **THEN** the command emits changed files, related findings, architecture neighborhoods, risk summary, suggested verification, and prompt context without publishing to GitHub
+
 ### Requirement: Human output remains secondary
 The system SHALL provide concise human-readable output by default while preserving JSON as the canonical automation interface.
 
