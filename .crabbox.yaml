@@ -28,12 +28,20 @@ sync:
     - .venv
 run:
   preflightTools:
+    - git
     - node
     - npm
+    - codex
+    - gh
 env:
   allow:
     - CI
     - NODE_OPTIONS
+    - GITHUB_*
+    - GH_*
+    - OCTOCHECK_*
+    - CODEX_*
+    - OPENAI_*
 jobs:
   ci:
     shell: true
@@ -43,4 +51,11 @@ jobs:
       npm ci
       npm run ci
       node scripts/spec-validate.mjs
+    stop: auto
+  review:
+    shell: true
+    command: |
+      set -euo pipefail
+      export CI=true
+      node scripts/octocheck-review.mjs
     stop: auto

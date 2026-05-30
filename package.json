@@ -45,6 +45,7 @@
     "dev": "tsx src/cli.ts",
     "release:check": "npm run ci && node scripts/prepare-release-smoke.mjs && node scripts/release-check.mjs",
     "release:prepare": "node scripts/prepare-release.mjs",
+    "review:codex": "node scripts/octocheck-review.mjs",
     "spec:validate": "node scripts/spec-validate.mjs",
     "site:build": "node scripts/build-site.mjs",
     "site:preview": "node scripts/preview-site.mjs",
