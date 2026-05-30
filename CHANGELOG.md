@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 1.0.0 - 2026-05-30
+
+- Promoted DeepClean to general availability after RC dogfood passed on DeepClean, LightningITB, and OctoCheck.
+- Kept `review-pr --json` as the stable source-safe review-agent contract for OctoCheck and other PR review agents.
+- Kept guarded autofix behind explicit configuration, scoped targets, dry-run previews, and verification-gated apply/PR workflows.
+
 ## 1.0.0-rc.1 - 2026-05-30
 
 - Added the GA release-candidate contracts for `review-pr`, machine-readable schemas, and explicit guarded autofix mode.
