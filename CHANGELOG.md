@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.1.0-beta.8 - 2026-05-30
+
+- Changed `deepclean doctor` to check the npm `latest` channel by default so trusted-published beta releases are detected without relying on the separate `beta` dist-tag.
+
 ## 0.1.0-beta.7 - 2026-05-29
 
 - Changed beta releases to publish directly under `latest` through trusted publishing, removing the token-dependent post-publish dist-tag promotion step.
