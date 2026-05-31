@@ -5064,10 +5064,11 @@ async function runFixVerification(
   commandsToRun: string[],
 ): Promise<FixAttemptRecord["verificationResults"]> {
   const results: FixAttemptRecord["verificationResults"] = [];
+  const env = await proofCommandEnvironment(paths.root);
   for (const [index, command] of commandsToRun.entries()) {
     const startedAt = Date.now();
     const outputPath = path.join(paths.fixesDir, `${attemptId}-verification-${String(index + 1).padStart(2, "0")}.txt`);
-    const result = await execFileAsync("sh", ["-lc", command], { cwd: paths.root, timeout: 120_000 })
+    const result = await execFileAsync("sh", ["-lc", command], { cwd: paths.root, env, timeout: 120_000 })
       .then((output) => ({ exitCode: 0, output: `${output.stdout}${output.stderr}` }))
       .catch((error) => ({
         exitCode: typeof error === "object" && error && "code" in error && typeof error.code === "number" ? error.code : 1,
@@ -5084,6 +5085,37 @@ async function runFixVerification(
     });
   }
   return results;
+}
+
+async function proofCommandEnvironment(root: string): Promise<NodeJS.ProcessEnv> {
+  const env = { ...process.env };
+  const virtualenvBin = path.join(root, ".venv", "bin");
+  if (await directoryExists(virtualenvBin)) {
+    prependPathEntry(env, virtualenvBin);
+  }
+  return env;
+}
+
+async function directoryExists(dir: string): Promise<boolean> {
+  try {
+    return (await stat(dir)).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function prependPathEntry(env: NodeJS.ProcessEnv, entry: string): void {
+  const pathKey = Object.keys(env).find((key) => key.toLowerCase() === "path") ?? "PATH";
+  const current = env[pathKey];
+  if (!current) {
+    env[pathKey] = entry;
+    return;
+  }
+  const entries = current.split(path.delimiter);
+  if (entries.includes(entry)) {
+    return;
+  }
+  env[pathKey] = [entry, ...entries].join(path.delimiter);
 }
 
 function summarizeVerificationOutput(output: string, exitCode: number): string {
