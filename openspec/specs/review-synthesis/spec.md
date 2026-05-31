@@ -1,7 +1,7 @@
 # review-synthesis Specification
 
 ## Purpose
-TBD - created by archiving change define-deepclean-mvp. Update Purpose after archive.
+Deepclean uses bounded, evidence-driven model synthesis to turn local discovery into validated cleanup candidates, clusters, and explanations while preserving provenance, privacy boundaries, reviewer rubrics, and strict rejection of unsupported findings.
 ## Requirements
 ### Requirement: Model synthesis uses evidence bundles
 The system SHALL invoke Codex or another configured model only with bounded evidence bundles and selected excerpts produced by local discovery.

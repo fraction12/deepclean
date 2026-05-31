@@ -1,7 +1,7 @@
 # maintainability-candidates Specification
 
 ## Purpose
-TBD - created by archiving change define-deepclean-mvp. Update Purpose after archive.
+Deepclean turns local repository evidence into ranked maintainability candidates across architecture, complexity, duplication, testability, dead weight, AI-slop signals, and domain drift while keeping each candidate evidence-backed, explainable, and bounded enough for agent handoff.
 ## Requirements
 ### Requirement: Candidate categories
 The system SHALL classify maintainability candidates into architecture, complexity, duplication, testability, dead weight, AI-slop signals, domain drift, or another documented category.
@@ -100,4 +100,3 @@ The system SHALL split broad clusters into smaller cleanup themes when graph, mo
 #### Scenario: Broad cluster spans admin and backend work
 - **WHEN** a cluster contains unrelated admin UI and backend orchestration candidates
 - **THEN** the system produces separate bounded clusters or reports a warning explaining why it cannot split safely
-

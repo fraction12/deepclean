@@ -1,3 +1,5 @@
+> Archived 2026-05-31 as superseded. These unchecked tasks are retained as historical planning context, not active work. Continue with `split-broad-candidates` for the remaining decomposition gap.
+
 ## 1. CLI And Planning
 
 - [ ] 1.1 Add `deepclean fix <candidate-or-finding-id>` with `--dry-run`, `--apply`, `--revalidate`, `--verification`, `--allow-files`, `--allow-dirty`, and `--json`.

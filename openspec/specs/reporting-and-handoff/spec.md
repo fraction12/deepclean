@@ -1,7 +1,7 @@
 # reporting-and-handoff Specification
 
 ## Purpose
-TBD - created by archiving change define-deepclean-mvp. Update Purpose after archive.
+Deepclean produces durable reports, next-step recommendations, candidate drill-downs, triage records, plans, and agent handoff packets so cleanup work can move from discovery to execution without mutating source code outside explicit guarded fix workflows.
 ## Requirements
 ### Requirement: Durable report generation
 The system SHALL generate durable reports from persisted candidate and evidence state.
@@ -79,4 +79,3 @@ The system SHALL recommend plans for top candidates and bounded clusters without
 #### Scenario: Top candidate has no plan
 - **WHEN** a report identifies a start-here candidate with no existing plan artifact
 - **THEN** the report suggests the exact `deepclean plan <id>` command
-
