@@ -2072,6 +2072,48 @@ process.exit(0);
     });
   });
 
+  test("fix proof commands can resolve executables from repo-local virtualenv bin", async () => {
+    await withTempRepo(async (repo) => {
+      await mkdir(path.join(repo, ".venv", "bin"), { recursive: true });
+      const proofCommand = path.join(repo, ".venv", "bin", "repo-local-proof");
+      await writeFile(proofCommand, `#!/bin/sh
+grep -q "deepclean fix applied" src/invoice.ts
+`, "utf8");
+      await chmod(proofCommand, 0o755);
+      const prepared = await prepareFixableRepo(repo);
+      await enableFixExecution(repo);
+
+      const result = await runCli([
+        "fix",
+        prepared.candidateId,
+        "--mode",
+        "guarded",
+        "--patch",
+        prepared.patchPath,
+        "--apply",
+        "--allow-source-mutation",
+        "--verification-command",
+        "repo-local-proof",
+        "--json",
+      ], repo);
+
+      expect(result.code).toBe(0);
+      const payload = JSON.parse(result.stdout) as {
+        data: {
+          attempt: {
+            status: string;
+            verificationResults: Array<{ command: string; passed: boolean }>;
+          };
+        };
+      };
+      expect(payload.data.attempt.status).toBe("passed");
+      expect(payload.data.attempt.verificationResults[0]).toMatchObject({
+        command: "repo-local-proof",
+        passed: true,
+      });
+    });
+  });
+
   test("fix runs every repeated verification flag", async () => {
     await withTempRepo(async (repo) => {
       const prepared = await prepareFixableRepo(repo);

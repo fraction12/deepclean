@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Fixed guarded fix/work proof commands so repo-local `.venv/bin` executables are available during validation.
+
 ## 1.0.0 - 2026-05-30
 
 - Promoted DeepClean to general availability after RC dogfood passed on DeepClean, LightningITB, and OctoCheck.
