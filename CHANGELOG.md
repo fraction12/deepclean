@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.0.1 - 2026-05-31
+
 - Fixed guarded fix/work proof commands so repo-local `.venv/bin` executables are available during validation.
 
 ## 1.0.0 - 2026-05-30
