@@ -113,7 +113,7 @@ import {
 } from "./types.js";
 import { timestampId } from "./ids.js";
 import { collectProcessOutput } from "./process-output.js";
-import { synthesizeWithCodex } from "./synthesis.js";
+import { synthesizeWithChunkedCodex } from "./synthesis.js";
 import { inferVerificationProfile } from "./verification.js";
 
 const execFileAsync = promisify(execFile);
@@ -2306,7 +2306,7 @@ async function executeScan(
   }
   const shouldSynthesize = synthesisRequested && !runtime.offline;
   const synthesisResult = shouldSynthesize
-    ? await synthesizeWithCodex({
+    ? await synthesizeWithChunkedCodex({
       root: context.paths.root,
       runId,
       createdAt: completedAt,

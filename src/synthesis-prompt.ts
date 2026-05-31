@@ -12,6 +12,12 @@ export function buildPrompt(options: {
   existingCandidates: CandidateRecord[];
   includeSource: boolean;
   verificationProfile?: VerificationProfile | undefined;
+  synthesisScope?: {
+    id: string;
+    title: string;
+    reason: string;
+    fileRefs: Array<{ path: string; startLine?: number | undefined; endLine?: number | undefined }>;
+  } | undefined;
 }, rubrics: ReviewerRubric[]): string {
   const cleanupSurfaces = buildCleanupSurfaces(options.evidence, options.existingCandidates);
   const evidenceBundle = options.evidence.map((record) => ({
@@ -83,6 +89,14 @@ ${JSON.stringify(rubrics.map((rubric) => ({
 Project verification commands:
 ${JSON.stringify(options.verificationProfile ?? {}, null, 2)}
 
+Synthesis scope:
+${JSON.stringify(options.synthesisScope ?? {
+  id: "whole-repo",
+  title: "Whole repository",
+  reason: "Single synthesis packet for all current scan evidence.",
+  fileRefs: [],
+}, null, 2)}
+
 Cleanup surfaces:
 ${JSON.stringify(cleanupSurfaces, null, 2)}
 
@@ -91,6 +105,7 @@ ${JSON.stringify(featureBundle, null, 2)}
 
 Hard rules:
 - every candidate MUST cite one or more provided evidenceIds
+- stay inside the synthesis scope unless cited evidence explicitly requires a context file
 - every file reference MUST include path, startLine, and endLine; use startLine 1 and endLine 1 when exact line evidence is unavailable
 - use the feature map as the bounded review surface; do not invent feature ownership outside listed feature IDs, paths, imports, tests, commands, or reasons
 - do not suggest modifying code as part of this response
@@ -153,11 +168,19 @@ export function buildAttemptBase(options: {
   promptBytes: number;
   reviewerIds: string[];
   reviewerRubricVersions?: Record<string, string> | undefined;
+  synthesisScope?: {
+    id: string;
+    title: string;
+    reason: string;
+    fileRefs: Array<{ path: string; startLine?: number | undefined; endLine?: number | undefined }>;
+  } | undefined;
+  attemptIdSuffix?: string | undefined;
 }): Omit<SynthesisAttemptRecord, "rawCandidateCount" | "acceptedCandidateCount" | "rejectedCandidateCount" | "rejectedEvidenceIds" | "notes" | "validations" | "diagnostics"> {
+  const baseId = `synthesis-${options.runId.replace(/^run-/, "")}`;
   return {
     schemaVersion,
     recordType: "synthesis_attempt",
-    id: `synthesis-${options.runId.replace(/^run-/, "")}`,
+    id: options.attemptIdSuffix ? `${baseId}-${options.attemptIdSuffix}` : baseId,
     runId: options.runId,
     provider: options.runtime.provider,
     model: options.runtime.model,
@@ -174,6 +197,7 @@ export function buildAttemptBase(options: {
       excerptBudget: options.runtime.excerptBudget,
       privacyMode: options.runtime.privacyMode,
       allowSourceInModel: options.runtime.allowSourceInModel,
+      synthesisScope: options.synthesisScope,
     },
     reviewerIds: options.reviewerIds,
     reviewerRubricVersions: options.reviewerRubricVersions,
@@ -189,4 +213,3 @@ export function buildAttemptBase(options: {
     createdAt: options.createdAt,
   };
 }
-
