@@ -5,20 +5,33 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta
       name="description"
-      content="Deepclean turns fast-moving codebases into local structure reports and agent-ready plans."
+      content="Deepclean scans a local repo and writes cleanup reports, plans, and agent-ready handoffs."
     />
-    <meta name="color-scheme" content="dark" />
+    <meta name="color-scheme" content="light" />
     <meta property="og:title" content="deepclean" />
     <meta
       property="og:description"
-      content="Local repo structure reports for teams ready to make the next improvement."
+      content="Local repo cleanup reports, plans, and agent-ready handoffs."
     />
     <meta property="og:type" content="website" />
-    <title>deepclean | Structure reports for evolving repos</title>
+    <meta property="og:url" content="https://fraction12.github.io/deepclean/" />
+    <meta
+      property="og:image"
+      content="https://fraction12.github.io/deepclean/assets/cleeby-logo.png"
+    />
+    <meta property="og:image:alt" content="Cleeby, the Deepclean mascot" />
+    <meta name="twitter:card" content="summary" />
+    <meta
+      name="twitter:image"
+      content="https://fraction12.github.io/deepclean/assets/cleeby-logo.png"
+    />
+    <title>deepclean | Local repo cleanup reports</title>
+    <link rel="icon" type="image/png" href="./assets/cleeby-logo.png" />
+    <link rel="apple-touch-icon" href="./assets/cleeby-logo.png" />
     <link rel="preconnect" href="https://api.fontshare.com" />
     <link rel="preconnect" href="https://cdn.fontshare.com" crossorigin />
     <link
-      href="https://api.fontshare.com/v2/css?f[]=clash-display@700,600,500&f[]=satoshi@700,500,400&display=swap"
+      href="https://api.fontshare.com/v2/css?f[]=satoshi@900,700,500,400&display=swap"
       rel="stylesheet"
     />
     <link rel="stylesheet" href="./styles.css" />
@@ -26,104 +39,103 @@
   <body>
     <header class="site-header" aria-label="Site header">
       <a class="brand" href="#" aria-label="deepclean home">
-        <span class="brand-mark" aria-hidden="true"></span>
+        <img
+          class="brand-mark"
+          src="./assets/cleeby-logo.png"
+          alt=""
+          width="40"
+          height="40"
+          aria-hidden="true"
+        />
         <span>deepclean</span>
       </a>
       <nav class="nav-links" aria-label="Primary navigation">
-        <a href="#workflow">Workflow</a>
         <a href="#install">Install</a>
+        <a href="#workflow">Workflow</a>
         <a href="https://github.com/fraction12/deepclean">GitHub</a>
       </nav>
     </header>
 
     <main>
       <section class="hero" aria-labelledby="hero-title">
-        <div class="hero-background" aria-hidden="true">
-          <canvas class="constellation-canvas" data-constellation></canvas>
-          <div class="constellation-glow"></div>
-        </div>
         <div class="hero-copy">
-          <p class="eyebrow">Public alpha</p>
-          <h1 id="hero-title">
-            <span class="title-line">Deepclean</span>
-            <span class="title-line">for fast&#8209;moving</span>
-            <span class="title-line">AI&#8209;assisted repos.</span>
-          </h1>
+          <img
+            class="hero-logo"
+            src="./assets/cleeby-logo.png"
+            alt="Cleeby, the Deepclean mascot"
+            width="160"
+            height="160"
+          />
+          <h1 id="hero-title">deepclean</h1>
           <p class="hero-lede">
-            Scan a local codebase, find the structural work that matters, and turn
-            it into reviewable reports, plans, and agent-ready handoffs.
+            Scan a local repo and turn structural mess into reports, plans, and agent-ready handoffs.
           </p>
-          <div class="hero-actions" aria-label="Primary actions">
-            <a class="button primary" href="#install">
-              <span class="prompt">$</span>
-              npm install -g @fraction12/deepclean
-            </a>
-            <a class="button secondary" href="https://github.com/fraction12/deepclean">
-              GitHub
-            </a>
+          <div class="hero-actions" aria-label="Primary links">
+            <a class="button primary" href="#install">Install</a>
+            <a class="button" href="https://github.com/fraction12/deepclean">GitHub</a>
+            <a class="button" href="https://www.npmjs.com/package/@fraction12/deepclean">npm</a>
           </div>
-          <p class="hero-note">
-            Local evidence first. No source edits. Built for one focused improvement at a time.
-          </p>
-          <div class="hero-stages" aria-label="Deepclean workflow stages">
-            <span data-stage="scan">Scan</span>
-            <span data-stage="map">Map</span>
-            <span data-stage="rank">Rank</span>
-            <span data-stage="handoff">Handoff</span>
-          </div>
-        </div>
-      </section>
-
-      <section class="workflow" id="workflow" aria-labelledby="workflow-title">
-        <div>
-          <p class="section-kicker">Workflow</p>
-          <h2 id="workflow-title">From repo signals to the next clear move.</h2>
-        </div>
-        <div class="workflow-list">
-          <article>
-            <span>01</span>
-            <h3>Scan</h3>
-            <p>Collect local graph, churn, duplication, tests, and file evidence.</p>
-          </article>
-          <article>
-            <span>02</span>
-            <h3>Map</h3>
-            <p>Group files into semantic features so the report has product-shaped context.</p>
-          </article>
-          <article>
-            <span>03</span>
-            <h3>Rank</h3>
-            <p>Group findings by impact, confidence, effort, and blast radius.</p>
-          </article>
-          <article>
-            <span>04</span>
-            <h3>Handoff</h3>
-            <p>Write bounded plans an agent can execute without disturbing the rest of the repo.</p>
-          </article>
         </div>
       </section>
 
       <section class="install" id="install" aria-labelledby="install-title">
-        <div>
+        <div class="section-heading">
           <p class="section-kicker">Install</p>
-          <h2 id="install-title">Try it in a local repo.</h2>
-          <p>
-            Generated artifacts stay under <code>.deepclean/</code> so the evidence
-            trail survives the agent run.
-          </p>
+          <h2 id="install-title">One command. Then run it locally.</h2>
         </div>
         <pre aria-label="Install commands"><code>npm install -g @fraction12/deepclean
 deepclean init
-deepclean scan --synthesize
+deepclean scan
 deepclean report
 deepclean next</code></pre>
+      </section>
+
+      <section class="links" aria-labelledby="links-title">
+        <div class="section-heading">
+          <p class="section-kicker">Links</p>
+          <h2 id="links-title">The useful stuff.</h2>
+        </div>
+        <div class="link-list">
+          <a href="https://github.com/fraction12/deepclean">GitHub repo</a>
+          <a href="https://www.npmjs.com/package/@fraction12/deepclean">npm package</a>
+          <a href="https://github.com/fraction12/deepclean#quick-start">Quick start</a>
+          <a href="https://github.com/fraction12/deepclean/blob/main/docs/privacy-and-trust.md">Privacy</a>
+        </div>
+      </section>
+
+      <section class="workflow" id="workflow" aria-labelledby="workflow-title">
+        <div class="section-heading">
+          <p class="section-kicker">Workflow</p>
+          <h2 id="workflow-title">Clean up one clear move at a time.</h2>
+        </div>
+        <ol class="workflow-list">
+          <li>
+            <span>1</span>
+            <strong>Scan</strong>
+            <p>Collect local evidence from the repo.</p>
+          </li>
+          <li>
+            <span>2</span>
+            <strong>Report</strong>
+            <p>See ranked cleanup candidates.</p>
+          </li>
+          <li>
+            <span>3</span>
+            <strong>Plan</strong>
+            <p>Turn one candidate into a bounded task.</p>
+          </li>
+          <li>
+            <span>4</span>
+            <strong>Handoff</strong>
+            <p>Give an agent the focused next step.</p>
+          </li>
+        </ol>
       </section>
     </main>
 
     <footer class="site-footer">
-      <span>MIT licensed public alpha.</span>
+      <span>MIT licensed.</span>
       <a href="https://github.com/fraction12/deepclean">View source</a>
     </footer>
-    <script type="module" src="./constellation.js"></script>
   </body>
 </html>

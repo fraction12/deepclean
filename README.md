@@ -1,6 +1,12 @@
-# deepclean
+<p align="center">
+  <img src="site/assets/cleeby-logo.png" alt="Cleeby, the Deepclean mascot" width="156" />
+</p>
+
+<h1 align="center">deepclean</h1>
 
 Local repo structure reports for fast-moving codebases.
+
+<p align="center"><em>Meet Cleeby, Deepclean's little code-cleaning buddy.</em></p>
 
 `deepclean` scans a repository, gathers local evidence, and writes reports and agent-ready plans under `.deepclean/`. It is built for the point where a project is already working and the next step is clearer boundaries, less duplication, safer refactors, stronger tests, and better sequencing.
 
