@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 1.0.2 - 2026-05-31
+
+- Added chunked whole-repo synthesis so broad scans split Codex review into scoped packets while preserving one repo-wide candidate queue.
+
 ## 1.0.1 - 2026-05-31
 
 - Fixed guarded fix/work proof commands so repo-local `.venv/bin` executables are available during validation.
