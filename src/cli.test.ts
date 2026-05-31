@@ -1873,6 +1873,98 @@ fs.writeFileSync(outputPath, JSON.stringify({
     });
   });
 
+  test("scan chunks broad whole-repo synthesis into scoped Codex packets", async () => {
+    await withTempRepo(async (repo) => {
+      await writeFixtureSource(repo);
+      await mkdir(path.join(repo, "src", "slices"), { recursive: true });
+      for (let index = 0; index < 16; index += 1) {
+        const body = Array.from({ length: 120 }, (_, line) => `  const value${line} = ${line + index};`).join("\n");
+        await writeFile(path.join(repo, "src", "slices", `slice-${index}.ts`), `
+export function slice${index}() {
+${body}
+  return value0;
+}
+`, "utf8");
+      }
+      const promptLog = path.join(repo, "prompts.jsonl");
+      await installFakeCodex(repo, `#!/usr/bin/env node
+const fs = require("node:fs");
+const stdin = fs.readFileSync(0, "utf8");
+const scope = JSON.parse(stdin.match(/Synthesis scope:\\n([\\s\\S]*?)\\n\\nCleanup surfaces:/)[1]);
+const evidenceIds = [...stdin.matchAll(/"id": "(ev-[^"]+)"/g)].map((match) => match[1]);
+fs.appendFileSync(${JSON.stringify(promptLog)}, JSON.stringify({ scope, evidenceIds }) + "\\n");
+const firstPath = (stdin.match(/"path": "([^"]+\\.ts)"/) || [])[1] || "src/checkout.ts";
+const outputIndex = process.argv.indexOf("-o");
+const outputPath = process.argv[outputIndex + 1];
+fs.writeFileSync(outputPath, JSON.stringify({
+  candidates: evidenceIds.length === 0 ? [] : [{
+    title: "Scoped cleanup for " + scope.id,
+    category: "architecture",
+    priority: "P1",
+    confidence: "high",
+    impact: "feature",
+    effort: "medium",
+    risk: "moderate",
+    readiness: "fix-ready",
+    files: [{ path: firstPath, startLine: 1, endLine: 1 }],
+    ownedFiles: [{ path: firstPath, startLine: 1, endLine: 1 }],
+    contextFiles: [],
+    evidenceIds: [evidenceIds[0]],
+    whyItMatters: "Scoped synthesis keeps the cleanup work bounded.",
+    likelyRootCause: "Whole-repo synthesis was previously too broad.",
+    suggestedDirection: "Handle this packet as one bounded cleanup surface with non-goals.",
+    expectedBehavior: "Current behavior remains unchanged.",
+    proofRequired: ["Run the scoped regression checks."],
+    nonGoals: ["Do not broaden beyond this synthesis packet."],
+    doNotTouch: ["unrelated packets"],
+    splitChildren: [],
+    confidenceDowngradeReasons: [],
+    verification: ["npm test"],
+    fixReadiness: {
+      minimumFixScope: "Keep the change inside the scoped packet.",
+      suggestedRegressionTest: "Add or run the nearest scoped regression.",
+      whyCurrentTestsMissIt: "Metric evidence alone does not prove the boundary.",
+      confidenceDowngradeReasons: []
+    },
+    supportingQuotes: []
+  }],
+  rejectedEvidenceIds: [],
+  notes: ["scope " + scope.id]
+}));
+`);
+
+      const result = await runCli(["scan", "--token-budget", "1000", "--json"], repo);
+      expect(result.code).toBe(0);
+      const payload = JSON.parse(result.stdout) as AcceptedSynthesisScanPayload;
+      expect(payload.data.synthesis.requested).toBe(true);
+      expect(payload.data.synthesis.candidateCount).toBeGreaterThan(1);
+
+      const promptRecords = (await readFile(promptLog, "utf8"))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as { scope: { id: string }; evidenceIds: string[] });
+      expect(promptRecords.length).toBeGreaterThan(1);
+      expect(new Set(promptRecords.map((record) => record.scope.id)).size).toBe(promptRecords.length);
+      expect(promptRecords.every((record) => record.evidenceIds.length > 0)).toBe(true);
+
+      const attempt = JSON.parse(
+        await readFile(path.join(repo, ".deepclean", "synthesis", `${payload.data.runId}.json`), "utf8"),
+      ) as {
+        id: string;
+        runtime: { synthesisMode?: string; chunkCount?: number; chunks?: Array<{ id: string; evidenceCount: number }> };
+        validations: Array<{ id: string; candidateId?: string }>;
+      };
+      expect(attempt.id).toBe(payload.data.synthesis.attemptId);
+      expect(attempt.runtime.synthesisMode).toBe("chunked");
+      expect(attempt.runtime.chunkCount).toBe(promptRecords.length);
+      expect(attempt.runtime.chunks?.every((chunk) => chunk.evidenceCount > 0)).toBe(true);
+      expect(attempt.validations.every((validation) => validation.id.startsWith("chunk-"))).toBe(true);
+      expect(payload.data.candidates
+        .filter((candidate) => candidate.provenance.source === "model-synthesis")
+        .every((candidate) => candidate.provenance.synthesisAttemptId === attempt.id)).toBe(true);
+    });
+  });
+
   test("evidence-only mode skips provider execution", async () => {
     await withTempRepo(async (repo) => {
       await writeFixtureSource(repo);

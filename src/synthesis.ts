@@ -5,6 +5,7 @@ import { uniqueFileReferences } from "./file-references.js";
 import { candidateId } from "./ids.js";
 import { commandsForFiles, mergeVerificationCommands, type VerificationProfile } from "./verification.js";
 import { confidenceAfterValidation, sourceTextForDrafts, stableIdentity, uniqueStrings, validationId, validateDraftCandidate } from "./synthesis-candidate-validation.js";
+import { planSynthesisChunks, type SynthesisChunk } from "./synthesis-chunks.js";
 import { buildAttemptBase, buildPrompt, promptVersion } from "./synthesis-prompt.js";
 import { codexFailureMessage, runProcessWithRetries } from "./synthesis-process.js";
 import { jsonSchema, parseSynthesisOutput, type SynthesisOutput } from "./synthesis-schema.js";
@@ -15,6 +16,7 @@ import {
   type DeepcleanConfig,
   type Diagnostic,
   type EvidenceRecord,
+  type FileReference,
   type FeatureRecord,
   type SynthesisAttemptRecord,
 } from "./types.js";
@@ -49,6 +51,13 @@ type SynthesizeWithCodexOptions = {
     allowSourceInModel: boolean;
   };
   verificationProfile?: VerificationProfile | undefined;
+  synthesisScope?: {
+    id: string;
+    title: string;
+    reason: string;
+    fileRefs: FileReference[];
+  } | undefined;
+  attemptIdSuffix?: string | undefined;
 };
 
 export async function synthesizeWithCodex(options: SynthesizeWithCodexOptions): Promise<SynthesisResult> {
@@ -132,6 +141,79 @@ export async function synthesizeWithCodex(options: SynthesizeWithCodexOptions): 
   } finally {
     await rm(tempDir, { recursive: true, force: true });
   }
+}
+
+export async function synthesizeWithChunkedCodex(options: SynthesizeWithCodexOptions): Promise<SynthesisResult> {
+  const chunks = planSynthesisChunks({
+    evidence: options.evidence,
+    features: options.features ?? [],
+    existingCandidates: options.existingCandidates,
+    tokenBudget: options.runtime.tokenBudget,
+  });
+  if (chunks.length <= 1) {
+    const chunk = chunks[0];
+    return synthesizeWithCodex({
+      ...options,
+      ...(chunk ? {
+        evidence: chunk.evidence,
+        features: chunk.features,
+        existingCandidates: chunk.existingCandidates,
+        synthesisScope: chunkScope(chunk),
+      } : {}),
+    });
+  }
+
+  const aggregateAttemptId = `synthesis-${options.runId.replace(/^run-/, "")}`;
+  const attempts: SynthesisAttemptRecord[] = [];
+  const candidates: CandidateRecord[] = [];
+  const diagnostics: Diagnostic[] = [{
+    level: "info",
+    code: "codex_synthesis_chunked",
+    message: `Whole-repo synthesis was split into ${chunks.length} scoped packets.`,
+    adapter: "codex-synthesis",
+  }];
+
+  for (const chunk of chunks) {
+    const result = await synthesizeWithCodex({
+      ...options,
+      evidence: chunk.evidence,
+      features: chunk.features,
+      existingCandidates: [
+        ...chunk.existingCandidates,
+        ...candidates,
+      ],
+      synthesisScope: chunkScope(chunk),
+      attemptIdSuffix: chunk.id,
+    });
+    diagnostics.push(...result.diagnostics);
+    const validationIdMap = result.attempt
+      ? new Map(result.attempt.validations.map((validation) => [validation.id, `${chunk.id}-${validation.id}`]))
+      : new Map<string, string>();
+    candidates.push(...result.candidates.map((candidate) => rewriteChunkedCandidateProvenance(
+      candidate,
+      aggregateAttemptId,
+      validationIdMap,
+    )));
+    if (result.attempt) {
+      attempts.push(rewriteChunkedAttemptValidationIds(result.attempt, validationIdMap));
+    }
+  }
+
+  return {
+    candidates,
+    diagnostics,
+    attempt: aggregateChunkedSynthesisAttempt({
+      runId: options.runId,
+      createdAt: options.createdAt,
+      runtime: options.runtime,
+      includeSource: options.includeSource,
+      chunks,
+      attempts,
+      diagnostics,
+      aggregateAttemptId,
+      evidence: options.evidence,
+    }),
+  };
 }
 
 async function buildValidatedSynthesisCandidates(options: {
@@ -362,6 +444,133 @@ function buildCodexFailureSynthesisResult(
   };
 }
 
+function chunkScope(chunk: SynthesisChunk): NonNullable<SynthesizeWithCodexOptions["synthesisScope"]> {
+  return {
+    id: chunk.id,
+    title: chunk.title,
+    reason: chunk.reason,
+    fileRefs: chunk.fileRefs,
+  };
+}
+
+function rewriteChunkedCandidateProvenance(
+  candidate: CandidateRecord,
+  aggregateAttemptId: string,
+  validationIdMap: Map<string, string>,
+): CandidateRecord {
+  const validationId = candidate.provenance.validationId
+    ? validationIdMap.get(candidate.provenance.validationId) ?? candidate.provenance.validationId
+    : undefined;
+  return {
+    ...candidate,
+    provenance: {
+      ...candidate.provenance,
+      synthesisAttemptId: aggregateAttemptId,
+      ...(validationId ? { validationId } : {}),
+    },
+  };
+}
+
+function rewriteChunkedAttemptValidationIds(
+  attempt: SynthesisAttemptRecord,
+  validationIdMap: Map<string, string>,
+): SynthesisAttemptRecord {
+  return {
+    ...attempt,
+    validations: attempt.validations.map((validation) => ({
+      ...validation,
+      id: validationIdMap.get(validation.id) ?? validation.id,
+    })),
+  };
+}
+
+function aggregateChunkedSynthesisAttempt(options: {
+  runId: string;
+  createdAt: string;
+  runtime: SynthesizeWithCodexOptions["runtime"];
+  includeSource: boolean;
+  chunks: SynthesisChunk[];
+  attempts: SynthesisAttemptRecord[];
+  diagnostics: Diagnostic[];
+  aggregateAttemptId: string;
+  evidence: EvidenceRecord[];
+}): SynthesisAttemptRecord | undefined {
+  const first = options.attempts[0];
+  if (!first) {
+    return undefined;
+  }
+  const includedEvidenceIds = uniqueStrings(options.attempts.flatMap((attempt) => (
+    attempt.evidenceManifest.includedEvidenceIds
+  )));
+  const includedEvidenceSet = new Set(includedEvidenceIds);
+  const omittedEvidenceIds = options.evidence
+    .map((record) => record.id)
+    .filter((id) => !includedEvidenceSet.has(id));
+  const chunks = options.chunks.map((chunk) => {
+    const attempt = options.attempts.find((item) => item.runtime["synthesisScope"]
+      && typeof item.runtime["synthesisScope"] === "object"
+      && (item.runtime["synthesisScope"] as { id?: string }).id === chunk.id);
+    return {
+      id: chunk.id,
+      title: chunk.title,
+      evidenceCount: chunk.evidence.length,
+      featureCount: chunk.features.length,
+      existingCandidateCount: chunk.existingCandidates.length,
+      promptBytes: attempt?.promptBytes ?? 0,
+      acceptedCandidateCount: attempt?.acceptedCandidateCount ?? 0,
+      rejectedCandidateCount: attempt?.rejectedCandidateCount ?? 0,
+    };
+  });
+
+  return {
+    schemaVersion,
+    recordType: "synthesis_attempt",
+    id: options.aggregateAttemptId,
+    runId: options.runId,
+    provider: options.runtime.provider,
+    model: options.runtime.model,
+    promptVersion,
+    promptBytes: options.attempts.reduce((sum, attempt) => sum + attempt.promptBytes, 0),
+    runtime: {
+      model: options.runtime.model,
+      effort: options.runtime.effort,
+      timeoutMs: options.runtime.timeoutMs,
+      retries: options.runtime.retries,
+      rpm: options.runtime.rpm,
+      concurrency: options.runtime.concurrency,
+      tokenBudget: options.runtime.tokenBudget,
+      excerptBudget: options.runtime.excerptBudget,
+      privacyMode: options.runtime.privacyMode,
+      allowSourceInModel: options.runtime.allowSourceInModel,
+      synthesisMode: "chunked",
+      chunkCount: options.chunks.length,
+      chunks,
+    },
+    reviewerIds: uniqueStrings(options.attempts.flatMap((attempt) => attempt.reviewerIds)),
+    reviewerRubricVersions: first.reviewerRubricVersions,
+    evidenceManifest: {
+      evidenceCount: includedEvidenceIds.length,
+      includedEvidenceIds,
+      includedFileRefs: uniqueFileReferences(options.attempts.flatMap((attempt) => attempt.evidenceManifest.includedFileRefs)),
+      omittedEvidenceIds,
+      includeSource: options.includeSource,
+      tokenBudget: options.runtime.tokenBudget,
+      excerptBudget: options.runtime.excerptBudget,
+    },
+    rawCandidateCount: options.attempts.reduce((sum, attempt) => sum + attempt.rawCandidateCount, 0),
+    acceptedCandidateCount: options.attempts.reduce((sum, attempt) => sum + attempt.acceptedCandidateCount, 0),
+    rejectedCandidateCount: options.attempts.reduce((sum, attempt) => sum + attempt.rejectedCandidateCount, 0),
+    rejectedEvidenceIds: uniqueStrings(options.attempts.flatMap((attempt) => attempt.rejectedEvidenceIds)),
+    notes: [
+      `Chunked synthesis completed ${options.attempts.length}/${options.chunks.length} scoped packets.`,
+      ...options.attempts.flatMap((attempt) => attempt.notes),
+    ],
+    validations: options.attempts.flatMap((attempt) => attempt.validations),
+    diagnostics: options.diagnostics,
+    createdAt: options.createdAt,
+  };
+}
+
 async function prepareCodexSynthesisInvocation(
   options: SynthesizeWithCodexOptions,
   tempDir: string,
@@ -387,6 +596,8 @@ async function prepareCodexSynthesisInvocation(
     promptBytes: Buffer.byteLength(prompt, "utf8"),
     reviewerIds: reviewerPack.rubrics.map((rubric) => rubric.id),
     reviewerRubricVersions: reviewerRubricVersions(reviewerPack.rubrics),
+    synthesisScope: options.synthesisScope,
+    attemptIdSuffix: options.attemptIdSuffix,
   });
   const args = [
     "exec",
@@ -416,9 +627,6 @@ async function prepareSynthesisWorkspace(tempDir: string): Promise<{ outputPath:
   await writeFile(schemaPath, JSON.stringify(jsonSchema(), null, 2), "utf8");
   return { outputPath, schemaPath };
 }
-
-
-
 
 
 
