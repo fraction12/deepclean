@@ -1,7 +1,7 @@
 # agent-first-cli Specification
 
 ## Purpose
-TBD - created by archiving change define-deepclean-mvp. Update Purpose after archive.
+Deepclean provides a scriptable CLI for agents and humans to initialize project-local state, collect evidence, synthesize cleanup findings, inspect candidates, and emit stable machine-readable contracts without requiring an interactive UI.
 ## Requirements
 ### Requirement: Scriptable command surface
 The system SHALL provide an agent-first CLI workflow with `init`, `scan`, `report`, `next`, `show`, `triage`, and `handoff` or `export` commands.

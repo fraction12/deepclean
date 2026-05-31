@@ -1,5 +1,7 @@
 # Candidate-First Fix Workflow
 
+> Archived 2026-05-31 as superseded by `beta-fix-safety-hardening` and `complete-operating-loop-parity`. Remaining broad-candidate decomposition work continues under `split-broad-candidates`.
+
 ## Why
 
 Deepclean is useful today because it identifies maintainability candidates, generates plans, and gives agents enough context to work. The weak point is the manual glue after that: choose a bounded candidate, create a branch, apply a patch, run verification, revalidate the finding, summarize the result, and decide whether it is ready for a PR.
