@@ -1551,8 +1551,14 @@ ${Array.from({ length: 120 }, (_, index) => `  const dirtyValue${index} = ${inde
       };
       expect(payload.data.stability).toBe("ga-candidate");
       expect(payload.data.contracts.map((contract) => contract.command)).toContain("review-pr");
+      expect(payload.data.contracts.map((contract) => contract.command)).toContain("next");
+      expect(payload.data.contracts.map((contract) => contract.command)).toContain("campaign");
+      expect(payload.data.contracts.map((contract) => contract.command)).toContain("ci --profile");
+      expect(payload.data.contracts.map((contract) => contract.command)).toContain("setup analyzers");
       expect(payload.data.contracts.map((contract) => contract.command)).toContain("fix --mode guarded");
       expect(payload.data.contracts.find((contract) => contract.command === "review-pr")?.requiredFields).toContain("riskSummary");
+      expect(payload.data.contracts.find((contract) => contract.command === "next")?.requiredFields).toContain("opportunity");
+      expect(payload.data.contracts.find((contract) => contract.command === "ci --profile")?.requiredFields).toContain("qualityGateResult");
     });
   });
 
