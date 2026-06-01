@@ -3441,6 +3441,59 @@ async function resolveFixWorkflowTarget(
   }
 
   const state = await latestState(context.paths);
+  const opportunity = (await readLatestPrOpportunities(context.paths)).find((item) => item.id === target);
+  if (opportunity) {
+    if (opportunity.classification !== "safe-narrow-pr") {
+      return {
+        ok: false,
+        exitCode: 2,
+        code: "opportunity_not_fixable",
+        message: `Opportunity ${opportunity.id} is classified as ${opportunity.classification}; guarded fix execution only accepts safe-narrow-pr opportunities.`,
+        diagnostics: opportunity.refusalReason ? [{
+          level: "warning",
+          code: "opportunity_refusal_reason",
+          message: opportunity.refusalReason,
+        }] : [],
+      };
+    }
+    if (opportunity.targetCandidateIds.length !== 1) {
+      return {
+        ok: false,
+        exitCode: 2,
+        code: "opportunity_not_narrow",
+        message: `Opportunity ${opportunity.id} must target exactly one candidate before guarded fix execution.`,
+      };
+    }
+    const candidateId = opportunity.targetCandidateIds[0];
+    const resolvedOpportunityCandidate = candidateId ? resolveFixTargetFromCandidates(state.candidates, candidateId) : undefined;
+    if (!resolvedOpportunityCandidate) {
+      return {
+        ok: false,
+        exitCode: 1,
+        code: "opportunity_candidate_not_found",
+        message: `Opportunity ${opportunity.id} targets a candidate that is not in the latest scan: ${candidateId ?? "n/a"}`,
+      };
+    }
+    if (isSplittableParentCandidate(resolvedOpportunityCandidate.candidate, state.evidence)) {
+      return {
+        ok: false,
+        exitCode: 2,
+        code: "fix_target_needs_split",
+        message: `Opportunity ${opportunity.id} resolves to a candidate that is still too broad. Run \`deepclean split ${resolvedOpportunityCandidate.candidate.id}\` and target one child candidate.`,
+      };
+    }
+    return { ok: true, config, state, resolved: resolvedOpportunityCandidate };
+  }
+
+  if (target.startsWith("opportunity-")) {
+    return {
+      ok: false,
+      exitCode: 1,
+      code: "opportunity_not_found",
+      message: `Opportunity not found in the latest campaign state: ${target}`,
+    };
+  }
+
   const resolved = resolveFixTargetFromCandidates(state.candidates, target);
   if (!resolved) {
     return {
