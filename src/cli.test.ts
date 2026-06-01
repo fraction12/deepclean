@@ -2374,6 +2374,39 @@ process.exit(0);
     });
   });
 
+  test("fix resolves safe narrow opportunity targets into candidate fix workflow", async () => {
+    await withTempRepo(async (repo) => {
+      const prepared = await prepareFixableRepo(repo);
+      await enableFixExecution(repo);
+      const opportunityId = await writeFixOpportunity(repo, prepared.candidateId, "safe-narrow-pr");
+      const result = await runCli(["fix", opportunityId, "--mode", "guarded", "--patch", prepared.patchPath, "--dry-run", "--json"], repo);
+      expect(result.code).toBe(0);
+      const payload = JSON.parse(result.stdout) as {
+        data: { attempt: { candidateId: string; status: string; dryRun: boolean } };
+      };
+      expect(payload.data.attempt.candidateId).toBe(prepared.candidateId);
+      expect(payload.data.attempt.status).toBe("previewed");
+      expect(payload.data.attempt.dryRun).toBe(true);
+    });
+  });
+
+  test("fix refuses unsafe opportunity targets before mutation", async () => {
+    await withTempRepo(async (repo) => {
+      const prepared = await prepareFixableRepo(repo);
+      await enableFixExecution(repo);
+      const opportunityId = await writeFixOpportunity(repo, prepared.candidateId, "tests-first");
+      const result = await runCli(["fix", opportunityId, "--mode", "guarded", "--patch", prepared.patchPath, "--dry-run", "--json"], repo);
+      expect(result.code).toBe(2);
+      const payload = JSON.parse(result.stdout) as {
+        error: { code: string; message: string };
+        diagnostics: Array<{ code: string }>;
+      };
+      expect(payload.error.code).toBe("opportunity_not_fixable");
+      expect(payload.error.message).toContain("tests-first");
+      expect(payload.diagnostics.some((diagnostic) => diagnostic.code === "opportunity_refusal_reason")).toBe(true);
+    });
+  });
+
   test("fix refuses when fix execution is disabled in config", async () => {
     await withTempRepo(async (repo) => {
       const prepared = await prepareFixableRepo(repo);
@@ -4579,6 +4612,49 @@ async function prepareFixableRepo(repo: string): Promise<{ candidateId: string; 
   const patchPath = path.join(repo, "fix.patch");
   await writeFile(patchPath, diff.stdout, "utf8");
   return { candidateId: candidate.id, findingId: candidate.findingId, patchPath };
+}
+
+async function writeFixOpportunity(
+  repo: string,
+  candidateId: string,
+  classification: "safe-narrow-pr" | "tests-first",
+): Promise<string> {
+  const runFile = await latestRunFile(repo);
+  const runId = runFile.replace(/\.json$/, "");
+  const opportunityId = `opportunity-${classification}`;
+  await mkdir(path.join(repo, ".deepclean", "opportunities"), { recursive: true });
+  await writeFile(path.join(repo, ".deepclean", "opportunities", runFile), `${JSON.stringify([{
+    schemaVersion,
+    recordType: "pr_opportunity",
+    id: opportunityId,
+    runId,
+    targetCandidateIds: [candidateId],
+    targetFindingIds: [],
+    targetClusterIds: [],
+    classification,
+    status: classification === "safe-narrow-pr" ? "recommended" : "blocked",
+    title: "Fix invoice calculation boundary",
+    oneSentenceChange: "Apply the existing focused invoice patch.",
+    rationale: "The opportunity is a test fixture for guarded fix target resolution.",
+    score: 90,
+    confidence: "high",
+    risk: "safe",
+    ownedFiles: [{ path: "src/invoice.ts" }],
+    contextFiles: [],
+    doNotTouch: ["src/checkout.ts"],
+    behaviorInvariants: ["Invoice output stays equivalent."],
+    validationPlan: ["test -f src/invoice.ts"],
+    testsRequiredFirst: classification === "tests-first",
+    expectedReviewerConcern: "Keep the patch scoped to the invoice fixture.",
+    stopLine: "Stop after the invoice patch previews cleanly.",
+    expectedPayoff: "Proves opportunity IDs can drive guarded fix safely.",
+    refusalReason: classification === "tests-first" ? "Add tests before mutating source." : undefined,
+    sourceSignals: [],
+    diagnostics: [],
+    createdAt: "2026-06-01T00:00:00.000Z",
+    updatedAt: "2026-06-01T00:00:00.000Z",
+  }], null, 2)}\n`, "utf8");
+  return opportunityId;
 }
 
 async function prepareSplittableCandidate(repo: string): Promise<{ id: string }> {
