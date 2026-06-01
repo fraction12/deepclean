@@ -37,6 +37,7 @@ import {
   withStateWriteLock,
 } from "./locks.js";
 import { buildCandidatePlan, buildClusterPlan } from "./plans.js";
+import { buildPrOpportunities } from "./opportunities.js";
 import { classifyRevalidation, verificationRunIdsForFinding } from "./revalidation.js";
 import {
   buildHandoff,
@@ -58,11 +59,11 @@ import {
   readFindings,
   readFixAttempts,
   readHandoffs,
+  readLatestPrOpportunities,
   readLatestCandidates,
   readLatestClusters,
   readLatestEvidence,
   readLatestFeatures,
-  readLatestPrOpportunities,
   readLatestSynthesisAttempt,
   readLifecycleEvents,
   readPlans,
@@ -83,6 +84,7 @@ import {
   writeIdentityMatches,
   writeLifecycleEvents,
   writePlan,
+  writePrOpportunities,
   writeReport,
   writeRetentionManifest,
   writeRevalidation,
@@ -96,6 +98,7 @@ import {
   featureMapSources,
   schemaVersion,
   type CandidateRecord,
+  type CampaignSummaryRecord,
   type ClusterRecord,
   type DeepcleanConfig,
   type Diagnostic,
@@ -130,6 +133,7 @@ const commands = [
   "review-pr",
   "report",
   "next",
+  "campaign",
   "list",
   "findings",
   "show",
@@ -294,6 +298,7 @@ Commands:
     --output <file>            Also write the JSON context to a file
   report                       Write and print a ranked report
   next                         Show the highest-priority open candidate
+  campaign                     Summarize current cleanup campaign opportunities
   list                         List findings with shared filters
   findings                     Alias for list
   show <candidate-or-theme>    Show one candidate or cleanup theme with evidence
@@ -358,6 +363,7 @@ Examples:
   deepclean report
   deepclean review-pr --base origin/main --head HEAD --json --state-dir .octocheck/deepclean
   deepclean next --json
+  deepclean campaign --json
   deepclean show <candidate-id>
   deepclean plan <candidate-id>
   deepclean handoff <candidate-id> --format codex
@@ -420,7 +426,9 @@ export async function main(argv: string[], cwd = process.cwd()): Promise<number>
       case "report":
         return await withWriteLock(context, () => reportCommand(context));
       case "next":
-        return await nextCommand(context);
+        return await withWriteLock(context, () => nextCommand(context));
+      case "campaign":
+        return await campaignCommand(context);
       case "list":
       case "findings":
         return await listCommand(context);
@@ -2517,13 +2525,13 @@ async function reportCommand(context: CommandContext): Promise<number> {
 }
 
 async function nextCommand(context: CommandContext): Promise<number> {
-  const [candidates, clusters, features, revalidations, fixAttempts] = await Promise.all([
-    readLatestCandidates(context.paths),
-    readLatestClusters(context.paths),
-    readLatestFeatures(context.paths),
+  const [state, findings, revalidations, fixAttempts] = await Promise.all([
+    latestState(context.paths),
+    readFindings(context.paths),
     readRevalidations(context.paths),
     readFixAttempts(context.paths),
   ]);
+  const { candidates, clusters, evidence, features, runId } = state;
   const filter = queryFilterFromFlags(context);
   const selectedFeature = filter.feature ? features.find((feature) => feature.featureId === filter.feature) : undefined;
   if (filter.feature && !selectedFeature) {
@@ -2531,21 +2539,133 @@ async function nextCommand(context: CommandContext): Promise<number> {
     return 1;
   }
   const filtered = filterCandidatesForQuery(candidates, clusters, filter);
-  const ranked = rankCandidates(filtered);
-  const candidate = ranked.find((item) => item.status === "open");
+  const opportunities = buildPrOpportunities({
+    runId,
+    candidates: filtered,
+    clusters,
+    evidence,
+    features,
+    findings,
+    revalidations,
+    fixAttempts,
+  });
+  const opportunitiesPath = await writePrOpportunities(context.paths, runId, opportunities);
+  const opportunity = opportunities.find((item) => item.status === "recommended")
+    ?? opportunities.find((item) => item.classification === "stop-campaign")
+    ?? null;
+  const legacyCandidate = rankCandidates(filtered).find((item) => item.status === "open") ?? null;
+  const candidate = opportunity?.targetCandidateIds[0]
+    ? candidates.find((item) => item.id === opportunity.targetCandidateIds[0]) ?? null
+    : legacyCandidate;
   emit(context.json, ok("next", {
+    opportunity,
+    opportunities,
+    opportunitiesPath,
     candidate: candidate ?? null,
     proofStatus: candidate ? proofStatusForCandidate(candidate, revalidations, fixAttempts) : null,
     selectedFeature,
   }));
   if (!context.json && !context.quiet) {
-    if (!candidate) {
-      console.log("No open candidates.");
-    } else {
+    if (opportunity?.classification === "stop-campaign") {
+      console.log(opportunity.rationale);
+    } else if (candidate) {
+      console.log(`Next PR opportunity: ${opportunity?.id ?? "n/a"} ${opportunity?.title ?? candidate.title}`);
       printCandidate(candidate);
+    } else {
+      console.log("No open candidates.");
     }
   }
   return 0;
+}
+
+async function campaignCommand(context: CommandContext): Promise<number> {
+  const [state, persisted, findings, revalidations, fixAttempts] = await Promise.all([
+    latestState(context.paths),
+    readLatestPrOpportunities(context.paths),
+    readFindings(context.paths),
+    readRevalidations(context.paths),
+    readFixAttempts(context.paths),
+  ]);
+  const opportunities = persisted.length > 0
+    ? persisted
+    : buildPrOpportunities({
+      runId: state.runId,
+      candidates: state.candidates,
+      clusters: state.clusters,
+      evidence: state.evidence,
+      features: state.features,
+      findings,
+      revalidations,
+      fixAttempts,
+    });
+  const summary = buildCampaignSummaryRecord({
+    runId: state.runId,
+    opportunities,
+    fixAttempts,
+  });
+
+  emit(context.json, ok("campaign", {
+    summary,
+    opportunities,
+    recommendedOpportunity: opportunities.find((item) => item.id === summary.recommendedOpportunityId) ?? null,
+  }));
+  if (!context.json && !context.quiet) {
+    if (summary.recommendedOpportunityId) {
+      const recommended = opportunities.find((item) => item.id === summary.recommendedOpportunityId);
+      console.log(`Recommended: ${recommended?.id ?? summary.recommendedOpportunityId} ${recommended?.title ?? ""}`.trim());
+    } else {
+      console.log(summary.stopCampaignRationale ?? "No campaign recommendation available.");
+    }
+    for (const [classification, count] of Object.entries(summary.counts.byClassification).sort()) {
+      console.log(`${classification}: ${count}`);
+    }
+  }
+  return 0;
+}
+
+function buildCampaignSummaryRecord(options: {
+  runId: string;
+  opportunities: PrOpportunityRecord[];
+  fixAttempts: FixAttemptRecord[];
+}): CampaignSummaryRecord {
+  const createdAt = new Date().toISOString();
+  const recommended = options.opportunities.find((item) => item.status === "recommended");
+  const stop = options.opportunities.find((item) => item.classification === "stop-campaign");
+  return {
+    schemaVersion,
+    recordType: "campaign_summary",
+    id: timestampId("campaign"),
+    runId: options.runId,
+    currentRunId: options.runId,
+    opportunityRunId: options.runId,
+    ...(recommended ? { recommendedOpportunityId: recommended.id } : {}),
+    ...(!recommended && stop ? { stopCampaignRationale: stop.rationale } : {}),
+    counts: {
+      byClassification: countBy(options.opportunities, (item) => item.classification),
+      byStatus: countBy(options.opportunities, (item) => item.status),
+    },
+    completedOpportunityIds: options.opportunities
+      .filter((item) => item.status === "completed")
+      .map((item) => item.id),
+    supersededOpportunityIds: options.opportunities
+      .filter((item) => item.status === "superseded")
+      .map((item) => item.id),
+    knownFixAttemptIds: options.fixAttempts.map((attempt) => attempt.id),
+    knownPrUrls: options.fixAttempts.flatMap((attempt) => attempt.pr?.url ? [attempt.pr.url] : []),
+    improvements: options.opportunities
+      .filter((item) => item.status === "completed")
+      .map((item) => item.expectedPayoff),
+    remainingDebt: Object.entries(countBy(
+      options.opportunities.filter((item) => item.classification !== "safe-narrow-pr" && item.classification !== "stop-campaign"),
+      (item) => item.classification,
+    )).map(([classification, count]) => ({
+      classification: classification as CampaignSummaryRecord["remainingDebt"][number]["classification"],
+      count,
+      summary: `${count} ${classification} opportunit${count === 1 ? "y" : "ies"} remain.`,
+    })),
+    diagnostics: [],
+    createdAt,
+  };
 }
 
 async function listCommand(context: CommandContext): Promise<number> {

@@ -968,8 +968,18 @@ test("checkout", () => calculateCheckout([], false));
       ))).toBe(true);
 
       const next = await runCli(["next", "--json"], repo);
-      const nextPayload = JSON.parse(next.stdout) as { data: { candidate: { id: string } | null } };
+      const nextPayload = JSON.parse(next.stdout) as {
+        data: {
+          opportunity: { id: string; classification: string } | null;
+          opportunities: Array<{ id: string; classification: string }>;
+          opportunitiesPath: string;
+          candidate: { id: string } | null;
+        };
+      };
       expect(nextPayload.data.candidate?.id).toMatch(/^candidate-/);
+      expect(nextPayload.data.opportunity?.id).toMatch(/^opportunity-/);
+      expect(nextPayload.data.opportunities.length).toBeGreaterThan(0);
+      await expect(stat(nextPayload.data.opportunitiesPath)).resolves.toBeTruthy();
 
       const id = nextPayload.data.candidate?.id;
       expect(id).toBeTruthy();
@@ -980,6 +990,21 @@ test("checkout", () => calculateCheckout([], false));
       expect(showPayload.data.candidate.id).toBe(id);
       expect(showPayload.data.evidence.length).toBeGreaterThan(0);
       expect(showPayload.data.features.length).toBeGreaterThan(0);
+
+      const campaign = await runCli(["campaign", "--json"], repo);
+      expect(campaign.code).toBe(0);
+      const campaignPayload = JSON.parse(campaign.stdout) as {
+        data: {
+          summary: {
+            counts: { byClassification: Record<string, number> };
+            recommendedOpportunityId?: string;
+            stopCampaignRationale?: string;
+          };
+          opportunities: Array<{ id: string; classification: string }>;
+        };
+      };
+      expect(campaignPayload.data.opportunities.length).toBeGreaterThan(0);
+      expect(Object.values(campaignPayload.data.summary.counts.byClassification).reduce((sum, count) => sum + count, 0)).toBeGreaterThan(0);
     });
   });
 
