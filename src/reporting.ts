@@ -36,7 +36,11 @@ export function buildReportRecord(
   };
 }
 
-export function renderMarkdownReport(candidates: CandidateRecord[], features: FeatureRecord[] = []): string {
+export function renderMarkdownReport(
+  candidates: CandidateRecord[],
+  features: FeatureRecord[] = [],
+  opportunities: PrOpportunityRecord[] = [],
+): string {
   const recommendations = buildReportRecommendations(candidates, [], features);
   const queuedCandidates = agentQueueCandidates(candidates.filter((candidate) => candidate.status === "open"));
   const lines = [
@@ -44,6 +48,7 @@ export function renderMarkdownReport(candidates: CandidateRecord[], features: Fe
     "",
     `Found ${candidates.length} cleanup candidate${candidates.length === 1 ? "" : "s"}.`,
     "",
+    ...opportunityMarkdown(opportunities),
     ...recommendationMarkdown(recommendations),
     ...featureMapMarkdown(candidates, features),
     ...agentQueueMarkdown(queuedCandidates),
@@ -64,6 +69,7 @@ export function renderMarkdownReportWithClusters(
   candidates: CandidateRecord[],
   clusters: ClusterRecord[],
   features: FeatureRecord[] = [],
+  opportunities: PrOpportunityRecord[] = [],
 ): string {
   const recommendations = buildReportRecommendations(candidates, clusters, features);
   const queuedCandidates = agentQueueCandidates(candidates.filter((candidate) => candidate.status === "open"));
@@ -72,6 +78,7 @@ export function renderMarkdownReportWithClusters(
     "",
     `Found ${candidates.length} cleanup candidate${candidates.length === 1 ? "" : "s"} across ${clusters.length} theme${clusters.length === 1 ? "" : "s"}.`,
     "",
+    ...opportunityMarkdown(opportunities),
     ...recommendationMarkdown(recommendations),
     ...featureMapMarkdown(candidates, features),
     ...agentQueueMarkdown(queuedCandidates),
@@ -112,6 +119,60 @@ export function renderMarkdownReportWithClusters(
   }
 
   return `${lines.join("\n")}\n`;
+}
+
+function opportunityMarkdown(opportunities: PrOpportunityRecord[]): string[] {
+  if (opportunities.length === 0) {
+    return [];
+  }
+  const counts = countBy(opportunities, (opportunity) => opportunity.classification);
+  const recommended = opportunities.find((opportunity) => opportunity.status === "recommended");
+  const lines = ["## PR Opportunities", ""];
+  if (recommended) {
+    lines.push(
+      `Start with ${recommended.id}: ${recommended.title}`,
+      "",
+      recommended.oneSentenceChange,
+      "",
+      `Classification: ${recommended.classification}`,
+      `Stop line: ${recommended.stopLine}`,
+      `Plan: deepclean plan ${recommended.id}`,
+      `Handoff: deepclean handoff ${recommended.id}`,
+      "",
+    );
+  } else {
+    const stop = opportunities.find((opportunity) => opportunity.classification === "stop-campaign");
+    lines.push(stop?.rationale ?? "No PR-sized opportunity is currently recommended.", "");
+  }
+  lines.push("Classification counts:");
+  for (const [classification, count] of Object.entries(counts).sort()) {
+    lines.push(`- ${classification}: ${count}`);
+  }
+  lines.push("");
+  const top = opportunities
+    .filter((opportunity) => opportunity.classification !== "stop-campaign")
+    .slice(0, 8);
+  if (top.length > 0) {
+    lines.push("Top opportunity queue:");
+    for (const opportunity of top) {
+      lines.push(
+        `- ${opportunity.id} ${opportunity.classification} ${opportunity.title}`,
+        `  ${opportunity.oneSentenceChange}`,
+        `  Verification: ${opportunity.validationPlan.join(", ") || "deepclean scan"}`,
+      );
+    }
+    lines.push("");
+  }
+  return lines;
+}
+
+function countBy<T>(items: T[], key: (item: T) => string): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const item of items) {
+    const value = key(item);
+    counts[value] = (counts[value] ?? 0) + 1;
+  }
+  return counts;
 }
 
 function agentQueueMarkdown(candidates: CandidateRecord[]): string[] {
