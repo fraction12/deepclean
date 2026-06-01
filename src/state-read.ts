@@ -4,6 +4,8 @@ import type { StatePaths } from "./state-paths.js";
 import {
   candidateObservationRecordSchema,
   candidateRecordSchema,
+  analyzerSetupPlanRecordSchema,
+  campaignSummaryRecordSchema,
   clusterRecordSchema,
   evidenceRecordSchema,
   featureRecordSchema,
@@ -13,12 +15,17 @@ import {
   identityMatchRecordSchema,
   lifecycleEventRecordSchema,
   planRecordSchema,
+  prOpportunityRecordSchema,
+  qualityGateResultRecordSchema,
+  qualityProfileRecordSchema,
   reportRecordSchema,
   revalidationRecordSchema,
   runRecordSchema,
   synthesisAttemptRecordSchema,
   type CandidateObservationRecord,
   type CandidateRecord,
+  type AnalyzerSetupPlanRecord,
+  type CampaignSummaryRecord,
   type ClusterRecord,
   type EvidenceRecord,
   type FeatureRecord,
@@ -28,6 +35,9 @@ import {
   type IdentityMatchRecord,
   type LifecycleEventRecord,
   type PlanRecord,
+  type PrOpportunityRecord,
+  type QualityGateResultRecord,
+  type QualityProfileRecord,
   type ReportRecord,
   type RevalidationRecord,
   type RunRecord,
@@ -163,6 +173,67 @@ export async function readRevalidations(paths: StatePaths): Promise<Revalidation
     records.push(revalidationRecordSchema.parse(JSON.parse(raw)));
   }
   return records.sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
+}
+
+export async function readLatestPrOpportunities(paths: StatePaths): Promise<PrOpportunityRecord[]> {
+  const runId = await latestRunId(paths);
+  if (!runId) {
+    return [];
+  }
+  return readPrOpportunities(paths, runId);
+}
+
+export async function readPrOpportunities(
+  paths: StatePaths,
+  runId: string,
+): Promise<PrOpportunityRecord[]> {
+  try {
+    const raw = await readFile(path.join(paths.opportunitiesDir, `${runId}.json`), "utf8");
+    const parsed = JSON.parse(raw) as unknown[];
+    return parsed.map((item) => prOpportunityRecordSchema.parse(item));
+  } catch {
+    return [];
+  }
+}
+
+export async function readCampaignSummaries(paths: StatePaths): Promise<CampaignSummaryRecord[]> {
+  const files = await jsonFiles(paths.campaignsDir);
+  const summaries: CampaignSummaryRecord[] = [];
+  for (const file of files) {
+    const raw = await readFile(path.join(paths.campaignsDir, file), "utf8");
+    summaries.push(campaignSummaryRecordSchema.parse(JSON.parse(raw)));
+  }
+  return summaries.sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
+}
+
+export async function readQualityProfiles(paths: StatePaths): Promise<QualityProfileRecord[]> {
+  const files = await jsonFiles(paths.qualityProfilesDir);
+  const profiles: QualityProfileRecord[] = [];
+  for (const file of files) {
+    const raw = await readFile(path.join(paths.qualityProfilesDir, file), "utf8");
+    profiles.push(qualityProfileRecordSchema.parse(JSON.parse(raw)));
+  }
+  return profiles.sort((a, b) => a.id.localeCompare(b.id));
+}
+
+export async function readQualityGateResults(paths: StatePaths): Promise<QualityGateResultRecord[]> {
+  const files = await jsonFiles(paths.qualityResultsDir);
+  const results: QualityGateResultRecord[] = [];
+  for (const file of files) {
+    const raw = await readFile(path.join(paths.qualityResultsDir, file), "utf8");
+    results.push(qualityGateResultRecordSchema.parse(JSON.parse(raw)));
+  }
+  return results.sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
+}
+
+export async function readAnalyzerSetupPlans(paths: StatePaths): Promise<AnalyzerSetupPlanRecord[]> {
+  const files = await jsonFiles(paths.analyzerSetupDir);
+  const plans: AnalyzerSetupPlanRecord[] = [];
+  for (const file of files) {
+    const raw = await readFile(path.join(paths.analyzerSetupDir, file), "utf8");
+    plans.push(analyzerSetupPlanRecordSchema.parse(JSON.parse(raw)));
+  }
+  return plans.sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
 }
 
 export async function readReports(paths: StatePaths): Promise<ReportRecord[]> {

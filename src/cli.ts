@@ -62,6 +62,7 @@ import {
   readLatestClusters,
   readLatestEvidence,
   readLatestFeatures,
+  readLatestPrOpportunities,
   readLatestSynthesisAttempt,
   readLifecycleEvents,
   readPlans,
@@ -105,6 +106,7 @@ import {
   type HandoffRecord,
   type LifecycleEventRecord,
   type PlanRecord,
+  type PrOpportunityRecord,
   type ReportRecord,
   type RetentionManifestRecord,
   type RevalidationRecord,
@@ -1805,11 +1807,12 @@ async function pruneCommand(context: CommandContext): Promise<number> {
 }
 
 async function scrubCommand(context: CommandContext): Promise<number> {
-  const [candidates, clusters, evidence, features] = await Promise.all([
+  const [candidates, clusters, evidence, features, opportunities] = await Promise.all([
     readLatestCandidates(context.paths),
     readLatestClusters(context.paths),
     readLatestEvidence(context.paths),
     readLatestFeatures(context.paths),
+    readLatestPrOpportunities(context.paths),
   ]);
   const latest = await latestRunId(context.paths);
   const output = {
@@ -1823,6 +1826,7 @@ async function scrubCommand(context: CommandContext): Promise<number> {
       clusters: clusters.length,
       evidence: evidence.length,
       features: features.length,
+      opportunities: opportunities.length,
     },
     candidates: rankCandidates(candidates).map((candidate) => ({
       id: candidate.id,
@@ -1869,6 +1873,7 @@ async function scrubCommand(context: CommandContext): Promise<number> {
       verification: feature.verification,
       tags: feature.tags,
     })),
+    opportunities: opportunities.map((opportunity) => sourceSafeOpportunity(opportunity)),
     privacyNotes: [
       "Source-safe export omits source excerpts, model prompts, provider payloads, absolute state paths, and generated handoff/plan prose.",
       "Repository-relative paths are retained so findings remain actionable.",
@@ -5452,6 +5457,11 @@ async function missingStateDirectories(paths: StatePaths): Promise<string[]> {
     ["identity-matches", paths.identityMatchesDir],
     ["revalidations", paths.revalidationsDir],
     ["ci", paths.ciDir],
+    ["opportunities", paths.opportunitiesDir],
+    ["campaigns", paths.campaignsDir],
+    ["quality-profiles", paths.qualityProfilesDir],
+    ["quality-results", paths.qualityResultsDir],
+    ["analyzer-setup", paths.analyzerSetupDir],
     ["locks", paths.locksDir],
     ["retention", paths.retentionDir],
     ["fixes", paths.fixesDir],
@@ -5502,6 +5512,11 @@ function stateIntegrityDirectories(paths: StatePaths): StateIntegrityDirectory[]
     { name: "identity-matches", dir: paths.identityMatchesDir },
     { name: "revalidations", dir: paths.revalidationsDir },
     { name: "ci", dir: paths.ciDir },
+    { name: "opportunities", dir: paths.opportunitiesDir, arrayRecords: true },
+    { name: "campaigns", dir: paths.campaignsDir },
+    { name: "quality-profiles", dir: paths.qualityProfilesDir },
+    { name: "quality-results", dir: paths.qualityResultsDir },
+    { name: "analyzer-setup", dir: paths.analyzerSetupDir },
     { name: "retention", dir: paths.retentionDir },
     { name: "fixes", dir: paths.fixesDir },
     { name: "synthesis", dir: paths.synthesisDir },
@@ -6054,6 +6069,7 @@ async function buildRetentionManifest(context: CommandContext): Promise<Retentio
     [context.paths.clustersDir, "json"],
     [context.paths.observationsDir, "json"],
     [context.paths.synthesisDir, "json"],
+    [context.paths.opportunitiesDir, "json"],
   ] as const) {
     const files = await filesWithExtension(dir, extension);
     for (const file of files) {
@@ -6206,6 +6222,34 @@ function sourceSafeFile(
     path: normalized.split(path.sep).join("/"),
     ...(file.startLine ? { startLine: file.startLine } : {}),
     ...(file.endLine ? { endLine: file.endLine } : {}),
+  };
+}
+
+function sourceSafeOpportunity(opportunity: PrOpportunityRecord): Record<string, unknown> {
+  return {
+    id: opportunity.id,
+    runId: opportunity.runId,
+    classification: opportunity.classification,
+    status: opportunity.status,
+    title: opportunity.title,
+    targetCandidateIds: opportunity.targetCandidateIds,
+    targetFindingIds: opportunity.targetFindingIds,
+    targetClusterIds: opportunity.targetClusterIds,
+    score: opportunity.score,
+    confidence: opportunity.confidence,
+    risk: opportunity.risk,
+    ownedFiles: opportunity.ownedFiles.map((file) => ({
+      path: file.path,
+      ...(file.startLine ? { startLine: file.startLine } : {}),
+      ...(file.endLine ? { endLine: file.endLine } : {}),
+    })),
+    contextFiles: opportunity.contextFiles.map((file) => ({
+      path: file.path,
+      ...(file.startLine ? { startLine: file.startLine } : {}),
+      ...(file.endLine ? { endLine: file.endLine } : {}),
+    })),
+    doNotTouch: opportunity.doNotTouch,
+    testsRequiredFirst: opportunity.testsRequiredFirst,
   };
 }
 
@@ -6556,6 +6600,11 @@ async function stateArtifactCounts(paths: StatePaths): Promise<Record<string, nu
     ["identity-matches", paths.identityMatchesDir],
     ["revalidations", paths.revalidationsDir],
     ["ci", paths.ciDir],
+    ["opportunities", paths.opportunitiesDir],
+    ["campaigns", paths.campaignsDir],
+    ["quality-profiles", paths.qualityProfilesDir],
+    ["quality-results", paths.qualityResultsDir],
+    ["analyzer-setup", paths.analyzerSetupDir],
     ["locks", paths.locksDir],
     ["retention", paths.retentionDir],
     ["fixes", paths.fixesDir],

@@ -6,4 +6,6 @@ export * from "./evidence-types.js";
 export * from "./candidate-types.js";
 export * from "./finding-types.js";
 export * from "./operation-types.js";
+export * from "./opportunity-types.js";
+export * from "./quality-types.js";
 export * from "./reporting-types.js";

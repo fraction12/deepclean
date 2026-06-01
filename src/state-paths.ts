@@ -20,6 +20,11 @@ export interface StatePaths {
   identityMatchesDir: string;
   revalidationsDir: string;
   ciDir: string;
+  opportunitiesDir: string;
+  campaignsDir: string;
+  qualityProfilesDir: string;
+  qualityResultsDir: string;
+  analyzerSetupDir: string;
   locksDir: string;
   retentionDir: string;
   fixesDir: string;
@@ -53,6 +58,11 @@ export function resolveStatePaths(options: {
     identityMatchesDir: path.join(stateDir, "identity-matches"),
     revalidationsDir: path.join(stateDir, "revalidations"),
     ciDir: path.join(stateDir, "ci"),
+    opportunitiesDir: path.join(stateDir, "opportunities"),
+    campaignsDir: path.join(stateDir, "campaigns"),
+    qualityProfilesDir: path.join(stateDir, "quality", "profiles"),
+    qualityResultsDir: path.join(stateDir, "quality", "results"),
+    analyzerSetupDir: path.join(stateDir, "quality", "setup"),
     locksDir: path.join(stateDir, "locks"),
     retentionDir: path.join(stateDir, "retention"),
     fixesDir: path.join(stateDir, "fixes"),

@@ -123,6 +123,47 @@ export const ciRunStatuses = [
   "policy-failed",
   "error",
 ] as const;
+export const prOpportunityClassifications = [
+  "safe-narrow-pr",
+  "tests-first",
+  "spec-design-first",
+  "bad-target",
+  "duplicate",
+  "backlog-design-debt",
+  "do-not-automate",
+  "stop-campaign",
+] as const;
+export const prOpportunityStatuses = [
+  "recommended",
+  "available",
+  "blocked",
+  "rejected",
+  "completed",
+  "superseded",
+] as const;
+export const qualityProfileModes = ["advisory", "blocking"] as const;
+export const qualityProfileScopes = ["repo", "pr"] as const;
+export const qualityGateStatuses = ["passed", "failed", "advisory", "error"] as const;
+export const qualityGateFamilies = [
+  "maintainability",
+  "security",
+  "bug-risk",
+  "dependency-risk",
+  "duplication",
+  "test-proof",
+  "policy",
+] as const;
+export const analyzerEvidenceClasses = [
+  "built-in",
+  "configured-analyzer",
+  "recommended-analyzer",
+] as const;
+export const analyzerCoverageStatuses = [
+  "covered",
+  "partial",
+  "missing",
+  "not-configured",
+] as const;
 export const featureKinds = [
   "package-script",
   "route",
