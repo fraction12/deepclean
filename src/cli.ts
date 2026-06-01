@@ -46,7 +46,7 @@ import {
   renderMarkdownReportWithClusters,
 } from "./reporting.js";
 import { buildProgressSummary, renderProgressSummary } from "./progress.js";
-import { buildReviewPrContext } from "./review-pr.js";
+import { buildReviewPrContext, type ReviewPrTarget } from "./review-pr.js";
 import {
   ensureState,
   latestRunId,
@@ -295,6 +295,7 @@ Commands:
   review-pr                    Emit source-safe PR context for review agents
     --base <ref>               Base ref for PR diff, default origin/main
     --head <ref>               Head ref for PR diff, default HEAD
+    --target <id>              Candidate, finding, or opportunity ID to judge the PR against
     --output <file>            Also write the JSON context to a file
   report                       Write and print a ranked report
   next                         Show the highest-priority open candidate
@@ -2222,6 +2223,11 @@ async function reviewPrCommand(context: CommandContext): Promise<number> {
     return 2;
   }
   const outputPath = outputPathResult.path;
+  const targetResult = await resolveReviewPrTarget(context, flagString(context.parsed.flags, "target"));
+  if (!targetResult.ok) {
+    emit(context.json, fail("review-pr", targetResult.code, targetResult.message));
+    return 1;
+  }
   const data = buildReviewPrContext({
     id: timestampId("review-pr"),
     runId: scan.runId,
@@ -2233,6 +2239,7 @@ async function reviewPrCommand(context: CommandContext): Promise<number> {
     candidates: scan.data.candidates,
     evidence: await readEvidence(context.paths, scan.runId),
     features: await readFeatures(context.paths, scan.runId),
+    ...(targetResult.target ? { target: targetResult.target } : {}),
     createdAt: new Date().toISOString(),
     ...(outputPath ? { outputPath } : {}),
   });
@@ -2270,6 +2277,38 @@ function resolveReviewPrOutputPath(
     };
   }
   return { ok: true, path: resolved };
+}
+
+async function resolveReviewPrTarget(
+  context: CommandContext,
+  targetId: string | undefined,
+): Promise<{ ok: true; target?: ReviewPrTarget } | { ok: false; code: string; message: string }> {
+  if (!targetId) {
+    return { ok: true };
+  }
+  const opportunities = await readLatestPrOpportunities(context.paths);
+  const opportunity = opportunities.find((item) => item.id === targetId);
+  if (opportunity) {
+    return { ok: true, target: { id: targetId, type: "opportunity", opportunity } };
+  }
+  const candidates = await readLatestCandidates(context.paths);
+  const candidate = resolveCandidateFromRunState(candidates, targetId)
+    ?? await candidateForHistoryLookup(context.paths, targetId, undefined);
+  if (candidate) {
+    return {
+      ok: true,
+      target: {
+        id: targetId,
+        type: candidate.findingId === targetId ? "finding" : "candidate",
+        candidate,
+      },
+    };
+  }
+  return {
+    ok: false,
+    code: "review_pr_target_not_found",
+    message: `Review target not found: ${targetId}`,
+  };
 }
 
 function pathIsWithin(candidate: string, root: string): boolean {
