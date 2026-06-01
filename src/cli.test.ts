@@ -1068,6 +1068,14 @@ test("checkout", () => calculateCheckout([], false));
       };
       expect(campaignPayload.data.opportunities.length).toBeGreaterThan(0);
       expect(Object.values(campaignPayload.data.summary.counts.byClassification).reduce((sum, count) => sum + count, 0)).toBeGreaterThan(0);
+
+      const campaignOpportunityId = campaignPayload.data.opportunities[0]?.id ?? "";
+      const ciAfterCampaign = await runCli(["ci", "--evidence-only", "--json", "--profile", "balanced"], repo);
+      expect(ciAfterCampaign.code).toBe(0);
+      const campaignOpportunityPlan = await runCli(["plan", campaignOpportunityId, "--json"], repo);
+      expect(campaignOpportunityPlan.code).toBe(0);
+      const campaignOpportunityHandoff = await runCli(["handoff", campaignOpportunityId, "--json"], repo);
+      expect(campaignOpportunityHandoff.code).toBe(0);
     });
   });
 
@@ -1649,6 +1657,48 @@ ${Array.from({ length: 120 }, (_, index) => `  const dirtyValue${index} = ${inde
       expect(payload.data.targetVerdict?.verdict).toBe("addresses-target");
       expect(payload.data.targetVerdict?.ownedFiles).toContain("src/checkout.ts");
       expect(payload.data.targetVerdict?.changedDoNotTouchFiles).toEqual([]);
+    });
+  });
+
+  test("review-pr resolves a persisted target opportunity after creating its review run", async () => {
+    await withTempRepo(async (repo) => {
+      await writeFixtureSource(repo);
+      await execFileAsync("git", ["init"], { cwd: repo });
+      await execFileAsync("git", ["config", "user.email", "deepclean@example.com"], { cwd: repo });
+      await execFileAsync("git", ["config", "user.name", "Deepclean Test"], { cwd: repo });
+      await execFileAsync("git", ["add", "."], { cwd: repo });
+      await execFileAsync("git", ["commit", "-m", "initial"], { cwd: repo });
+      await execFileAsync("git", ["update-ref", "refs/remotes/origin/main", "HEAD"], { cwd: repo });
+
+      const scan = await runCli(["scan", "--evidence-only", "--json"], repo);
+      expect(scan.code).toBe(0);
+      const campaign = await runCli(["campaign", "--json"], repo);
+      expect(campaign.code).toBe(0);
+      const campaignPayload = JSON.parse(campaign.stdout) as {
+        data: { opportunities: Array<{ id: string; ownedFiles: Array<{ path: string }> }> };
+      };
+      const opportunity = campaignPayload.data.opportunities.find((item) => (
+        item.ownedFiles.some((file) => file.path === "src/checkout.ts")
+      )) ?? campaignPayload.data.opportunities[0];
+      expect(opportunity?.id).toMatch(/^opportunity-/);
+
+      const changedPath = opportunity?.ownedFiles[0]?.path ?? "src/checkout.ts";
+      await writeFile(path.join(repo, changedPath), "export const checkoutChanged = true;\n", "utf8");
+      await execFileAsync("git", ["add", "."], { cwd: repo });
+      await execFileAsync("git", ["commit", "-m", "change opportunity target"], { cwd: repo });
+
+      const result = await runCli(["review-pr", "--target", opportunity?.id ?? "", "--json"], repo);
+      expect(result.code).toBe(0);
+      const payload = JSON.parse(result.stdout) as {
+        data: {
+          targetVerdict?: {
+            targetId: string;
+            targetType: string;
+          };
+        };
+      };
+      expect(payload.data.targetVerdict?.targetId).toBe(opportunity?.id);
+      expect(payload.data.targetVerdict?.targetType).toBe("opportunity");
     });
   });
 
