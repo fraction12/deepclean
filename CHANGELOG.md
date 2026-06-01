@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Fixed named CI quality profiles so they run a bounded provider-backed quality-gate synthesis packet instead of inheriting broad cleanup-campaign synthesis or silently falling back to local metrics.
+
 ## 1.1.0-beta.0 - 2026-06-01
 
 - Added cleanup campaign opportunities, opportunity-targeted plans/handoffs/fix guards, quality profiles/gates, analyzer setup planning, and opportunity-first reports.

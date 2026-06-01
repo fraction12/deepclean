@@ -5,7 +5,7 @@ import { uniqueFileReferences } from "./file-references.js";
 import { candidateId } from "./ids.js";
 import { commandsForFiles, mergeVerificationCommands, type VerificationProfile } from "./verification.js";
 import { confidenceAfterValidation, sourceTextForDrafts, stableIdentity, uniqueStrings, validationId, validateDraftCandidate } from "./synthesis-candidate-validation.js";
-import { planSynthesisChunks, type SynthesisChunk } from "./synthesis-chunks.js";
+import { planSynthesisChunks, type SynthesisChunk, type SynthesisPlanningMode } from "./synthesis-chunks.js";
 import { buildAttemptBase, buildPrompt, promptVersion } from "./synthesis-prompt.js";
 import { codexFailureMessage, runProcessWithRetries } from "./synthesis-process.js";
 import { jsonSchema, parseSynthesisOutput, type SynthesisOutput } from "./synthesis-schema.js";
@@ -57,6 +57,7 @@ type SynthesizeWithCodexOptions = {
     reason: string;
     fileRefs: FileReference[];
   } | undefined;
+  synthesisPlanningMode?: SynthesisPlanningMode | undefined;
   attemptIdSuffix?: string | undefined;
 };
 
@@ -149,6 +150,7 @@ export async function synthesizeWithChunkedCodex(options: SynthesizeWithCodexOpt
     features: options.features ?? [],
     existingCandidates: options.existingCandidates,
     tokenBudget: options.runtime.tokenBudget,
+    mode: options.synthesisPlanningMode,
   });
   if (chunks.length <= 1) {
     const chunk = chunks[0];
@@ -627,6 +629,5 @@ async function prepareSynthesisWorkspace(tempDir: string): Promise<{ outputPath:
   await writeFile(schemaPath, JSON.stringify(jsonSchema(), null, 2), "utf8");
   return { outputPath, schemaPath };
 }
-
 
 

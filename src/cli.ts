@@ -56,6 +56,7 @@ import {
   type ReviewPrQualityInput,
 } from "./quality-gates.js";
 import { buildReviewPrContext, type ReviewPrTarget } from "./review-pr.js";
+import type { SynthesisPlanningMode } from "./synthesis-chunks.js";
 import {
   ensureState,
   latestRunId,
@@ -283,6 +284,10 @@ Commands:
                                --json includes latest artifacts, active/blocked work,
                                stale artifacts, recent progress, and next action
   ci                           Run non-interactive scan and policy gates for CI
+    --profile <id>             advisory, balanced, strict, or maintainability-only.
+                               Named profiles use bounded provider-backed synthesis
+                               unless --offline, --local-only, or --evidence-only is set
+    --require-synthesis        Fail if provider synthesis is skipped or fails
   map                          Write semantic feature records without producing candidates
   scan                         Collect local evidence and generate candidates
     --synthesize               Run local Codex synthesis over evidence (default)
@@ -2154,8 +2159,11 @@ async function executeFeatureMap(context: CommandContext): Promise<{
 }
 
 async function ciCommand(context: CommandContext): Promise<number> {
-  const requireSynthesis = flagBoolean(context.parsed.flags, "require-synthesis");
+  const profileId = flagString(context.parsed.flags, "profile");
   const config = await ensureState(context.paths);
+  const synthesisDisabled = synthesisDisabledByPolicy(context, config);
+  const requireSynthesis = flagBoolean(context.parsed.flags, "require-synthesis")
+    || (profileId !== undefined && profileId !== "" && !synthesisDisabled);
   if (requireSynthesis && synthesisDisabledByPolicy(context, config)) {
     const diagnostic: Diagnostic = {
       level: "error",
@@ -2166,7 +2174,9 @@ async function ciCommand(context: CommandContext): Promise<number> {
     return 2;
   }
 
-  const scan = await executeScan(context, {});
+  const scan = await executeScan(context, {
+    synthesisPlanningMode: profileId ? "quality-gate" : "comprehensive",
+  });
   const synthesisFailure = requireSynthesis ? requiredSynthesisFailure(scan) : undefined;
   if (synthesisFailure) {
     const diagnostics = [
@@ -2400,7 +2410,10 @@ async function schemasCommand(context: CommandContext): Promise<number> {
 
 async function executeScan(
   context: CommandContext,
-  options: { synthesize?: boolean | undefined },
+  options: {
+    synthesize?: boolean | undefined;
+    synthesisPlanningMode?: SynthesisPlanningMode | undefined;
+  },
 ): Promise<ScanExecutionResult> {
   const {
     startedAt,
@@ -2439,6 +2452,7 @@ async function executeScan(
       includeSource: runtime.allowSourceInModel,
       runtime,
       verificationProfile,
+      synthesisPlanningMode: options.synthesisPlanningMode,
     })
     : { candidates: [], diagnostics: [] };
   const diagnostics = [...adapterResult.diagnostics, ...synthesisResult.diagnostics];
@@ -2487,7 +2501,7 @@ async function executeScan(
       attemptId: synthesisResult.attempt?.id,
       acceptedCandidateCount: synthesisResult.attempt?.acceptedCandidateCount,
       rejectedCandidateCount: synthesisResult.attempt?.rejectedCandidateCount,
-      runtime: providerRuntimeSummary(runtime),
+      runtime: providerRuntimeSummary(runtime, options.synthesisPlanningMode),
     },
     scope,
     diagnostics,
@@ -2507,7 +2521,7 @@ async function executeScan(
       attemptId: synthesisResult.attempt?.id,
       acceptedCandidateCount: synthesisResult.attempt?.acceptedCandidateCount,
       rejectedCandidateCount: synthesisResult.attempt?.rejectedCandidateCount,
-      runtime: providerRuntimeSummary(runtime),
+      runtime: providerRuntimeSummary(runtime, options.synthesisPlanningMode),
     },
     candidates,
     clusters,
@@ -6931,7 +6945,10 @@ function sameSynthesisFailure(diagnostic: Diagnostic, failure: Diagnostic): bool
     && requiredSynthesisFailureCodes.has(diagnostic.code);
 }
 
-function providerRuntimeSummary(runtime: ProviderRuntimeControls): Record<string, unknown> {
+function providerRuntimeSummary(
+  runtime: ProviderRuntimeControls,
+  synthesisPlanningMode?: SynthesisPlanningMode | undefined,
+): Record<string, unknown> {
   return {
     provider: runtime.provider,
     model: runtime.model,
@@ -6945,6 +6962,7 @@ function providerRuntimeSummary(runtime: ProviderRuntimeControls): Record<string
     offline: runtime.offline,
     privacyMode: runtime.privacyMode,
     allowSourceInModel: runtime.allowSourceInModel,
+    synthesisPlanningMode,
   };
 }
 
