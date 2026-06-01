@@ -7,6 +7,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { parseArgs, flagBoolean, flagString, flagStrings, type ParsedArgs } from "./args.js";
+import { buildAnalyzerSetupPlan } from "./analyzer-setup.js";
 import { candidatesFromEvidence, rankCandidates, reassignCandidateIds } from "./candidates.js";
 import { buildClusters, unclusteredCandidateIds } from "./clusters.js";
 import { isSplittableParentCandidate, splitCandidate } from "./decomposition.js";
@@ -93,6 +94,7 @@ import {
   writePrOpportunities,
   writeQualityGateResult,
   writeQualityProfile,
+  writeAnalyzerSetupPlan,
   writeReport,
   writeRetentionManifest,
   writeRevalidation,
@@ -154,6 +156,7 @@ const commands = [
   "fix",
   "work",
   "schemas",
+  "setup",
   "split",
   "cluster",
   "plan",
@@ -350,6 +353,7 @@ Commands:
   export <candidate-id>        Alias for handoff
   export --source-safe         Alias for scrub
   schemas                      Emit stable machine-consumer JSON contracts
+  setup analyzers              Dry-run analyzer setup recommendations
 
 Global flags:
   --json                       Emit JSON envelope
@@ -461,6 +465,8 @@ export async function main(argv: string[], cwd = process.cwd()): Promise<number>
         return await withWriteLock(context, () => workCommand(context));
       case "schemas":
         return schemasCommand(context);
+      case "setup":
+        return await withWriteLock(context, () => setupCommand(context));
       case "split":
         return await withWriteLock(context, () => splitCommand(context));
       case "cluster":
@@ -2332,6 +2338,29 @@ async function resolveReviewPrTarget(
     code: "review_pr_target_not_found",
     message: `Review target not found: ${targetId}`,
   };
+}
+
+async function setupCommand(context: CommandContext): Promise<number> {
+  const subcommand = context.parsed.positional[0];
+  if (subcommand !== "analyzers") {
+    emit(context.json, fail("setup", "unknown_setup_target", "Expected `deepclean setup analyzers`."));
+    return 2;
+  }
+  await ensureState(context.paths);
+  const plan = await buildAnalyzerSetupPlan({
+    id: timestampId("analyzers"),
+    root: context.paths.root,
+  });
+  const path = await writeAnalyzerSetupPlan(context.paths, plan);
+  emit(context.json, ok("setup", { plan, path, planPath: path }, plan.diagnostics));
+  if (!context.json && !context.quiet) {
+    console.log(`Analyzer setup plan: ${plan.recommendations.length} recommendation${plan.recommendations.length === 1 ? "" : "s"}`);
+    for (const recommendation of plan.recommendations) {
+      console.log(`- ${recommendation.analyzerId}: ${recommendation.command ?? "manual setup"}`);
+    }
+    console.log(`Plan written to ${path}`);
+  }
+  return 0;
 }
 
 function pathIsWithin(candidate: string, root: string): boolean {

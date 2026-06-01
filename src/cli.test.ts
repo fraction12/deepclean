@@ -221,6 +221,48 @@ function registerCliSmokeTests(): void {
     });
   });
 
+  test("setup analyzers writes a dry-run starter plan without mutating project files", async () => {
+    await withTempRepo(async (repo) => {
+      const packagePath = path.join(repo, "package.json");
+      const packageJson = {
+        scripts: {
+          typecheck: "tsc --noEmit",
+          test: "vitest run",
+        },
+      };
+      await writeFile(packagePath, `${JSON.stringify(packageJson, null, 2)}\n`, "utf8");
+      await writeFile(path.join(repo, "package-lock.json"), "{}\n", "utf8");
+      await mkdir(path.join(repo, ".github", "workflows"), { recursive: true });
+      await writeFile(path.join(repo, ".github", "workflows", "ci.yml"), "name: ci\n", "utf8");
+      const before = await readFile(packagePath, "utf8");
+
+      const result = await runCli(["setup", "analyzers", "--json"], repo);
+      expect(result.code).toBe(0);
+      const payload = JSON.parse(result.stdout) as {
+        data: {
+          plan: {
+            dryRun: boolean;
+            ecosystem: string;
+            packageManager?: string;
+            existingScripts: Record<string, string>;
+            ciFiles: string[];
+            recommendations: Array<{ analyzerId: string; immediatelyRunnable: boolean; requiresInstall: boolean }>;
+          };
+          planPath: string;
+        };
+      };
+      expect(payload.data.plan.dryRun).toBe(true);
+      expect(payload.data.plan.ecosystem).toBe("javascript-typescript");
+      expect(payload.data.plan.packageManager).toBe("npm");
+      expect(payload.data.plan.existingScripts["typecheck"]).toBe("tsc --noEmit");
+      expect(payload.data.plan.ciFiles).toContain(".github/workflows/ci.yml");
+      expect(payload.data.plan.recommendations.some((item) => item.analyzerId === "typecheck" && item.immediatelyRunnable)).toBe(true);
+      expect(payload.data.plan.recommendations.some((item) => item.analyzerId === "semgrep" && item.requiresInstall)).toBe(true);
+      await expect(stat(payload.data.planPath)).resolves.toBeTruthy();
+      expect(await readFile(packagePath, "utf8")).toBe(before);
+    });
+  });
+
   test("prints the package manifest version", async () => {
     await withTempRepo(async (repo) => {
       const result = await runCli(["--version"], repo);
