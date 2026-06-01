@@ -46,6 +46,12 @@ import {
   renderMarkdownReportWithClusters,
 } from "./reporting.js";
 import { buildProgressSummary, renderProgressSummary } from "./progress.js";
+import {
+  adHocQualityProfile,
+  builtInQualityProfile,
+  evaluateQualityProfile,
+  type BuiltInQualityProfileId,
+} from "./quality-gates.js";
 import { buildReviewPrContext, type ReviewPrTarget } from "./review-pr.js";
 import {
   ensureState,
@@ -85,6 +91,8 @@ import {
   writeLifecycleEvents,
   writePlan,
   writePrOpportunities,
+  writeQualityGateResult,
+  writeQualityProfile,
   writeReport,
   writeRetentionManifest,
   writeRevalidation,
@@ -2161,7 +2169,18 @@ async function ciCommand(context: CommandContext): Promise<number> {
   const policy = ciPolicyFromFlags(context);
   const gate = evaluateCiPolicy(scan.data.candidates, policy);
   const createdAt = new Date().toISOString();
+  const profile = qualityProfileFromCi(context, policy, createdAt);
+  const qualityGateResult = evaluateQualityProfile({
+    profile,
+    runId: scan.runId,
+    baselineRef: scan.data.scope.since ?? scan.data.scope.mergeBase,
+    headRef: "HEAD",
+    candidates: scan.data.candidates,
+    legacyGate: gate,
+    createdAt,
+  });
   const artifactPaths = await writeCiArtifacts(context, scan.data, gate);
+  qualityGateResult.artifactPaths = artifactPaths;
   const ciRun = {
     schemaVersion,
     recordType: "ci_run" as const,
@@ -2175,11 +2194,15 @@ async function ciCommand(context: CommandContext): Promise<number> {
     diagnostics: scan.diagnostics,
     createdAt,
   };
+  await writeQualityProfile(context.paths, profile);
+  await writeQualityGateResult(context.paths, qualityGateResult);
   await writeCiRun(context.paths, ciRun);
 
   emit(context.json, ok("ci", {
     ciRun,
     policy,
+    qualityProfile: profile,
+    qualityGateResult,
     result: gate,
     scan: scan.data,
   }, scan.diagnostics));
@@ -6180,6 +6203,25 @@ function ciPolicyFromFlags(context: CommandContext): Record<string, unknown> {
     policy["fail-category"] = failCategory;
   }
   return policy;
+}
+
+function qualityProfileFromCi(
+  context: CommandContext,
+  policy: Record<string, unknown>,
+  createdAt: string,
+) {
+  const profileId = flagString(context.parsed.flags, "profile");
+  if (!profileId) {
+    return adHocQualityProfile(policy, createdAt);
+  }
+  if (isBuiltInQualityProfile(profileId)) {
+    return builtInQualityProfile(profileId, createdAt);
+  }
+  throw new Error(`Unsupported quality profile: ${profileId}. Expected advisory, balanced, strict, or maintainability-only.`);
+}
+
+function isBuiltInQualityProfile(value: string): value is BuiltInQualityProfileId {
+  return ["advisory", "balanced", "strict", "maintainability-only"].includes(value);
 }
 
 async function buildRetentionManifest(context: CommandContext): Promise<RetentionManifestRecord> {
