@@ -59,6 +59,7 @@ import { buildReviewPrContext, type ReviewPrTarget } from "./review-pr.js";
 import {
   ensureState,
   latestRunId,
+  readAllPrOpportunities,
   readConfig,
   readCandidateObservations,
   readCandidates,
@@ -83,6 +84,7 @@ import {
   updateLatestCandidates,
   writeCandidates,
   writeCandidateObservations,
+  writeCampaignSummary,
   writeCiRun,
   writeClusters,
   writeEvidence,
@@ -2323,8 +2325,7 @@ async function resolveReviewPrTarget(
   if (!targetId) {
     return { ok: true };
   }
-  const opportunities = await readLatestPrOpportunities(context.paths);
-  const opportunity = opportunities.find((item) => item.id === targetId);
+  const opportunity = await resolvePrOpportunityById(context.paths, targetId);
   if (opportunity) {
     return { ok: true, target: { id: targetId, type: "opportunity", opportunity } };
   }
@@ -2346,6 +2347,15 @@ async function resolveReviewPrTarget(
     code: "review_pr_target_not_found",
     message: `Review target not found: ${targetId}`,
   };
+}
+
+async function resolvePrOpportunityById(
+  paths: StatePaths,
+  opportunityId: string,
+): Promise<PrOpportunityRecord | undefined> {
+  const latest = await readLatestPrOpportunities(paths);
+  return latest.find((item) => item.id === opportunityId)
+    ?? [...await readAllPrOpportunities(paths)].reverse().find((item) => item.id === opportunityId);
 }
 
 async function setupCommand(context: CommandContext): Promise<number> {
@@ -2713,15 +2723,19 @@ async function campaignCommand(context: CommandContext): Promise<number> {
       revalidations,
       fixAttempts,
     });
+  const opportunitiesPath = await writePrOpportunities(context.paths, state.runId, opportunities);
   const summary = buildCampaignSummaryRecord({
     runId: state.runId,
     opportunities,
     fixAttempts,
   });
+  const summaryPath = await writeCampaignSummary(context.paths, summary);
 
   emit(context.json, ok("campaign", {
     summary,
+    summaryPath,
     opportunities,
+    opportunitiesPath,
     recommendedOpportunity: opportunities.find((item) => item.id === summary.recommendedOpportunityId) ?? null,
   }));
   if (!context.json && !context.quiet) {
@@ -3171,9 +3185,9 @@ async function clusterCommand(context: CommandContext): Promise<number> {
 
 async function planCommand(context: CommandContext): Promise<number> {
   const id = requireCandidateId(context);
-  const [{ candidates, evidence, features, clusters, runId }, opportunities] = await Promise.all([
+  const [{ candidates, evidence, features, clusters, runId }, opportunity] = await Promise.all([
     latestState(context.paths),
-    readLatestPrOpportunities(context.paths),
+    resolvePrOpportunityById(context.paths, id),
   ]);
   const config = await ensureState(context.paths);
   const availableClusters = clusters.length > 0 ? clusters : buildClusters(runId, candidates, evidence, new Date().toISOString(), config.clusters);
@@ -3181,7 +3195,6 @@ async function planCommand(context: CommandContext): Promise<number> {
     await writeClusters(context.paths, runId, availableClusters);
   }
 
-  const opportunity = opportunities.find((item) => item.id === id);
   if (opportunity) {
     const plan = buildOpportunityPlan(opportunity);
     const planPath = await writePlan(context.paths, plan);
@@ -3307,13 +3320,12 @@ async function triageCommand(context: CommandContext): Promise<number> {
 async function handoffCommand(context: CommandContext): Promise<number> {
   const id = requireCandidateId(context);
   const format = flagString(context.parsed.flags, "format") ?? "codex";
-  const [{ candidates, evidence, features }, revalidations, fixAttempts, opportunities] = await Promise.all([
+  const [{ candidates, evidence, features }, revalidations, fixAttempts, opportunity] = await Promise.all([
     latestState(context.paths),
     readRevalidations(context.paths),
     readFixAttempts(context.paths),
-    readLatestPrOpportunities(context.paths),
+    resolvePrOpportunityById(context.paths, id),
   ]);
-  const opportunity = opportunities.find((item) => item.id === id);
   if (opportunity) {
     const handoff = buildOpportunityHandoff(opportunity, format);
     const handoffPath = await writeHandoff(context.paths, handoff);
@@ -3464,7 +3476,7 @@ async function resolveFixWorkflowTarget(
   }
 
   const state = await latestState(context.paths);
-  const opportunity = (await readLatestPrOpportunities(context.paths)).find((item) => item.id === target);
+  const opportunity = await resolvePrOpportunityById(context.paths, target);
   if (opportunity) {
     if (opportunity.classification !== "safe-narrow-pr") {
       return {

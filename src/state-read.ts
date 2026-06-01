@@ -183,6 +183,17 @@ export async function readLatestPrOpportunities(paths: StatePaths): Promise<PrOp
   return readPrOpportunities(paths, runId);
 }
 
+export async function readAllPrOpportunities(paths: StatePaths): Promise<PrOpportunityRecord[]> {
+  const files = await jsonFiles(paths.opportunitiesDir);
+  const records: PrOpportunityRecord[] = [];
+  for (const file of files) {
+    const raw = await readFile(path.join(paths.opportunitiesDir, file), "utf8");
+    const parsed = JSON.parse(raw) as unknown[];
+    records.push(...parsed.map((item) => prOpportunityRecordSchema.parse(item)));
+  }
+  return records.sort((a, b) => a.runId.localeCompare(b.runId) || a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
+}
+
 export async function readPrOpportunities(
   paths: StatePaths,
   runId: string,
