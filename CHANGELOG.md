@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 1.1.0-beta.0 - 2026-06-01
+
+- Added cleanup campaign opportunities, opportunity-targeted plans/handoffs/fix guards, quality profiles/gates, analyzer setup planning, and opportunity-first reports.
+
 ## 1.0.2 - 2026-05-31
 
 - Added chunked whole-repo synthesis so broad scans split Codex review into scoped packets while preserving one repo-wide candidate queue.
