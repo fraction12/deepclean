@@ -1382,10 +1382,33 @@ ${Array.from({ length: 120 }, (_, index) => `  const dirtyValue${index} = ${inde
       const pass = await runCli(["ci", "--evidence-only", "--json", "--max-new-p0", "0"], repo);
       expect(pass.code).toBe(0);
       const passPayload = JSON.parse(pass.stdout) as {
-        data: { ciRun: { status: string }; result: { blockingFindingIds: string[] } };
+        data: { ciRun: { status: string }; qualityGateResult: { profileId: string }; result: { blockingFindingIds: string[] } };
       };
       expect(passPayload.data.ciRun.status).toBe("passed");
+      expect(passPayload.data.qualityGateResult.profileId).toBe("ad-hoc");
       expect(passPayload.data.result.blockingFindingIds).toEqual([]);
+
+      const balanced = await runCli(["ci", "--evidence-only", "--json", "--profile", "balanced"], repo);
+      expect(balanced.code).toBe(0);
+      const balancedPayload = JSON.parse(balanced.stdout) as {
+        data: {
+          ciRun: { status: string };
+          qualityProfile: { id: string; recommendedAnalyzerClasses: string[] };
+          qualityGateResult: {
+            status: string;
+            blockers: unknown[];
+            advisories: Array<{ id: string; title: string }>;
+            coverageStatus: Array<{ status: string; analyzerIds: string[] }>;
+          };
+        };
+      };
+      expect(balancedPayload.data.ciRun.status).toBe("passed");
+      expect(balancedPayload.data.qualityProfile.id).toBe("balanced");
+      expect(balancedPayload.data.qualityProfile.recommendedAnalyzerClasses).toContain("semgrep");
+      expect(balancedPayload.data.qualityGateResult.status).toBe("advisory");
+      expect(balancedPayload.data.qualityGateResult.blockers).toEqual([]);
+      expect(balancedPayload.data.qualityGateResult.advisories.some((item) => item.id === "missing-semgrep")).toBe(true);
+      expect(balancedPayload.data.qualityGateResult.coverageStatus.some((item) => item.status === "not-configured")).toBe(true);
 
       const fail = await runCli([
         "ci",

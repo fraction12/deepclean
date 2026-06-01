@@ -72,6 +72,7 @@ const valueFlags = new Set([
   "token-budget",
   "excerpt-budget",
   "privacy-mode",
+  "profile",
   "patch",
   "branch",
   "base",
