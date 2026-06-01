@@ -1829,6 +1829,90 @@ fs.writeFileSync(outputPath, JSON.stringify({
     });
   });
 
+  test("ci named quality profiles use bounded provider-backed gate synthesis", async () => {
+    await withTempRepo(async (repo) => {
+      await writeFixtureSource(repo);
+      const promptLog = path.join(repo, "ci-provider-prompts.jsonl");
+      await installFakeCodex(repo, `#!/usr/bin/env node
+const fs = require("node:fs");
+const stdin = fs.readFileSync(0, "utf8");
+const scope = JSON.parse(stdin.match(/Synthesis scope:\\n([\\s\\S]*?)\\n\\nCleanup surfaces:/)[1]);
+const evidenceIds = [...stdin.matchAll(/"id": "(ev-[^"]+)"/g)].map((match) => match[1]);
+fs.appendFileSync(${JSON.stringify(promptLog)}, JSON.stringify({ scope, evidenceIds }) + "\\n");
+if (evidenceIds.length === 0) process.exit(2);
+const outputPath = process.argv[process.argv.indexOf("-o") + 1];
+fs.writeFileSync(outputPath, JSON.stringify({
+  candidates: [{
+    title: "Provider-confirmed quality gate target",
+    category: "architecture",
+    priority: "P1",
+    confidence: "high",
+    impact: "feature",
+    effort: "medium",
+    risk: "moderate",
+    readiness: "fix-ready",
+    files: [{ path: "src/checkout.ts", startLine: 1, endLine: 1 }],
+    ownedFiles: [{ path: "src/checkout.ts", startLine: 1, endLine: 1 }],
+    contextFiles: [],
+    evidenceIds: [evidenceIds[0]],
+    whyItMatters: "CI quality gates should use provider judgment for the highest-ranked evidence.",
+    likelyRootCause: "The quality target needs model-backed prioritization.",
+    suggestedDirection: "Keep the provider packet bounded to the gate scope.",
+    expectedBehavior: "Checkout calculation behavior stays the same.",
+    proofRequired: ["Run npm test."],
+    nonGoals: ["Do not synthesize the full cleanup campaign in CI."],
+    doNotTouch: [],
+    splitChildren: [],
+    confidenceDowngradeReasons: [],
+    verification: ["npm test"],
+    fixReadiness: {
+      minimumFixScope: "One bounded quality-gate target.",
+      suggestedRegressionTest: "Add or run checkout tests.",
+      whyCurrentTestsMissIt: "The fixture has only local metric evidence.",
+      confidenceDowngradeReasons: []
+    },
+    supportingQuotes: []
+  }],
+  rejectedEvidenceIds: [],
+  notes: []
+}));
+`);
+
+      const result = await runCli(["ci", "--profile", "balanced", "--json"], repo);
+      expect(result.code).toBe(0);
+      const payload = JSON.parse(result.stdout) as {
+        data: {
+          scan: {
+            runId: string;
+            synthesis: { requested: boolean; candidateCount: number; runtime?: { synthesisPlanningMode?: string } };
+          };
+          qualityProfile: { id: string };
+          qualityGateResult: { status: string };
+        };
+      };
+      expect(payload.data.qualityProfile.id).toBe("balanced");
+      expect(payload.data.scan.synthesis.requested).toBe(true);
+      expect(payload.data.scan.synthesis.candidateCount).toBe(1);
+      expect(payload.data.scan.synthesis.runtime?.synthesisPlanningMode).toBe("quality-gate");
+      expect(payload.data.qualityGateResult.status).toBe("advisory");
+
+      const promptRecords = (await readFile(promptLog, "utf8"))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as { scope: { id: string; reason: string }; evidenceIds: string[] });
+      expect(promptRecords).toHaveLength(1);
+      expect(promptRecords[0]?.scope.id).toBe("chunk-001-quality-gate");
+      expect(promptRecords[0]?.scope.reason).toContain("CI quality gates");
+
+      const attempt = JSON.parse(
+        await readFile(path.join(repo, ".deepclean", "synthesis", `${payload.data.scan.runId}.json`), "utf8"),
+      ) as {
+        runtime: { synthesisScope?: { id?: string; reason?: string } };
+      };
+      expect(attempt.runtime.synthesisScope?.id).toBe("chunk-001-quality-gate");
+    });
+  });
+
   test("ci mode fails fast when synthesis is required but disabled", async () => {
     await withTempRepo(async (repo) => {
       await writeFixtureSource(repo);
@@ -1837,6 +1921,33 @@ fs.writeFileSync(outputPath, JSON.stringify({
       const payload = JSON.parse(result.stdout) as { ok: boolean; error: { code: string } };
       expect(payload.ok).toBe(false);
       expect(payload.error.code).toBe("ci_synthesis_required");
+    });
+  });
+
+  test("ci named quality profiles fail when provider synthesis fails", async () => {
+    await withTempRepo(async (repo) => {
+      await writeFixtureSource(repo);
+      await runCli(["init", "--json"], repo);
+      const configPath = path.join(repo, ".deepclean", "config.json");
+      const config = JSON.parse(await readFile(configPath, "utf8")) as {
+        reviewSynthesis: { command: string };
+      };
+      config.reviewSynthesis.command = path.join(repo, "missing-codex");
+      await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+
+      const result = await runCli(["ci", "--profile", "balanced", "--json"], repo);
+      expect(result.code).toBe(2);
+      const payload = JSON.parse(result.stdout) as {
+        ok: boolean;
+        error: { code: string };
+        diagnostics: Array<{ code: string; level: string }>;
+      };
+      expect(payload.ok).toBe(false);
+      expect(payload.error.code).toBe("ci_synthesis_failed");
+      expect(payload.diagnostics.some((diagnostic) => (
+        diagnostic.code === "codex_provider_unavailable"
+        && diagnostic.level === "error"
+      ))).toBe(true);
     });
   });
 

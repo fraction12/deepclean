@@ -19,6 +19,7 @@ export function buildPrompt(options: {
     fileRefs: Array<{ path: string; startLine?: number | undefined; endLine?: number | undefined }>;
   } | undefined;
 }, rubrics: ReviewerRubric[]): string {
+  const qualityGateMode = options.synthesisScope?.id === "chunk-001-quality-gate";
   const cleanupSurfaces = buildCleanupSurfaces(options.evidence, options.existingCandidates);
   const evidenceBundle = options.evidence.map((record) => ({
     id: record.id,
@@ -30,7 +31,7 @@ export function buildPrompt(options: {
     confidence: record.confidence,
     data: redactedData(record.data, options.includeSource),
   }));
-  const featureBundle = (options.features ?? []).map((feature) => ({
+  const featureBundle = qualityGateMode ? [] : (options.features ?? []).map((feature) => ({
     featureId: feature.featureId,
     title: feature.title,
     kind: feature.kind,
@@ -43,6 +44,16 @@ export function buildPrompt(options: {
     reasons: feature.reasons,
     verification: feature.verification,
   }));
+  const reviewerBundle = qualityGateMode
+    ? rubrics.map((rubric) => ({
+      id: rubric.id,
+      title: rubric.title,
+      version: rubric.version ?? reviewerRubricVersion,
+    }))
+    : rubrics.map((rubric) => ({
+      ...rubric,
+      version: rubric.version ?? reviewerRubricVersion,
+    }));
   const existing = options.existingCandidates.map((candidate) => ({
     id: candidate.id,
     title: candidate.title,
@@ -81,10 +92,7 @@ Matt Pocock skills influence:
 - Favor deep modules with small interfaces, behavior-level feedback loops, domain vocabulary, and independently grabbable agent slices.
 
 Reviewer pack:
-${JSON.stringify(rubrics.map((rubric) => ({
-  ...rubric,
-  version: rubric.version ?? reviewerRubricVersion,
-})), null, 2)}
+${JSON.stringify(reviewerBundle, null, 2)}
 
 Project verification commands:
 ${JSON.stringify(options.verificationProfile ?? {}, null, 2)}
