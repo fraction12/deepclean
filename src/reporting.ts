@@ -6,6 +6,7 @@ type ClusterRecord = import("./types.js").ClusterRecord;
 type EvidenceRecord = import("./types.js").EvidenceRecord;
 type FeatureRecord = import("./types.js").FeatureRecord;
 type HandoffRecord = import("./types.js").HandoffRecord;
+type PrOpportunityRecord = import("./types.js").PrOpportunityRecord;
 type ReportRecord = import("./types.js").ReportRecord;
 
 export function buildReportRecord(
@@ -353,9 +354,28 @@ export function buildHandoff(
     recordType: "handoff",
     id: timestampId("handoff"),
     candidateId: candidate.id,
+    targetType: "candidate",
+    targetId: candidate.id,
     format,
     createdAt: new Date().toISOString(),
     content: renderHandoff(candidate, evidence, features),
+  };
+}
+
+export function buildOpportunityHandoff(
+  opportunity: PrOpportunityRecord,
+  format: string,
+): HandoffRecord {
+  return {
+    schemaVersion,
+    recordType: "handoff",
+    id: timestampId("handoff"),
+    targetType: "opportunity",
+    targetId: opportunity.id,
+    opportunityId: opportunity.id,
+    format,
+    createdAt: new Date().toISOString(),
+    content: renderOpportunityHandoff(opportunity),
   };
 }
 
@@ -426,6 +446,52 @@ export function renderHandoff(
     "",
     "Verification:",
     ...candidate.verification.map((command) => `- ${command}`),
+  ].join("\n");
+}
+
+export function renderOpportunityHandoff(opportunity: PrOpportunityRecord): string {
+  return [
+    `TASK: ${opportunity.title}`,
+    "",
+    `Opportunity: ${opportunity.id}`,
+    "",
+    `Classification: ${opportunity.classification}`,
+    `Status: ${opportunity.status}`,
+    `Confidence: ${opportunity.confidence}`,
+    `Risk: ${opportunity.risk}`,
+    `Candidates: ${opportunity.targetCandidateIds.join(", ") || "n/a"}`,
+    `Findings: ${opportunity.targetFindingIds.join(", ") || "n/a"}`,
+    `Clusters: ${opportunity.targetClusterIds.join(", ") || "n/a"}`,
+    "",
+    "Change:",
+    opportunity.oneSentenceChange,
+    "",
+    "Why:",
+    opportunity.rationale,
+    "",
+    "Owned files:",
+    ...(opportunity.ownedFiles.length > 0 ? opportunity.ownedFiles.map((file) => `- ${formatFile(file)}`) : ["- n/a"]),
+    "",
+    "Context files:",
+    ...(opportunity.contextFiles.length > 0 ? opportunity.contextFiles.map((file) => `- ${formatFile(file)}`) : ["- n/a"]),
+    "",
+    "Do not touch:",
+    ...(opportunity.doNotTouch.length > 0 ? opportunity.doNotTouch.map((item) => `- ${item}`) : ["- Unrelated public APIs, generated files, and adjacent refactors."]),
+    "",
+    "Behavior invariants:",
+    ...(opportunity.behaviorInvariants.length > 0 ? opportunity.behaviorInvariants.map((item) => `- ${item}`) : ["- Preserve current user-visible behavior unless tests prove it is wrong."]),
+    "",
+    "Stop line:",
+    opportunity.stopLine,
+    "",
+    "Expected payoff:",
+    opportunity.expectedPayoff,
+    "",
+    "Expected reviewer concern:",
+    opportunity.expectedReviewerConcern ?? "n/a",
+    "",
+    "Verification:",
+    ...(opportunity.validationPlan.length > 0 ? opportunity.validationPlan.map((command) => `- ${command}`) : ["- deepclean scan"]),
   ].join("\n");
 }
 
