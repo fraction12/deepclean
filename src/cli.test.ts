@@ -1968,6 +1968,12 @@ fs.writeFileSync(outputPath, JSON.stringify({
               suggestedPlanTargets: string[];
             };
           };
+          opportunities: Array<{ id: string; classification: string }>;
+          opportunitiesPath: string;
+          campaignSummary: {
+            counts: { byClassification: Record<string, number> };
+            recommendedOpportunityId?: string;
+          };
           paths: { markdownPath: string };
           reportPath: string;
           markdownPath: string;
@@ -1975,12 +1981,17 @@ fs.writeFileSync(outputPath, JSON.stringify({
         };
       };
       expect(payload.data.report.recommendations?.startHere?.id).toMatch(/^(candidate|theme)-/);
+      expect(payload.data.opportunities.length).toBeGreaterThan(0);
+      expect(payload.data.opportunitiesPath).toMatch(/\.json$/);
+      expect(Object.values(payload.data.campaignSummary.counts.byClassification).reduce((sum, count) => sum + count, 0)).toBeGreaterThan(0);
       expect(payload.data.report.recommendations?.startHere?.featureId).toMatch(/^feature-/);
       expect(payload.data.report.recommendations?.suggestedPlanTargets.length).toBeGreaterThan(0);
       expect(payload.data.reportPath).toBe(payload.data.paths.markdownPath);
       expect(payload.data.markdownPath).toBe(payload.data.paths.markdownPath);
       expect(payload.data.jsonPath).toMatch(/\.json$/);
       const markdown = await readFile(payload.data.paths.markdownPath, "utf8");
+      expect(markdown).toContain("## PR Opportunities");
+      expect(markdown).toContain("Classification counts:");
       expect(markdown).toContain("## Start Here");
       expect(markdown).toContain("## Feature Map");
       expect(markdown).toContain("Feature scope:");

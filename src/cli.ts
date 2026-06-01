@@ -2574,8 +2574,9 @@ function remapSynthesisAttemptCandidateIds(
 async function reportCommand(context: CommandContext): Promise<number> {
   const { candidates, evidence, features, runId } = await latestState(context.paths);
   const config = await ensureState(context.paths);
-  const [latestClusters, revalidations, fixAttempts] = await Promise.all([
+  const [latestClusters, findings, revalidations, fixAttempts] = await Promise.all([
     readLatestClusters(context.paths),
+    readFindings(context.paths),
     readRevalidations(context.paths),
     readFixAttempts(context.paths),
   ]);
@@ -2589,14 +2590,29 @@ async function reportCommand(context: CommandContext): Promise<number> {
   const ranked = rankCandidates(filtered);
   const clusters = buildClusters(runId, ranked, evidence, new Date().toISOString(), config.clusters);
   await writeClusters(context.paths, runId, clusters);
+  const opportunities = buildPrOpportunities({
+    runId,
+    candidates: ranked,
+    clusters,
+    evidence,
+    features,
+    findings,
+    revalidations,
+    fixAttempts,
+  });
+  const opportunitiesPath = await writePrOpportunities(context.paths, runId, opportunities);
+  const campaignSummary = buildCampaignSummaryRecord({ runId, opportunities, fixAttempts });
   const report = buildReportRecord(runId, ranked, clusters, features);
   const markdown = clusters.length > 0
-    ? renderMarkdownReportWithClusters(ranked, clusters, features)
-    : renderMarkdownReport(ranked, features);
+    ? renderMarkdownReportWithClusters(ranked, clusters, features, opportunities)
+    : renderMarkdownReport(ranked, features, opportunities);
   const paths = await writeReport(context.paths, report, markdown);
 
   emit(context.json, ok("report", {
     report,
+    opportunities,
+    opportunitiesPath,
+    campaignSummary,
     paths,
     reportPath: paths.markdownPath,
     markdownPath: paths.markdownPath,
