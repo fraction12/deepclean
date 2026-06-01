@@ -73,6 +73,7 @@ const valueFlags = new Set([
   "excerpt-budget",
   "privacy-mode",
   "profile",
+  "review-pr",
   "patch",
   "branch",
   "base",
