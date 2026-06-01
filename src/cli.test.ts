@@ -1023,6 +1023,27 @@ test("checkout", () => calculateCheckout([], false));
       expect(nextPayload.data.opportunities.length).toBeGreaterThan(0);
       await expect(stat(nextPayload.data.opportunitiesPath)).resolves.toBeTruthy();
 
+      const opportunityId = nextPayload.data.opportunity?.id ?? nextPayload.data.opportunities[0]?.id ?? "";
+      const opportunityPlan = await runCli(["plan", opportunityId, "--json"], repo);
+      expect(opportunityPlan.code).toBe(0);
+      const opportunityPlanPayload = JSON.parse(opportunityPlan.stdout) as {
+        data: { plan: { targetType: string; targetId: string; content: string }; opportunity: { id: string } };
+      };
+      expect(opportunityPlanPayload.data.plan.targetType).toBe("opportunity");
+      expect(opportunityPlanPayload.data.plan.targetId).toBe(opportunityId);
+      expect(opportunityPlanPayload.data.opportunity.id).toBe(opportunityId);
+      expect(opportunityPlanPayload.data.plan.content).toContain("Stop line:");
+
+      const opportunityHandoff = await runCli(["handoff", opportunityId, "--json"], repo);
+      expect(opportunityHandoff.code).toBe(0);
+      const opportunityHandoffPayload = JSON.parse(opportunityHandoff.stdout) as {
+        data: { handoff: { targetType: string; targetId: string; opportunityId: string; content: string }; opportunity: { id: string } };
+      };
+      expect(opportunityHandoffPayload.data.handoff.targetType).toBe("opportunity");
+      expect(opportunityHandoffPayload.data.handoff.targetId).toBe(opportunityId);
+      expect(opportunityHandoffPayload.data.handoff.opportunityId).toBe(opportunityId);
+      expect(opportunityHandoffPayload.data.handoff.content).toContain("Opportunity:");
+
       const id = nextPayload.data.candidate?.id;
       expect(id).toBeTruthy();
       const show = await runCli(["show", id ?? "", "--json"], repo);

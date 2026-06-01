@@ -8,6 +8,7 @@ type ClusterRecord = import("./types.js").ClusterRecord;
 type EvidenceRecord = import("./types.js").EvidenceRecord;
 type FeatureRecord = import("./types.js").FeatureRecord;
 type PlanRecord = import("./types.js").PlanRecord;
+type PrOpportunityRecord = import("./types.js").PrOpportunityRecord;
 
 export function buildCandidatePlan(
   runId: string,
@@ -116,6 +117,54 @@ export function buildClusterPlan(
   return {
     ...plan,
     content: renderPlan(plan, { cluster, candidates: ordered, evidence, features }),
+  };
+}
+
+export function buildOpportunityPlan(opportunity: PrOpportunityRecord): PlanRecord {
+  const files = uniqueFileReferences([...opportunity.ownedFiles, ...opportunity.contextFiles], 16);
+  const steps = [
+    {
+      title: "Confirm the PR boundary",
+      description: opportunity.rationale,
+      candidateIds: opportunity.targetCandidateIds,
+      files,
+      verification: [],
+    },
+    {
+      title: "Implement the narrow change",
+      description: opportunity.oneSentenceChange,
+      candidateIds: opportunity.targetCandidateIds,
+      files: uniqueFileReferences(opportunity.ownedFiles, 12),
+      verification: opportunity.validationPlan,
+    },
+    {
+      title: "Stop at the campaign line",
+      description: opportunity.stopLine,
+      candidateIds: opportunity.targetCandidateIds,
+      files: [],
+      verification: opportunity.validationPlan,
+    },
+  ];
+  const plan = basePlan({
+    runId: opportunity.runId,
+    targetType: "opportunity",
+    targetId: opportunity.id,
+    title: `Plan for ${opportunity.id}: ${opportunity.title}`,
+    summary: opportunity.oneSentenceChange,
+    steps,
+    verification: opportunity.validationPlan,
+  });
+  return {
+    ...plan,
+    constraints: unique([
+      ...plan.constraints,
+      `Classification: ${opportunity.classification}`,
+      `Stop line: ${opportunity.stopLine}`,
+      ...opportunity.doNotTouch.map((item) => `Do not touch: ${item}`),
+      ...opportunity.behaviorInvariants.map((item) => `Preserve: ${item}`),
+      ...(opportunity.expectedReviewerConcern ? [`Expected reviewer concern: ${opportunity.expectedReviewerConcern}`] : []),
+    ]),
+    content: renderOpportunityPlan(plan, opportunity),
   };
 }
 
@@ -251,6 +300,60 @@ function renderPlan(
   lines.push("- Public behavior, API payloads, CLI output shape, and persisted data shape stay unchanged unless the plan explicitly says otherwise.");
   lines.push("- Stop after the listed slice passes verification; do not keep expanding because nearby cleanup is tempting.");
   lines.push("", "Verification:", ...plan.verification.map((command) => `- ${command}`));
+  return lines.join("\n");
+}
+
+function renderOpportunityPlan(plan: PlanRecord, opportunity: PrOpportunityRecord): string {
+  const lines = [
+    `TASK: ${plan.title}`,
+    "",
+    `Target: opportunity ${opportunity.id}`,
+    "",
+    "Summary:",
+    opportunity.oneSentenceChange,
+    "",
+    "Classification:",
+    `- ${opportunity.classification}`,
+    `- Status: ${opportunity.status}`,
+    `- Confidence: ${opportunity.confidence}`,
+    `- Risk: ${opportunity.risk}`,
+    "",
+    "Why:",
+    opportunity.rationale,
+    "",
+    "Owned files:",
+    ...(opportunity.ownedFiles.length > 0 ? opportunity.ownedFiles.map((file) => `- ${formatFile(file)}`) : ["- n/a"]),
+    "",
+    "Context files:",
+    ...(opportunity.contextFiles.length > 0 ? opportunity.contextFiles.map((file) => `- ${formatFile(file)}`) : ["- n/a"]),
+    "",
+    "Candidates:",
+    ...(opportunity.targetCandidateIds.length > 0 ? opportunity.targetCandidateIds.map((id) => `- ${id}`) : ["- n/a"]),
+    "",
+    "Do not touch:",
+    ...(opportunity.doNotTouch.length > 0 ? opportunity.doNotTouch.map((item) => `- ${item}`) : ["- unrelated public APIs, generated files, and adjacent refactors"]),
+    "",
+    "Behavior invariants:",
+    ...(opportunity.behaviorInvariants.length > 0 ? opportunity.behaviorInvariants.map((item) => `- ${item}`) : ["- Preserve current user-visible behavior unless tests prove it is wrong."]),
+    "",
+    "Stop line:",
+    opportunity.stopLine,
+    "",
+    "Expected payoff:",
+    opportunity.expectedPayoff,
+    "",
+    "Expected reviewer concern:",
+    opportunity.expectedReviewerConcern ?? "n/a",
+    "",
+    "Plan:",
+    ...plan.steps.flatMap((step, index) => [
+      `${index + 1}. ${step.title}`,
+      `   ${step.description}`,
+    ]),
+    "",
+    "Verification:",
+    ...(plan.verification.length > 0 ? plan.verification.map((command) => `- ${command}`) : ["- deepclean scan"]),
+  ];
   return lines.join("\n");
 }
 

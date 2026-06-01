@@ -37,11 +37,12 @@ import {
   recoverStaleLocks,
   withStateWriteLock,
 } from "./locks.js";
-import { buildCandidatePlan, buildClusterPlan } from "./plans.js";
+import { buildCandidatePlan, buildClusterPlan, buildOpportunityPlan } from "./plans.js";
 import { buildPrOpportunities } from "./opportunities.js";
 import { classifyRevalidation, verificationRunIdsForFinding } from "./revalidation.js";
 import {
   buildHandoff,
+  buildOpportunityHandoff,
   buildReportRecord,
   renderMarkdownReport,
   renderMarkdownReportWithClusters,
@@ -1330,14 +1331,14 @@ function buildStaleArtifacts(options: {
   }
 
   for (const handoff of options.handoffs) {
-    const candidate = options.candidateById.get(handoff.candidateId);
+    const candidate = handoff.candidateId ? options.candidateById.get(handoff.candidateId) : undefined;
     const reason = handoffStaleReason(handoff, candidate, options.latestRevalidationByFinding);
     if (reason) {
       artifacts.push({
         type: "handoff",
         id: handoff.id,
         path: path.join(options.paths.handoffsDir, `${handoff.id}.json`),
-        targetId: handoff.candidateId,
+        targetId: handoff.targetId ?? handoff.candidateId ?? handoff.id,
         ...(candidate?.findingId ? { findingId: candidate.findingId } : {}),
         createdAt: handoff.createdAt,
         reason,
@@ -1454,8 +1455,8 @@ function buildRecentProgressEvents(
       kind: "handoff",
       timestamp: handoff.createdAt,
       path: path.join(paths.handoffsDir, `${handoff.id}.json`),
-      targetId: handoff.candidateId,
-      candidateId: handoff.candidateId,
+      targetId: handoff.targetId ?? handoff.candidateId ?? handoff.id,
+      ...(handoff.candidateId ? { candidateId: handoff.candidateId } : {}),
     });
   }
   for (const candidate of candidates) {
@@ -3147,11 +3148,27 @@ async function clusterCommand(context: CommandContext): Promise<number> {
 
 async function planCommand(context: CommandContext): Promise<number> {
   const id = requireCandidateId(context);
-  const { candidates, evidence, features, clusters, runId } = await latestState(context.paths);
+  const [{ candidates, evidence, features, clusters, runId }, opportunities] = await Promise.all([
+    latestState(context.paths),
+    readLatestPrOpportunities(context.paths),
+  ]);
   const config = await ensureState(context.paths);
   const availableClusters = clusters.length > 0 ? clusters : buildClusters(runId, candidates, evidence, new Date().toISOString(), config.clusters);
   if (clusters.length === 0 && availableClusters.length > 0) {
     await writeClusters(context.paths, runId, availableClusters);
+  }
+
+  const opportunity = opportunities.find((item) => item.id === id);
+  if (opportunity) {
+    const plan = buildOpportunityPlan(opportunity);
+    const planPath = await writePlan(context.paths, plan);
+    emit(context.json, ok("plan", { plan, path: planPath, planPath, opportunity }));
+    if (!context.json && !context.quiet) {
+      console.log(plan.content);
+      console.log("");
+      console.log(`Plan written to ${path.relative(context.paths.root, planPath)}`);
+    }
+    return 0;
   }
 
   const cluster = availableClusters.find((item) => item.id === id);
@@ -3176,7 +3193,7 @@ async function planCommand(context: CommandContext): Promise<number> {
 
   const candidate = candidates.find((item) => item.id === id);
   if (!candidate) {
-    emit(context.json, fail("plan", "target_not_found", `Candidate or theme not found: ${id}`));
+    emit(context.json, fail("plan", "target_not_found", `Candidate, theme, or opportunity not found: ${id}`));
     return 1;
   }
   const supportingEvidence = evidenceForIds(evidence, candidate.evidenceIds);
@@ -3267,14 +3284,27 @@ async function triageCommand(context: CommandContext): Promise<number> {
 async function handoffCommand(context: CommandContext): Promise<number> {
   const id = requireCandidateId(context);
   const format = flagString(context.parsed.flags, "format") ?? "codex";
-  const [{ candidates, evidence, features }, revalidations, fixAttempts] = await Promise.all([
+  const [{ candidates, evidence, features }, revalidations, fixAttempts, opportunities] = await Promise.all([
     latestState(context.paths),
     readRevalidations(context.paths),
     readFixAttempts(context.paths),
+    readLatestPrOpportunities(context.paths),
   ]);
+  const opportunity = opportunities.find((item) => item.id === id);
+  if (opportunity) {
+    const handoff = buildOpportunityHandoff(opportunity, format);
+    const handoffPath = await writeHandoff(context.paths, handoff);
+    emit(context.json, ok("handoff", { handoff, path: handoffPath, opportunity, warnings: [], proofStatus: null }));
+    if (!context.json && !context.quiet) {
+      console.log(handoff.content);
+      console.log("");
+      console.log(`Handoff written to ${path.relative(context.paths.root, handoffPath)}`);
+    }
+    return 0;
+  }
   const candidate = candidates.find((item) => item.id === id);
   if (!candidate) {
-    emit(context.json, fail("handoff", "candidate_not_found", `Candidate not found: ${id}`));
+    emit(context.json, fail("handoff", "target_not_found", `Candidate or opportunity not found: ${id}`));
     return 1;
   }
   const supportingEvidence = evidenceForIds(evidence, candidate.evidenceIds);
