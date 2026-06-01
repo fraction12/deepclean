@@ -48,13 +48,7 @@ import {
   renderMarkdownReportWithClusters,
 } from "./reporting.js";
 import { buildProgressSummary, renderProgressSummary } from "./progress.js";
-import {
-  adHocQualityProfile,
-  builtInQualityProfile,
-  evaluateQualityProfile,
-  type BuiltInQualityProfileId,
-  type ReviewPrQualityInput,
-} from "./quality-gates.js";
+import type { ReviewPrQualityInput } from "./quality-gates.js";
 import { buildReviewPrContext, type ReviewPrTarget } from "./review-pr.js";
 import type { SynthesisPlanningMode } from "./synthesis-chunks.js";
 import {
@@ -125,7 +119,6 @@ import {
   type LifecycleEventRecord,
   type PlanRecord,
   type PrOpportunityRecord,
-  type QualityGateResultRecord,
   type ReportRecord,
   type RetentionManifestRecord,
   type RevalidationRecord,
@@ -136,6 +129,7 @@ import { timestampId } from "./ids.js";
 import { collectProcessOutput } from "./process-output.js";
 import { synthesizeWithChunkedCodex } from "./synthesis.js";
 import { inferVerificationProfile } from "./verification.js";
+import { buildCiQualityGateRun } from "./ci-quality-gate.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -2188,54 +2182,34 @@ async function ciCommand(context: CommandContext): Promise<number> {
   }
 
   const policy = ciPolicyFromFlags(context);
-  const gate = evaluateCiPolicy(scan.data.candidates, policy);
-  const createdAt = new Date().toISOString();
-  const profile = qualityProfileFromCi(context, policy, createdAt);
   const reviewPr = await reviewPrQualityInputFromCi(context);
-  const qualityGateResult = evaluateQualityProfile({
-    profile,
-    runId: scan.runId,
-    baselineRef: scan.data.scope.since ?? scan.data.scope.mergeBase,
-    headRef: "HEAD",
-    candidates: scan.data.candidates,
-    legacyGate: gate,
-    reviewPr,
-    createdAt,
-  });
-  const artifactPaths = await writeCiArtifacts(context, scan.data, gate, qualityGateResult);
-  qualityGateResult.artifactPaths = artifactPaths;
-  const qualityFailed = profile.id !== "ad-hoc" && qualityGateResult.status === "failed";
-  const legacyFailed = gate.blockingFindingIds.length > 0;
-  const ciRun = {
-    schemaVersion,
-    recordType: "ci_run" as const,
-    id: timestampId("ci"),
-    runId: scan.runId,
-    baselineRef: scan.data.scope.since ?? scan.data.scope.mergeBase,
-    status: legacyFailed || qualityFailed ? "policy-failed" as const : "passed" as const,
+  const gateRun = await buildCiQualityGateRun({
+    root: context.paths.root,
+    profileId,
     policy,
-    blockingFindingIds: gate.blockingFindingIds,
-    artifactPaths,
+    scan: scan.data,
     diagnostics: scan.diagnostics,
-    createdAt,
-  };
-  await writeQualityProfile(context.paths, profile);
-  await writeQualityGateResult(context.paths, qualityGateResult);
-  await writeCiRun(context.paths, ciRun);
+    reviewPr,
+    outputPath: flagString(context.parsed.flags, "output"),
+    sarifPath: flagString(context.parsed.flags, "sarif"),
+  });
+  await writeQualityProfile(context.paths, gateRun.qualityProfile);
+  await writeQualityGateResult(context.paths, gateRun.qualityGateResult);
+  await writeCiRun(context.paths, gateRun.ciRun);
 
   emit(context.json, ok("ci", {
-    ciRun,
+    ciRun: gateRun.ciRun,
     policy,
-    qualityProfile: profile,
-    qualityGateResult,
+    qualityProfile: gateRun.qualityProfile,
+    qualityGateResult: gateRun.qualityGateResult,
     ...(reviewPr ? { reviewPr } : {}),
-    result: gate,
+    result: gateRun.legacyGate,
     scan: scan.data,
   }, scan.diagnostics));
   if (!context.json && !context.quiet) {
-    console.log(`CI ${ciRun.status}: ${gate.blockingFindingIds.length} blocking finding${gate.blockingFindingIds.length === 1 ? "" : "s"}`);
+    console.log(`CI ${gateRun.ciRun.status}: ${gateRun.legacyGate.blockingFindingIds.length} blocking finding${gateRun.legacyGate.blockingFindingIds.length === 1 ? "" : "s"}`);
   }
-  return legacyFailed || qualityFailed ? 3 : 0;
+  return gateRun.legacyFailed || gateRun.qualityFailed ? 3 : 0;
 }
 
 async function scanCommand(context: CommandContext): Promise<number> {
@@ -6366,21 +6340,6 @@ function ciPolicyFromFlags(context: CommandContext): Record<string, unknown> {
   return policy;
 }
 
-function qualityProfileFromCi(
-  context: CommandContext,
-  policy: Record<string, unknown>,
-  createdAt: string,
-) {
-  const profileId = flagString(context.parsed.flags, "profile");
-  if (!profileId) {
-    return adHocQualityProfile(policy, createdAt);
-  }
-  if (isBuiltInQualityProfile(profileId)) {
-    return builtInQualityProfile(profileId, createdAt);
-  }
-  throw new Error(`Unsupported quality profile: ${profileId}. Expected advisory, balanced, strict, or maintainability-only.`);
-}
-
 async function reviewPrQualityInputFromCi(context: CommandContext): Promise<ReviewPrQualityInput | undefined> {
   const reviewPrPath = flagString(context.parsed.flags, "review-pr");
   if (!reviewPrPath) {
@@ -6391,10 +6350,6 @@ async function reviewPrQualityInputFromCi(context: CommandContext): Promise<Revi
     targetVerdict?: ReviewPrQualityInput["targetVerdict"];
   };
   return { targetVerdict: parsed.targetVerdict ?? null };
-}
-
-function isBuiltInQualityProfile(value: string): value is BuiltInQualityProfileId {
-  return ["advisory", "balanced", "strict", "maintainability-only"].includes(value);
 }
 
 async function buildRetentionManifest(context: CommandContext): Promise<RetentionManifestRecord> {
@@ -6625,183 +6580,6 @@ function sourceSafeOpportunity(opportunity: PrOpportunityRecord): Record<string,
     doNotTouch: opportunity.doNotTouch,
     testsRequiredFirst: opportunity.testsRequiredFirst,
   };
-}
-
-function evaluateCiPolicy(candidates: CandidateRecord[], policy: Record<string, unknown>): {
-  blockingFindingIds: string[];
-  reasons: Array<{ findingId: string; reason: string }>;
-} {
-  const blockers = new Map<string, string>();
-  const byPriority = countBy(candidates, (candidate) => candidate.priority.toLowerCase());
-  for (const priority of ["p0", "p1", "p2", "p3"]) {
-    const max = numberPolicy(policy, `max-${priority}`);
-    if (max !== undefined && (byPriority[priority] ?? 0) > max) {
-      for (const candidate of candidates.filter((item) => item.priority.toLowerCase() === priority).slice(max)) {
-        blockers.set(candidate.findingId ?? candidate.id, `max-${priority}`);
-      }
-    }
-    const maxNew = numberPolicy(policy, `max-new-${priority}`);
-    if (maxNew !== undefined) {
-      const newCandidates = candidates.filter((item) => (
-        item.priority.toLowerCase() === priority
-        && item.baselineStatus === "new"
-      ));
-      if (newCandidates.length > maxNew) {
-        for (const candidate of newCandidates.slice(maxNew)) {
-          blockers.set(candidate.findingId ?? candidate.id, `max-new-${priority}`);
-        }
-      }
-    }
-  }
-  const maxStale = numberPolicy(policy, "max-stale");
-  if (maxStale !== undefined) {
-    const stale = candidates.filter((candidate) => candidate.lifecycleState === "stale" || candidate.status === "stale");
-    if (stale.length > maxStale) {
-      for (const candidate of stale.slice(maxStale)) {
-        blockers.set(candidate.findingId ?? candidate.id, "max-stale");
-      }
-    }
-  }
-  const categories = Array.isArray(policy["fail-category"]) ? policy["fail-category"] : [];
-  for (const candidate of candidates) {
-    if (categories.includes(candidate.category)) {
-      blockers.set(candidate.findingId ?? candidate.id, `fail-category:${candidate.category}`);
-    }
-  }
-  const minConfidence = typeof policy["min-confidence"] === "string" ? policy["min-confidence"] : undefined;
-  if (minConfidence) {
-    const order = ["low", "medium", "high"];
-    const minimum = order.indexOf(minConfidence);
-    if (minimum >= 0) {
-      for (const candidate of candidates) {
-        if (order.indexOf(candidate.confidence) < minimum) {
-          blockers.set(candidate.findingId ?? candidate.id, `min-confidence:${minConfidence}`);
-        }
-      }
-    }
-  }
-  return {
-    blockingFindingIds: [...blockers.keys()].sort(),
-    reasons: [...blockers.entries()].map(([findingId, reason]) => ({ findingId, reason })),
-  };
-}
-
-async function writeCiArtifacts(
-  context: CommandContext,
-  scan: ScanExecutionResult["data"],
-  gate: { blockingFindingIds: string[]; reasons: Array<{ findingId: string; reason: string }> },
-  qualityGateResult: QualityGateResultRecord,
-): Promise<{ json?: string; markdown?: string; sarif?: string }> {
-  const artifactPaths: { json?: string; markdown?: string; sarif?: string } = {};
-  const output = flagString(context.parsed.flags, "output");
-  if (output) {
-    const markdownPath = path.resolve(context.paths.root, output);
-    await mkdir(path.dirname(markdownPath), { recursive: true });
-    await writeFile(markdownPath, renderCiMarkdown(scan, gate, qualityGateResult), "utf8");
-    artifactPaths.markdown = markdownPath;
-  }
-  const sarif = flagString(context.parsed.flags, "sarif");
-  if (sarif) {
-    const sarifPath = path.resolve(context.paths.root, sarif);
-    await mkdir(path.dirname(sarifPath), { recursive: true });
-    await writeFile(sarifPath, JSON.stringify(renderCiSarif(scan.candidates, qualityGateResult), null, 2) + "\n", "utf8");
-    artifactPaths.sarif = sarifPath;
-  }
-  return artifactPaths;
-}
-
-function renderCiMarkdown(
-  scan: ScanExecutionResult["data"],
-  gate: { blockingFindingIds: string[]; reasons: Array<{ findingId: string; reason: string }> },
-  qualityGateResult: QualityGateResultRecord,
-): string {
-  return [
-    "# Deepclean CI",
-    "",
-    `Run: ${scan.runId}`,
-    `Candidates: ${scan.candidateCount}`,
-    `Blocking: ${gate.blockingFindingIds.length}`,
-    `Quality gate: ${qualityGateResult.status}`,
-    `Profile: ${qualityGateResult.profileId}`,
-    "",
-    "## Blocking Findings",
-    "",
-    ...(
-      gate.reasons.length > 0
-        ? gate.reasons.map((reason) => `- ${reason.findingId}: ${reason.reason}`)
-        : ["None"]
-    ),
-    "",
-    "## Quality Blockers",
-    "",
-    ...(
-      qualityGateResult.blockers.length > 0
-        ? qualityGateResult.blockers.map((finding) => `- ${finding.id}: ${finding.title} - ${finding.summary}`)
-        : ["None"]
-    ),
-    "",
-    "## Quality Advisories",
-    "",
-    ...(
-      qualityGateResult.advisories.length > 0
-        ? qualityGateResult.advisories.map((finding) => `- ${finding.id}: ${finding.title} - ${finding.summary}`)
-        : ["None"]
-    ),
-    "",
-  ].join("\n");
-}
-
-function renderCiSarif(candidates: CandidateRecord[], qualityGateResult?: QualityGateResultRecord): unknown {
-  const qualityFindings = qualityGateResult ? [...qualityGateResult.blockers, ...qualityGateResult.advisories] : [];
-  return {
-    version: "2.1.0",
-    runs: [{
-      tool: { driver: { name: "Deepclean" } },
-      results: [
-        ...candidates.map((candidate) => ({
-          ruleId: `deepclean/${candidate.category}`,
-          level: candidate.priority === "P0" || candidate.priority === "P1" ? "warning" : "note",
-          message: { text: `${candidate.id}: ${candidate.title}` },
-          locations: candidate.files.slice(0, 1).map((file) => ({
-            physicalLocation: {
-              artifactLocation: { uri: file.path },
-              region: { startLine: file.startLine ?? 1, endLine: file.endLine ?? file.startLine ?? 1 },
-            },
-          })),
-          properties: {
-            findingId: candidate.findingId,
-            priority: candidate.priority,
-            confidence: candidate.confidence,
-            baselineStatus: candidate.baselineStatus,
-          },
-        })),
-        ...qualityFindings.map((finding) => ({
-          ruleId: `deepclean/quality/${finding.family}`,
-          level: finding.severity === "blocker" ? "error" : "note",
-          message: { text: `${finding.id}: ${finding.title}. ${finding.summary}` },
-          locations: finding.files.slice(0, 1).map((file) => ({
-            physicalLocation: {
-              artifactLocation: { uri: file.path },
-              region: { startLine: file.startLine ?? 1, endLine: file.endLine ?? file.startLine ?? 1 },
-            },
-          })),
-          properties: {
-            profileId: qualityGateResult?.profileId,
-            candidateIds: finding.candidateIds,
-            findingIds: finding.findingIds,
-            opportunityIds: finding.opportunityIds,
-            analyzerRuleIds: finding.analyzerRuleIds,
-            baselineStatus: finding.baselineStatus,
-          },
-        })),
-      ],
-    }],
-  };
-}
-
-function numberPolicy(policy: Record<string, unknown>, key: string): number | undefined {
-  const value = policy[key];
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 async function gitMergeBaseChangedPaths(root: string, ref: string, head = "HEAD"): Promise<string[]> {
