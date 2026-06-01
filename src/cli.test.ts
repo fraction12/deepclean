@@ -1472,6 +1472,51 @@ ${Array.from({ length: 120 }, (_, index) => `  const dirtyValue${index} = ${inde
     });
   });
 
+  test("review-pr judges a PR against a target candidate", async () => {
+    await withTempRepo(async (repo) => {
+      await writeFixtureSource(repo);
+      await execFileAsync("git", ["init"], { cwd: repo });
+      await execFileAsync("git", ["config", "user.email", "deepclean@example.com"], { cwd: repo });
+      await execFileAsync("git", ["config", "user.name", "Deepclean Test"], { cwd: repo });
+      await execFileAsync("git", ["add", "."], { cwd: repo });
+      await execFileAsync("git", ["commit", "-m", "initial"], { cwd: repo });
+      await execFileAsync("git", ["update-ref", "refs/remotes/origin/main", "HEAD"], { cwd: repo });
+
+      const scan = await runCli(["scan", "--evidence-only", "--json"], repo);
+      expect(scan.code).toBe(0);
+      const scanPayload = JSON.parse(scan.stdout) as {
+        data: { candidates: Array<{ id: string; files: Array<{ path: string }> }> };
+      };
+      const target = scanPayload.data.candidates.find((candidate) => (
+        candidate.files.some((file) => file.path === "src/checkout.ts")
+      ));
+      expect(target?.id).toMatch(/^candidate-/);
+
+      await writeFile(path.join(repo, "src", "checkout.ts"), "export const checkoutChanged = true;\n", "utf8");
+      await execFileAsync("git", ["add", "."], { cwd: repo });
+      await execFileAsync("git", ["commit", "-m", "change checkout"], { cwd: repo });
+
+      const result = await runCli(["review-pr", "--target", target?.id ?? "", "--json"], repo);
+      expect(result.code).toBe(0);
+      const payload = JSON.parse(result.stdout) as {
+        data: {
+          targetVerdict?: {
+            targetId: string;
+            targetType: string;
+            verdict: string;
+            ownedFiles: string[];
+            changedDoNotTouchFiles: string[];
+          };
+        };
+      };
+      expect(payload.data.targetVerdict?.targetId).toBe(target?.id);
+      expect(payload.data.targetVerdict?.targetType).toBe("candidate");
+      expect(payload.data.targetVerdict?.verdict).toBe("addresses-target");
+      expect(payload.data.targetVerdict?.ownedFiles).toContain("src/checkout.ts");
+      expect(payload.data.targetVerdict?.changedDoNotTouchFiles).toEqual([]);
+    });
+  });
+
   test("review-pr emits an empty related context for a zero-change diff", async () => {
     await withTempRepo(async (repo) => {
       await writeFixtureSource(repo);

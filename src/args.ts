@@ -78,6 +78,7 @@ const valueFlags = new Set([
   "head",
   "mode",
   "title",
+  "target",
   "verification",
   "verification-command",
   "allow-files",

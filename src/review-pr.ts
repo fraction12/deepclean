@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { schemaVersion } from "./defaults.js";
 import { fileReferenceSchema } from "./file-references.js";
-import type { CandidateRecord, EvidenceRecord, FeatureRecord } from "./types.js";
+import type { CandidateRecord, EvidenceRecord, FeatureRecord, PrOpportunityRecord } from "./types.js";
 
 export const reviewPrCandidateSchema = z.object({
   id: z.string(),
@@ -27,6 +27,17 @@ export const reviewPrNeighborhoodSchema = z.object({
   relatedFiles: z.array(z.string()),
 });
 
+export const reviewPrTargetVerdictSchema = z.object({
+  targetId: z.string(),
+  targetType: z.enum(["opportunity", "candidate", "finding"]),
+  verdict: z.enum(["addresses-target", "partially-addresses-target", "wrong-target", "too-broad", "needs-human"]),
+  reasons: z.array(z.string()),
+  ownedFiles: z.array(z.string()),
+  doNotTouch: z.array(z.string()),
+  changedDoNotTouchFiles: z.array(z.string()),
+  missingVerification: z.array(z.string()),
+});
+
 export const reviewPrContextSchema = z.object({
   schemaVersion: z.literal(schemaVersion),
   recordType: z.literal("review_pr_context"),
@@ -47,6 +58,7 @@ export const reviewPrContextSchema = z.object({
     fixReady: z.number().int().nonnegative(),
   }),
   suggestedVerificationCommands: z.array(z.string()),
+  targetVerdict: reviewPrTargetVerdictSchema.optional(),
   promptContext: z.string(),
   outputPath: z.string().optional(),
   createdAt: z.string(),
@@ -65,6 +77,7 @@ export function buildReviewPrContext(options: {
   candidates: CandidateRecord[];
   evidence: EvidenceRecord[];
   features: FeatureRecord[];
+  target?: ReviewPrTarget | undefined;
   createdAt: string;
   outputPath?: string | undefined;
 }): ReviewPrContext {
@@ -103,6 +116,9 @@ export function buildReviewPrContext(options: {
       .filter((feature) => neighborhoods.some((neighborhood) => neighborhood.featureIds.includes(feature.featureId)))
       .flatMap((feature) => feature.verification),
   ]).slice(0, 12);
+  const targetVerdict = options.target
+    ? evaluateTargetVerdict(options.target, options.changedFiles, suggestedVerificationCommands)
+    : undefined;
   const promptContext = renderReviewPromptContext({
     base: options.base,
     head: options.head,
@@ -127,10 +143,88 @@ export function buildReviewPrContext(options: {
     architectureNeighborhoods: neighborhoods,
     riskSummary,
     suggestedVerificationCommands,
+    ...(targetVerdict ? { targetVerdict } : {}),
     promptContext,
     ...(options.outputPath ? { outputPath: options.outputPath } : {}),
     createdAt: options.createdAt,
   });
+}
+
+export type ReviewPrTarget = {
+  id: string;
+  type: "opportunity";
+  opportunity: PrOpportunityRecord;
+} | {
+  id: string;
+  type: "candidate";
+  candidate: CandidateRecord;
+} | {
+  id: string;
+  type: "finding";
+  candidate: CandidateRecord;
+};
+
+function evaluateTargetVerdict(
+  target: ReviewPrTarget,
+  changedFiles: string[],
+  suggestedVerificationCommands: string[],
+): z.infer<typeof reviewPrTargetVerdictSchema> {
+  const ownedFiles = targetOwnedFiles(target);
+  const doNotTouch = targetDoNotTouch(target);
+  const expectedVerification = targetVerification(target);
+  const changedDoNotTouchFiles = changedFiles.filter((file) => doNotTouch.some((blocked) => pathTouchesChangedFiles(blocked, [file])));
+  const changedOwnedFiles = changedFiles.filter((file) => ownedFiles.some((owned) => pathTouchesChangedFiles(owned, [file])));
+  const missingVerification = expectedVerification.filter((command) => !suggestedVerificationCommands.includes(command));
+  const reasons: string[] = [];
+  let verdict: z.infer<typeof reviewPrTargetVerdictSchema>["verdict"] = "addresses-target";
+
+  if (changedDoNotTouchFiles.length > 0) {
+    verdict = "too-broad";
+    reasons.push(`Changed do-not-touch files: ${changedDoNotTouchFiles.join(", ")}`);
+  } else if (changedOwnedFiles.length === 0 && ownedFiles.length > 0) {
+    verdict = "wrong-target";
+    reasons.push("PR changed no files owned by the target.");
+  } else if (missingVerification.length > 0) {
+    verdict = "partially-addresses-target";
+    reasons.push(`Target verification is not visible in PR context: ${missingVerification.join(", ")}`);
+  } else if (ownedFiles.length === 0) {
+    verdict = "needs-human";
+    reasons.push("Target has no owned file scope to compare against.");
+  } else {
+    reasons.push("Changed files overlap the target scope and no do-not-touch files changed.");
+  }
+
+  return {
+    targetId: target.id,
+    targetType: target.type,
+    verdict,
+    reasons,
+    ownedFiles,
+    doNotTouch,
+    changedDoNotTouchFiles,
+    missingVerification,
+  };
+}
+
+function targetOwnedFiles(target: ReviewPrTarget): string[] {
+  if (target.type === "opportunity") {
+    return target.opportunity.ownedFiles.map((file) => file.path);
+  }
+  return target.candidate.files.map((file) => file.path);
+}
+
+function targetDoNotTouch(target: ReviewPrTarget): string[] {
+  if (target.type === "opportunity") {
+    return target.opportunity.doNotTouch;
+  }
+  return target.candidate.doNotTouch ?? [];
+}
+
+function targetVerification(target: ReviewPrTarget): string[] {
+  if (target.type === "opportunity") {
+    return target.opportunity.validationPlan;
+  }
+  return target.candidate.verification;
 }
 
 function candidatesRelatedToChangedFiles(
