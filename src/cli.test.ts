@@ -16,6 +16,8 @@ import { resolveStatePaths } from "./state.js";
 import {
   candidateObservationRecordSchema,
   candidateRecordSchema,
+  analyzerSetupPlanRecordSchema,
+  campaignSummaryRecordSchema,
   ciRunRecordSchema,
   featureRecordSchema,
   findingRecordSchema,
@@ -25,6 +27,9 @@ import {
   retentionManifestRecordSchema,
   revalidationRecordSchema,
   schemaVersion,
+  prOpportunityRecordSchema,
+  qualityGateResultRecordSchema,
+  qualityProfileRecordSchema,
   synthesisAttemptRecordSchema,
   type CandidateRecord,
   type EvidenceRecord,
@@ -50,6 +55,162 @@ function registerCliSmokeTests(): void {
       await runJsonCli(["init", "--json"], repo);
       await expectDeepcleanStateDirectories(repo);
     });
+  });
+
+  test("parses cleanup campaign controller record contracts", () => {
+    const createdAt = "2026-06-01T00:00:00.000Z";
+    const opportunity = prOpportunityRecordSchema.parse({
+      schemaVersion,
+      recordType: "pr_opportunity",
+      id: "opportunity-001",
+      runId: "run-001",
+      targetCandidateIds: ["candidate-001"],
+      targetFindingIds: ["finding-001"],
+      targetClusterIds: [],
+      classification: "safe-narrow-pr",
+      status: "recommended",
+      title: "Extract focused quality gate records",
+      oneSentenceChange: "Add durable quality gate contracts without changing CI behavior.",
+      rationale: "Later command slices need stable records first.",
+      score: 92,
+      confidence: "high",
+      risk: "safe",
+      ownedFiles: [{ path: "src/quality-types.ts" }],
+      contextFiles: [{ path: "src/types.ts" }],
+      doNotTouch: ["src/cli.ts"],
+      behaviorInvariants: ["Existing ci flags keep current behavior."],
+      validationPlan: ["npm run typecheck"],
+      testsRequiredFirst: false,
+      expectedReviewerConcern: "schema shape",
+      stopLine: "Do not wire command behavior in this slice.",
+      expectedPayoff: "Unblocks the next implementation slices.",
+      sourceSignals: [{ kind: "spec", id: "code-quality-gates", summary: "OpenSpec requires durable records." }],
+      diagnostics: [],
+      createdAt,
+      updatedAt: createdAt,
+    });
+    expect(opportunity.classification).toBe("safe-narrow-pr");
+
+    const campaign = campaignSummaryRecordSchema.parse({
+      schemaVersion,
+      recordType: "campaign_summary",
+      id: "campaign-001",
+      runId: "run-001",
+      currentRunId: "run-001",
+      opportunityRunId: "run-001",
+      recommendedOpportunityId: "opportunity-001",
+      counts: {
+        byClassification: { "safe-narrow-pr": 1 },
+        byStatus: { recommended: 1 },
+      },
+      completedOpportunityIds: [],
+      supersededOpportunityIds: [],
+      knownFixAttemptIds: [],
+      knownPrUrls: [],
+      improvements: [],
+      remainingDebt: [],
+      diagnostics: [],
+      createdAt,
+    });
+    expect(campaign.recommendedOpportunityId).toBe("opportunity-001");
+
+    const profile = qualityProfileRecordSchema.parse({
+      schemaVersion,
+      recordType: "quality_profile",
+      id: "balanced",
+      name: "Balanced",
+      mode: "blocking",
+      scope: "pr",
+      gates: [{
+        family: "maintainability",
+        mode: "blocking",
+        thresholds: { maxNewP1: 0 },
+        requiredAnalyzerClasses: [],
+        advisoryAnalyzerClasses: [],
+      }],
+      analyzerInputs: [],
+      requiredAnalyzerClasses: [],
+      recommendedAnalyzerClasses: ["semgrep"],
+      createdAt,
+      updatedAt: createdAt,
+    });
+    expect(profile.recommendedAnalyzerClasses).toEqual(["semgrep"]);
+
+    const result = qualityGateResultRecordSchema.parse({
+      schemaVersion,
+      recordType: "quality_gate_result",
+      id: "quality-001",
+      runId: "run-001",
+      profileId: "balanced",
+      headRef: "HEAD",
+      status: "advisory",
+      blockers: [],
+      advisories: [{
+        id: "advisory-001",
+        family: "security",
+        title: "Security scanner not configured",
+        severity: "advisory",
+        baselineStatus: "unknown",
+        evidenceIds: [],
+        candidateIds: [],
+        findingIds: [],
+        opportunityIds: [],
+        analyzerRuleIds: [],
+        files: [],
+        summary: "Specialized security assurance is missing.",
+      }],
+      regressions: [],
+      improvements: [],
+      analyzerProvenance: [{
+        analyzerId: "semgrep",
+        family: "security",
+        evidenceClass: "recommended-analyzer",
+        status: "not-configured",
+        ruleIds: [],
+        diagnosticIds: [],
+      }],
+      coverageStatus: [{
+        family: "security",
+        status: "not-configured",
+        evidenceClass: "recommended-analyzer",
+        analyzerIds: ["semgrep"],
+        summary: "Semgrep is recommended but not configured.",
+      }],
+      artifactPaths: {},
+      diagnostics: [],
+      createdAt,
+    });
+    expect(result.coverageStatus[0]?.status).toBe("not-configured");
+
+    const setup = analyzerSetupPlanRecordSchema.parse({
+      schemaVersion,
+      recordType: "analyzer_setup_plan",
+      id: "analyzers-001",
+      root: "/repo",
+      ecosystem: "javascript-typescript",
+      packageManager: "npm",
+      existingScripts: { test: "vitest run" },
+      ciFiles: [".github/workflows/ci.yml"],
+      configuredAnalyzers: [],
+      recommendations: [{
+        analyzerId: "typecheck",
+        family: "bug-risk",
+        evidenceClass: "recommended-analyzer",
+        title: "Run TypeScript typecheck",
+        command: "npm run typecheck",
+        outputPath: ".deepclean/quality/setup/typecheck.txt",
+        filesToChange: [],
+        immediatelyRunnable: true,
+        requiresInstall: false,
+        advisory: true,
+        rationale: "The repo already has a typecheck script.",
+      }],
+      coverageStatus: [],
+      dryRun: true,
+      diagnostics: [],
+      createdAt,
+    });
+    expect(setup.recommendations[0]?.immediatelyRunnable).toBe(true);
   });
 
   test("supports global flags before the command", async () => {
@@ -528,6 +689,7 @@ describe("deepclean cli", () => {
         ".deepclean/features/run-20000101000000-old.json",
         ".deepclean/evidence/run-20000101000000-old.json",
         ".deepclean/synthesis/run-20000101000000-old.json",
+        ".deepclean/opportunities/run-20000101000000-old.json",
         ".deepclean/reports/report-old.json",
         ".deepclean/reports/report-old.md",
       ]));
@@ -4150,6 +4312,7 @@ async function writeOldRunArtifacts(repo: string): Promise<void> {
   await mkdir(path.join(state, "clusters"), { recursive: true });
   await mkdir(path.join(state, "observations"), { recursive: true });
   await mkdir(path.join(state, "synthesis"), { recursive: true });
+  await mkdir(path.join(state, "opportunities"), { recursive: true });
   await mkdir(path.join(state, "reports"), { recursive: true });
   await mkdir(path.join(state, "plans"), { recursive: true });
   await mkdir(path.join(state, "handoffs"), { recursive: true });
@@ -4170,6 +4333,7 @@ async function writeOldRunArtifacts(repo: string): Promise<void> {
   for (const dir of ["evidence", "features", "candidates", "clusters", "observations"]) {
     await writeFile(path.join(state, dir, `${oldRunId}.json`), "[]\n", "utf8");
   }
+  await writeFile(path.join(state, "opportunities", `${oldRunId}.json`), "[]\n", "utf8");
   await writeFile(path.join(state, "synthesis", `${oldRunId}.json`), `${JSON.stringify({
     schemaVersion,
     recordType: "synthesis_attempt",
@@ -4575,6 +4739,11 @@ async function expectDeepcleanStateDirectories(repo: string): Promise<void> {
     "identity-matches",
     "revalidations",
     "ci",
+    "opportunities",
+    "campaigns",
+    path.join("quality", "profiles"),
+    path.join("quality", "results"),
+    path.join("quality", "setup"),
     "locks",
     "retention",
     "fixes",

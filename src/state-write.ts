@@ -5,6 +5,8 @@ import type { StatePaths } from "./state-paths.js";
 import {
   candidateObservationRecordSchema,
   candidateRecordSchema,
+  campaignSummaryRecordSchema,
+  analyzerSetupPlanRecordSchema,
   ciRunRecordSchema,
   clusterRecordSchema,
   evidenceRecordSchema,
@@ -15,6 +17,9 @@ import {
   identityMatchRecordSchema,
   lifecycleEventRecordSchema,
   planRecordSchema,
+  prOpportunityRecordSchema,
+  qualityGateResultRecordSchema,
+  qualityProfileRecordSchema,
   reportRecordSchema,
   retentionManifestRecordSchema,
   revalidationRecordSchema,
@@ -23,6 +28,8 @@ import {
   triageRecordSchema,
   type CandidateObservationRecord,
   type CandidateRecord,
+  type CampaignSummaryRecord,
+  type AnalyzerSetupPlanRecord,
   type CiRunRecord,
   type ClusterRecord,
   type EvidenceRecord,
@@ -33,6 +40,9 @@ import {
   type IdentityMatchRecord,
   type LifecycleEventRecord,
   type PlanRecord,
+  type PrOpportunityRecord,
+  type QualityGateResultRecord,
+  type QualityProfileRecord,
   type ReportRecord,
   type RetentionManifestRecord,
   type RevalidationRecord,
@@ -179,6 +189,59 @@ export async function writeCiRun(
 ): Promise<string> {
   ciRunRecordSchema.parse(record);
   const filePath = path.join(paths.ciDir, `${record.id}.json`);
+  await writeJson(filePath, record);
+  return filePath;
+}
+
+export async function writePrOpportunities(
+  paths: StatePaths,
+  runId: string,
+  records: PrOpportunityRecord[],
+): Promise<string> {
+  for (const record of records) {
+    prOpportunityRecordSchema.parse(record);
+  }
+  const filePath = path.join(paths.opportunitiesDir, `${runId}.json`);
+  await writeJson(filePath, records);
+  return filePath;
+}
+
+export async function writeCampaignSummary(
+  paths: StatePaths,
+  record: CampaignSummaryRecord,
+): Promise<string> {
+  campaignSummaryRecordSchema.parse(record);
+  const filePath = path.join(paths.campaignsDir, `${record.id}.json`);
+  await writeJson(filePath, record);
+  return filePath;
+}
+
+export async function writeQualityProfile(
+  paths: StatePaths,
+  record: QualityProfileRecord,
+): Promise<string> {
+  qualityProfileRecordSchema.parse(record);
+  const filePath = path.join(paths.qualityProfilesDir, `${record.id}.json`);
+  await writeJson(filePath, record);
+  return filePath;
+}
+
+export async function writeQualityGateResult(
+  paths: StatePaths,
+  record: QualityGateResultRecord,
+): Promise<string> {
+  qualityGateResultRecordSchema.parse(record);
+  const filePath = path.join(paths.qualityResultsDir, `${record.id}.json`);
+  await writeJson(filePath, record);
+  return filePath;
+}
+
+export async function writeAnalyzerSetupPlan(
+  paths: StatePaths,
+  record: AnalyzerSetupPlanRecord,
+): Promise<string> {
+  analyzerSetupPlanRecordSchema.parse(record);
+  const filePath = path.join(paths.analyzerSetupDir, `${record.id}.json`);
   await writeJson(filePath, record);
   return filePath;
 }
