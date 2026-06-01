@@ -1473,6 +1473,49 @@ ${Array.from({ length: 120 }, (_, index) => `  const dirtyValue${index} = ${inde
       expect(balancedPayload.data.qualityGateResult.advisories.some((item) => item.id === "missing-semgrep")).toBe(true);
       expect(balancedPayload.data.qualityGateResult.coverageStatus.some((item) => item.status === "not-configured")).toBe(true);
 
+      await mkdir(path.join(repo, ".deepclean", "ci"), { recursive: true });
+      const reviewPrPath = path.join(repo, ".deepclean", "ci", "review-pr.json");
+      await writeFile(reviewPrPath, `${JSON.stringify({
+        targetVerdict: {
+          targetType: "opportunity",
+          targetId: "opportunity-unsafe",
+          opportunityId: "opportunity-unsafe",
+          verdict: "wrong-target",
+          reasons: ["Changed files do not address the selected opportunity."],
+          ownedFiles: ["src/checkout.ts"],
+          doNotTouch: ["src/invoice.ts"],
+          changedDoNotTouchFiles: ["src/invoice.ts"],
+          missingVerification: ["npm test"],
+        },
+      }, null, 2)}\n`, "utf8");
+      const blockedByReview = await runCli([
+        "ci",
+        "--evidence-only",
+        "--json",
+        "--profile",
+        "balanced",
+        "--review-pr",
+        ".deepclean/ci/review-pr.json",
+        "--output",
+        ".deepclean/ci/review-summary.md",
+        "--sarif",
+        ".deepclean/ci/review.sarif",
+      ], repo);
+      expect(blockedByReview.code).toBe(3);
+      const blockedByReviewPayload = JSON.parse(blockedByReview.stdout) as {
+        data: {
+          ciRun: { status: string; artifactPaths: { markdown?: string; sarif?: string } };
+          qualityGateResult: { status: string; blockers: Array<{ id: string; opportunityIds: string[] }> };
+        };
+      };
+      expect(blockedByReviewPayload.data.ciRun.status).toBe("policy-failed");
+      expect(blockedByReviewPayload.data.qualityGateResult.status).toBe("failed");
+      expect(blockedByReviewPayload.data.qualityGateResult.blockers.some((item) => item.id === "review-target-opportunity-unsafe")).toBe(true);
+      expect(blockedByReviewPayload.data.qualityGateResult.blockers.some((item) => item.opportunityIds.includes("opportunity-unsafe"))).toBe(true);
+      expect(await readFile(blockedByReviewPayload.data.ciRun.artifactPaths.markdown ?? "", "utf8")).toContain("## Quality Blockers");
+      const reviewSarif = JSON.parse(await readFile(blockedByReviewPayload.data.ciRun.artifactPaths.sarif ?? "", "utf8")) as { runs: Array<{ results: Array<{ ruleId: string }> }> };
+      expect(reviewSarif.runs[0]?.results.some((result) => result.ruleId === "deepclean/quality/policy")).toBe(true);
+
       const fail = await runCli([
         "ci",
         "--evidence-only",

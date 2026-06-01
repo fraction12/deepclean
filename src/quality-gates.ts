@@ -8,6 +8,20 @@ import type {
 
 export type BuiltInQualityProfileId = "advisory" | "balanced" | "strict" | "maintainability-only";
 
+export type ReviewPrQualityInput = {
+  targetVerdict?: {
+    targetType: string;
+    targetId: string;
+    opportunityId?: string | undefined;
+    verdict: string;
+    reasons: string[];
+    ownedFiles: string[];
+    doNotTouch: string[];
+    changedDoNotTouchFiles: string[];
+    missingVerification: string[];
+  } | null | undefined;
+};
+
 export function builtInQualityProfile(
   id: BuiltInQualityProfileId,
   createdAt = new Date().toISOString(),
@@ -91,14 +105,18 @@ export function evaluateQualityProfile(options: {
   headRef?: string | undefined;
   candidates: CandidateRecord[];
   legacyGate: { blockingFindingIds: string[]; reasons: Array<{ findingId: string; reason: string }> };
+  reviewPr?: ReviewPrQualityInput | undefined;
   createdAt?: string | undefined;
 }): QualityGateResultRecord {
   const createdAt = options.createdAt ?? new Date().toISOString();
   const legacyBlockers = options.legacyGate.reasons.map((reason) => findingFromLegacyReason(options.candidates, reason));
+  const reviewFindings = findingsFromReviewPr(options.reviewPr);
   const missingAssurance = missingAssuranceAdvisories(options.profile);
-  const blockers = options.profile.mode === "advisory" ? [] : legacyBlockers;
+  const blockers = options.profile.mode === "advisory" ? [] : [...legacyBlockers, ...reviewFindings.blockers];
   const advisories = [
     ...(options.profile.mode === "advisory" ? legacyBlockers : []),
+    ...(options.profile.mode === "advisory" ? reviewFindings.blockers : []),
+    ...reviewFindings.advisories,
     ...missingAssurance,
   ];
   const status: QualityGateResultRecord["status"] = blockers.length > 0
@@ -139,6 +157,84 @@ export function evaluateQualityProfile(options: {
     diagnostics: [],
     createdAt,
   };
+}
+
+function findingsFromReviewPr(reviewPr: ReviewPrQualityInput | undefined): {
+  blockers: QualityGateFinding[];
+  advisories: QualityGateFinding[];
+} {
+  const verdict = reviewPr?.targetVerdict;
+  if (!verdict) {
+    return { blockers: [], advisories: [] };
+  }
+  const blockers: QualityGateFinding[] = [];
+  const advisories: QualityGateFinding[] = [];
+  const opportunityIds = verdict.opportunityId ? [verdict.opportunityId] : verdict.targetType === "opportunity" ? [verdict.targetId] : [];
+  if (["wrong-target", "too-broad", "needs-human"].includes(verdict.verdict)) {
+    blockers.push({
+      id: `review-target-${verdict.targetId}`,
+      family: "policy",
+      title: `PR target verdict: ${verdict.verdict}`,
+      severity: "blocker",
+      baselineStatus: "new",
+      evidenceIds: [],
+      candidateIds: verdict.targetType === "candidate" ? [verdict.targetId] : [],
+      findingIds: verdict.targetType === "finding" ? [verdict.targetId] : [],
+      opportunityIds,
+      analyzerRuleIds: ["deepclean-review-pr-target"],
+      files: [],
+      summary: verdict.reasons.join(" ") || `Review target verdict is ${verdict.verdict}.`,
+    });
+  }
+  if (verdict.changedDoNotTouchFiles.length > 0) {
+    blockers.push({
+      id: `review-do-not-touch-${verdict.targetId}`,
+      family: "policy",
+      title: "PR changed do-not-touch files",
+      severity: "blocker",
+      baselineStatus: "new",
+      evidenceIds: [],
+      candidateIds: verdict.targetType === "candidate" ? [verdict.targetId] : [],
+      findingIds: verdict.targetType === "finding" ? [verdict.targetId] : [],
+      opportunityIds,
+      analyzerRuleIds: ["deepclean-review-pr-target"],
+      files: verdict.changedDoNotTouchFiles.map((file) => ({ path: file })),
+      summary: `Changed files outside the target stop line: ${verdict.changedDoNotTouchFiles.join(", ")}.`,
+    });
+  }
+  if (verdict.missingVerification.length > 0) {
+    blockers.push({
+      id: `review-missing-verification-${verdict.targetId}`,
+      family: "test-proof",
+      title: "PR is missing target verification",
+      severity: "blocker",
+      baselineStatus: "new",
+      evidenceIds: [],
+      candidateIds: verdict.targetType === "candidate" ? [verdict.targetId] : [],
+      findingIds: verdict.targetType === "finding" ? [verdict.targetId] : [],
+      opportunityIds,
+      analyzerRuleIds: ["deepclean-review-pr-target"],
+      files: [],
+      summary: `Missing required verification: ${verdict.missingVerification.join(", ")}.`,
+    });
+  }
+  if (verdict.verdict === "partially-addresses-target") {
+    advisories.push({
+      id: `review-partial-${verdict.targetId}`,
+      family: "policy",
+      title: "PR partially addresses target",
+      severity: "advisory",
+      baselineStatus: "improved",
+      evidenceIds: [],
+      candidateIds: verdict.targetType === "candidate" ? [verdict.targetId] : [],
+      findingIds: verdict.targetType === "finding" ? [verdict.targetId] : [],
+      opportunityIds,
+      analyzerRuleIds: ["deepclean-review-pr-target"],
+      files: [],
+      summary: verdict.reasons.join(" ") || "PR improves the target but leaves follow-up work.",
+    });
+  }
+  return { blockers, advisories };
 }
 
 function findingFromLegacyReason(
