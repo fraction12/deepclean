@@ -65,6 +65,7 @@ import {
   readFixAttempts,
   readHandoffs,
   readLatestPrOpportunities,
+  readPrOpportunities,
   readLatestCandidates,
   readLatestClusters,
   readLatestEvidence,
@@ -2342,6 +2343,20 @@ async function resolvePrOpportunityById(
     ?? [...await readAllPrOpportunities(paths)].reverse().find((item) => item.id === opportunityId);
 }
 
+async function resolveShowOpportunity(
+  paths: StatePaths,
+  opportunityId: string,
+  runId?: string | undefined,
+): Promise<PrOpportunityRecord | undefined> {
+  if (!opportunityId.startsWith("opportunity-")) {
+    return undefined;
+  }
+  if (runId) {
+    return (await readPrOpportunities(paths, runId)).find((item) => item.id === opportunityId);
+  }
+  return resolvePrOpportunityById(paths, opportunityId);
+}
+
 async function setupCommand(context: CommandContext): Promise<number> {
   const subcommand = context.parsed.positional[0];
   if (subcommand !== "analyzers") {
@@ -2831,6 +2846,63 @@ async function showCommand(context: CommandContext): Promise<number> {
   const { candidates, clusters, runId } = state;
   const config = await ensureState(context.paths);
   const availableClusters = clusters.length > 0 ? clusters : buildClusters(runId, candidates, state.evidence, new Date().toISOString(), config.clusters);
+  const opportunity = await resolveShowOpportunity(context.paths, id, requestedRunId);
+  if (opportunity) {
+    const opportunityState = opportunity.runId === state.runId
+      ? state
+      : await stateForRun(context.paths, opportunity.runId).catch(() => state);
+    const opportunityClusters = opportunityState.clusters.length > 0
+      ? opportunityState.clusters
+      : buildClusters(opportunityState.runId, opportunityState.candidates, opportunityState.evidence, new Date().toISOString(), config.clusters);
+    const opportunityCandidates = opportunity.targetCandidateIds
+      .map((candidateId) => resolveCandidateFromRunState(opportunityState.candidates, candidateId))
+      .filter((candidate): candidate is CandidateRecord => Boolean(candidate));
+    const targetClusterIds = new Set(opportunity.targetClusterIds);
+    const linkedClusters = opportunityClusters.filter((item) => targetClusterIds.has(item.id));
+    const evidenceIds = new Set([
+      ...opportunityCandidates.flatMap((candidate) => candidate.evidenceIds),
+      ...linkedClusters.flatMap((cluster) => cluster.evidenceIds),
+      ...opportunity.sourceSignals
+        .filter((signal) => signal.kind === "evidence" && signal.id)
+        .map((signal) => signal.id as string),
+    ]);
+    const supportingEvidence = evidenceForIds(opportunityState.evidence, [...evidenceIds]);
+    const affectedFeatures = featuresForCandidates(opportunityCandidates, opportunityState.features);
+    const [findings, revalidations, fixAttempts] = await Promise.all([
+      readFindings(context.paths),
+      readRevalidations(context.paths),
+      readFixAttempts(context.paths),
+    ]);
+    const targetFindingIds = new Set([
+      ...opportunity.targetFindingIds,
+      ...opportunityCandidates.flatMap((candidate) => candidate.findingId ? [candidate.findingId] : []),
+    ]);
+    const linkedFindings = findings.filter((finding) => targetFindingIds.has(finding.id));
+    emit(context.json, ok("show", {
+      runId: opportunity.runId,
+      opportunity,
+      candidates: opportunityCandidates,
+      clusters: linkedClusters,
+      findings: linkedFindings,
+      evidence: supportingEvidence,
+      features: affectedFeatures,
+      proofStatuses: opportunityCandidates.map((candidate) => ({
+        candidateId: candidate.id,
+        findingId: candidate.findingId,
+        proofStatus: proofStatusForCandidate(candidate, revalidations, fixAttempts),
+      })),
+    }, migrationDiagnostics));
+    if (!context.json && !context.quiet) {
+      printOpportunity(opportunity);
+      for (const candidate of opportunityCandidates) {
+        console.log(`  candidate ${candidate.id}: ${candidate.title}`);
+      }
+      for (const cluster of linkedClusters) {
+        console.log(`  theme ${cluster.id}: ${cluster.title}`);
+      }
+    }
+    return 0;
+  }
   const cluster = availableClusters.find((item) => item.id === id);
   if (cluster) {
     const clusterCandidates = candidates.filter((item) => cluster.candidateIds.includes(item.id));
@@ -5709,6 +5781,17 @@ function printCluster(cluster: ClusterRecord): void {
     console.log(`  warning: ${warning}`);
   }
   console.log(`  suggested: ${cluster.suggestedDirection}`);
+}
+
+function printOpportunity(opportunity: PrOpportunityRecord): void {
+  console.log(`${opportunity.id} ${opportunity.title}`);
+  console.log(`  classification: ${opportunity.classification}`);
+  console.log(`  status: ${opportunity.status}`);
+  console.log(`  confidence: ${opportunity.confidence}`);
+  console.log(`  risk: ${opportunity.risk}`);
+  console.log(`  candidates: ${opportunity.targetCandidateIds.join(", ") || "n/a"}`);
+  console.log(`  themes: ${opportunity.targetClusterIds.join(", ") || "n/a"}`);
+  console.log(`  stop line: ${opportunity.stopLine}`);
 }
 
 function evidenceForIds(evidence: EvidenceRecord[], ids: string[]): EvidenceRecord[] {
