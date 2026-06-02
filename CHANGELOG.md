@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 1.2.0 - 2026-06-02
+
+- Added a packaged DeepClean agent skill plus Codex/Claude discovery files so coding agents can find the source-safe cleanup workflow from source checkouts and npm installs.
+
 ## 1.1.0 - 2026-06-01
 
 - Added cleanup campaign opportunities, opportunity-targeted plans/handoffs/fix guards, quality profiles/gates, analyzer setup planning, and opportunity-first reports.

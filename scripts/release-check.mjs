@@ -47,9 +47,13 @@ try {
 
   const required = [
     "package/dist/cli.js",
+    "package/AGENTS.md",
     "package/README.md",
     "package/LICENSE",
     "package/CHANGELOG.md",
+    "package/CLAUDE.md",
+    "package/skills/README.md",
+    "package/skills/deepclean/SKILL.md",
     "package/docs/beta-onboarding.md",
     "package/docs/privacy-and-trust.md",
     "package/docs/public-readiness.md",
