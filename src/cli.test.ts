@@ -1044,6 +1044,25 @@ test("checkout", () => calculateCheckout([], false));
       expect(opportunityHandoffPayload.data.handoff.opportunityId).toBe(opportunityId);
       expect(opportunityHandoffPayload.data.handoff.content).toContain("Opportunity:");
 
+      const opportunityShow = await runCli(["show", opportunityId, "--json"], repo);
+      expect(opportunityShow.code).toBe(0);
+      const opportunityShowPayload = JSON.parse(opportunityShow.stdout) as {
+        data: {
+          opportunity: { id: string; targetCandidateIds: string[] };
+          candidates: Array<{ id: string }>;
+          evidence: unknown[];
+          features: unknown[];
+          proofStatuses: Array<{ candidateId: string }>;
+        };
+      };
+      expect(opportunityShowPayload.data.opportunity.id).toBe(opportunityId);
+      expect(opportunityShowPayload.data.candidates.map((candidate) => candidate.id)).toEqual(opportunityShowPayload.data.opportunity.targetCandidateIds);
+      expect(opportunityShowPayload.data.proofStatuses.map((status) => status.candidateId)).toEqual(opportunityShowPayload.data.opportunity.targetCandidateIds);
+      if (opportunityShowPayload.data.opportunity.targetCandidateIds.length > 0) {
+        expect(opportunityShowPayload.data.evidence.length).toBeGreaterThan(0);
+        expect(opportunityShowPayload.data.features.length).toBeGreaterThan(0);
+      }
+
       const id = nextPayload.data.candidate?.id;
       expect(id).toBeTruthy();
       const show = await runCli(["show", id ?? "", "--json"], repo);
