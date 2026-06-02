@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 1.1.0-beta.2 - 2026-06-01
+
+- Split CI quality-gate orchestration out of the CLI into a dedicated runner while preserving provider-backed profile behavior and CI artifact output.
+
 ## 1.1.0-beta.1 - 2026-06-01
 
 - Fixed named CI quality profiles so they run a bounded provider-backed quality-gate synthesis packet instead of inheriting broad cleanup-campaign synthesis or silently falling back to local metrics.
