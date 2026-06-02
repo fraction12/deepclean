@@ -4,6 +4,14 @@
 
 This repo is for `deepclean`, a Clawpatch-style CLI for improving working-but-sloppy AI-generated codebases.
 
+## Skills
+
+This repo ships a project skill for agents:
+
+- `skills/deepclean/SKILL.md`
+
+Use it whenever a task asks to run DeepClean, inspect repo cleanup state, run quality gates, select cleanup opportunities, create plans/handoffs, review PRs, or apply guarded cleanup fixes.
+
 Use OpenSpec for planning before implementation:
 
 ```bash

@@ -16,7 +16,7 @@ Website: https://fraction12.github.io/deepclean/
 
 ## Status
 
-Public beta with GA-candidate machine contracts. TypeScript, JavaScript, and Python evidence are supported.
+Stable CLI with source-safe machine contracts. TypeScript, JavaScript, and Python evidence are supported.
 
 ## Install
 
@@ -65,7 +65,15 @@ deepclean scan --root ./some-repo --evidence-only
 
 Older examples may include `deepclean scan --synthesize`; that flag still works, but it is no longer required. Plain `deepclean scan` is the normal synthesized path. Use `--evidence-only`, `--offline`, or `--local-only` when a run must avoid provider execution.
 
-For the full beta flow from install through source-safe support artifacts, see [Beta Onboarding](docs/beta-onboarding.md).
+For the full source-safe flow from install through support artifacts, see [Beta Onboarding](docs/beta-onboarding.md).
+
+## Agent Skill
+
+DeepClean includes a project skill agents can load directly:
+
+- [skills/deepclean/SKILL.md](skills/deepclean/SKILL.md)
+
+Codex-style agents can find it through `AGENTS.md`. Claude Code can find it through `CLAUDE.md`. The skill is also included in the npm package so agents can copy or reference it from an installed DeepClean distribution.
 
 ## Workflow
 
