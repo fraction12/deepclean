@@ -6,7 +6,13 @@ import { candidateId } from "./ids.js";
 import { commandsForFiles, mergeVerificationCommands, type VerificationProfile } from "./verification.js";
 import { confidenceAfterValidation, sourceTextForDrafts, stableIdentity, uniqueStrings, validationId, validateDraftCandidate } from "./synthesis-candidate-validation.js";
 import { planSynthesisChunks, type SynthesisChunk, type SynthesisPlanningMode } from "./synthesis-chunks.js";
-import { buildAttemptBase, buildPrompt, promptVersion } from "./synthesis-prompt.js";
+import {
+  buildAttemptBase,
+  buildPrompt,
+  buildSynthesisAttemptEvidenceManifest,
+  buildSynthesisAttemptRuntime,
+  promptVersion,
+} from "./synthesis-prompt.js";
 import { codexFailureMessage, runProcessWithRetries } from "./synthesis-process.js";
 import { jsonSchema, parseSynthesisOutput, type SynthesisOutput } from "./synthesis-schema.js";
 import { resolveReviewerPack, reviewerRubricVersions } from "./synthesis-reviewers.js";
@@ -533,32 +539,21 @@ function aggregateChunkedSynthesisAttempt(options: {
     model: options.runtime.model,
     promptVersion,
     promptBytes: options.attempts.reduce((sum, attempt) => sum + attempt.promptBytes, 0),
-    runtime: {
-      model: options.runtime.model,
-      effort: options.runtime.effort,
-      timeoutMs: options.runtime.timeoutMs,
-      retries: options.runtime.retries,
-      rpm: options.runtime.rpm,
-      concurrency: options.runtime.concurrency,
-      tokenBudget: options.runtime.tokenBudget,
-      excerptBudget: options.runtime.excerptBudget,
-      privacyMode: options.runtime.privacyMode,
-      allowSourceInModel: options.runtime.allowSourceInModel,
+    runtime: buildSynthesisAttemptRuntime(options.runtime, {
       synthesisMode: "chunked",
       chunkCount: options.chunks.length,
       chunks,
-    },
+    }),
     reviewerIds: uniqueStrings(options.attempts.flatMap((attempt) => attempt.reviewerIds)),
     reviewerRubricVersions: first.reviewerRubricVersions,
-    evidenceManifest: {
-      evidenceCount: includedEvidenceIds.length,
+    evidenceManifest: buildSynthesisAttemptEvidenceManifest({
       includedEvidenceIds,
       includedFileRefs: uniqueFileReferences(options.attempts.flatMap((attempt) => attempt.evidenceManifest.includedFileRefs)),
       omittedEvidenceIds,
       includeSource: options.includeSource,
       tokenBudget: options.runtime.tokenBudget,
       excerptBudget: options.runtime.excerptBudget,
-    },
+    }),
     rawCandidateCount: options.attempts.reduce((sum, attempt) => sum + attempt.rawCandidateCount, 0),
     acceptedCandidateCount: options.attempts.reduce((sum, attempt) => sum + attempt.acceptedCandidateCount, 0),
     rejectedCandidateCount: options.attempts.reduce((sum, attempt) => sum + attempt.rejectedCandidateCount, 0),
@@ -629,4 +624,3 @@ async function prepareSynthesisWorkspace(tempDir: string): Promise<{ outputPath:
   await writeFile(schemaPath, JSON.stringify(jsonSchema(), null, 2), "utf8");
   return { outputPath, schemaPath };
 }
-

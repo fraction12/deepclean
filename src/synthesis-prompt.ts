@@ -194,30 +194,68 @@ export function buildAttemptBase(options: {
     model: options.runtime.model,
     promptVersion,
     promptBytes: options.promptBytes,
-    runtime: {
-      model: options.runtime.model,
-      effort: options.runtime.effort,
-      timeoutMs: options.runtime.timeoutMs,
-      retries: options.runtime.retries,
-      rpm: options.runtime.rpm,
-      concurrency: options.runtime.concurrency,
-      tokenBudget: options.runtime.tokenBudget,
-      excerptBudget: options.runtime.excerptBudget,
-      privacyMode: options.runtime.privacyMode,
-      allowSourceInModel: options.runtime.allowSourceInModel,
+    runtime: buildSynthesisAttemptRuntime(options.runtime, {
       synthesisScope: options.synthesisScope,
-    },
+    }),
     reviewerIds: options.reviewerIds,
     reviewerRubricVersions: options.reviewerRubricVersions,
-    evidenceManifest: {
-      evidenceCount: options.evidence.length,
+    evidenceManifest: buildSynthesisAttemptEvidenceManifest({
       includedEvidenceIds: options.evidence.map((record) => record.id),
       includedFileRefs: uniqueFileReferences(options.evidence.flatMap((record) => record.files)),
       omittedEvidenceIds: [],
       includeSource: options.includeSource,
       tokenBudget: options.runtime.tokenBudget,
       excerptBudget: options.runtime.excerptBudget,
-    },
+    }),
     createdAt: options.createdAt,
+  };
+}
+
+export function buildSynthesisAttemptRuntime(
+  runtime: {
+    model?: string | undefined;
+    effort?: string | undefined;
+    timeoutMs: number;
+    retries: number;
+    rpm: number;
+    concurrency: number;
+    tokenBudget: number;
+    excerptBudget: number;
+    privacyMode: "local-only" | "metadata" | "source-ok";
+    allowSourceInModel: boolean;
+  },
+  extra: Record<string, unknown> = {},
+): SynthesisAttemptRecord["runtime"] {
+  return {
+    model: runtime.model,
+    effort: runtime.effort,
+    timeoutMs: runtime.timeoutMs,
+    retries: runtime.retries,
+    rpm: runtime.rpm,
+    concurrency: runtime.concurrency,
+    tokenBudget: runtime.tokenBudget,
+    excerptBudget: runtime.excerptBudget,
+    privacyMode: runtime.privacyMode,
+    allowSourceInModel: runtime.allowSourceInModel,
+    ...extra,
+  };
+}
+
+export function buildSynthesisAttemptEvidenceManifest(options: {
+  includedEvidenceIds: string[];
+  includedFileRefs: SynthesisAttemptRecord["evidenceManifest"]["includedFileRefs"];
+  omittedEvidenceIds: string[];
+  includeSource: boolean;
+  tokenBudget: number;
+  excerptBudget: number;
+}): SynthesisAttemptRecord["evidenceManifest"] {
+  return {
+    evidenceCount: options.includedEvidenceIds.length,
+    includedEvidenceIds: options.includedEvidenceIds,
+    includedFileRefs: options.includedFileRefs,
+    omittedEvidenceIds: options.omittedEvidenceIds,
+    includeSource: options.includeSource,
+    tokenBudget: options.tokenBudget,
+    excerptBudget: options.excerptBudget,
   };
 }
