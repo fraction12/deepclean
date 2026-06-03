@@ -8,6 +8,7 @@ export interface AdapterContext {
   runId: string;
   createdAt: string;
   files: SourceFile[];
+  allFiles?: SourceFile[] | undefined;
   config: DeepcleanConfig;
 }
 

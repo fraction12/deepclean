@@ -2543,6 +2543,7 @@ async function prepareScanInputs(context: CommandContext): Promise<ScanPreparati
     runId,
     createdAt: startedAt,
     files,
+    allFiles: discoveredFiles,
     config,
   });
   const evidence = attachFeatureContextToEvidence(markDirtyTreeEvidence(adapterResult.evidence, scope), features);
