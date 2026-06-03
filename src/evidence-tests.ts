@@ -4,7 +4,7 @@ import { stableId } from "./ids.js";
 import type { EvidenceRecord } from "./types.js";
 
 export async function testDiscoveryAdapter(context: AdapterContext): Promise<AdapterResult> {
-  const testFiles = context.files.filter((file) => isTestPath(file.path));
+  const testFiles = (context.allFiles ?? context.files).filter((file) => isTestPath(file.path));
   const sourceFiles = context.files.filter((file) => !isTestPath(file.path));
   const testStems = new Set(testFiles.map((file) => stem(file.path)));
   const evidence: EvidenceRecord[] = [];
