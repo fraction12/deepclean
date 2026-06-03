@@ -41,7 +41,7 @@ export const qualityProfileRecordSchema = z.object({
   id: z.string(),
   name: z.string(),
   mode: z.enum(qualityProfileModes),
-  scope: z.enum(qualityProfileScopes),
+  scope: z.enum(qualityProfileScopes).default("pr"),
   extends: z.string().optional(),
   gates: z.array(qualityGatePolicySchema),
   analyzerInputs: z.array(analyzerClassSchema).default([]),

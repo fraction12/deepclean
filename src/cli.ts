@@ -54,7 +54,7 @@ import {
 } from "./reporting.js";
 import { buildProgressSummary, renderProgressSummary } from "./progress.js";
 import type { ReviewPrQualityInput } from "./quality-gates.js";
-import { buildReviewPrContext, type ReviewPrTarget } from "./review-pr.js";
+import { buildReviewPrContext, reviewPrQualityInputSchema, type ReviewPrTarget } from "./review-pr.js";
 import type { SynthesisPlanningMode } from "./synthesis-chunks.js";
 import {
   ensureState,
@@ -2189,7 +2189,12 @@ async function ciCommand(context: CommandContext): Promise<number> {
   }
 
   const policy = ciPolicyFromFlags(context);
-  const reviewPr = await reviewPrQualityInputFromCi(context);
+  const reviewPrResult = await reviewPrQualityInputFromCi(context);
+  if (!reviewPrResult.ok) {
+    emit(context.json, fail("ci", reviewPrResult.code, reviewPrResult.message, reviewPrResult.diagnostics));
+    return 2;
+  }
+  const reviewPr = reviewPrResult.reviewPr;
   const gateRun = await buildCiQualityGateRun({
     root: context.paths.root,
     profileId,
@@ -2298,14 +2303,6 @@ function resolveReviewPrOutputPath(
     return { ok: true };
   }
   const resolved = path.resolve(context.paths.root, outputFlag);
-  const stateDir = path.resolve(context.paths.stateDir);
-  if (!pathIsWithin(resolved, stateDir)) {
-    return {
-      ok: false,
-      code: "review_pr_output_outside_state_dir",
-      message: "`review-pr --output` must write under the configured state directory.",
-    };
-  }
   return { ok: true, path: resolved };
 }
 
@@ -2384,11 +2381,6 @@ async function setupCommand(context: CommandContext): Promise<number> {
     console.log(`Plan written to ${path}`);
   }
   return 0;
-}
-
-function pathIsWithin(candidate: string, root: string): boolean {
-  const relative = path.relative(root, candidate);
-  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
 async function schemasCommand(context: CommandContext): Promise<number> {
@@ -3629,14 +3621,30 @@ async function resolveFixWorkflowTarget(
         message: `Opportunity ${opportunity.id} resolves to a candidate that is still too broad. Run \`deepclean split ${resolvedOpportunityCandidate.candidate.id}\` and target one child candidate.`,
       };
     }
+    const candidateFixability = deriveCandidateFixability(resolvedOpportunityCandidate.candidate);
+    if (candidateFixability !== "auto-fixable") {
+      return {
+        ok: false,
+        exitCode: 2,
+        code: "candidate_not_fixable",
+        message: guardedFixabilityRefusalMessage("candidate", resolvedOpportunityCandidate.candidate.id, candidateFixability),
+        diagnostics: [
+          {
+            level: "warning",
+            code: "candidate_fixability",
+            message: `Opportunity ${opportunity.id} resolved to candidate ${resolvedOpportunityCandidate.candidate.id}, which is ${candidateFixability}; guarded fix execution requires candidate-level auto-fixable proof.`,
+          },
+        ],
+      };
+    }
     return {
       ok: true,
       config,
       state,
       resolved: resolvedOpportunityCandidate,
-      fixability,
-      fixabilityTarget: opportunity.id,
-      fixabilitySource: "opportunity",
+      fixability: candidateFixability,
+      fixabilityTarget: resolvedOpportunityCandidate.candidate.id,
+      fixabilitySource: "candidate",
     };
   }
 
@@ -6541,16 +6549,68 @@ function ciPolicyFromFlags(context: CommandContext): Record<string, unknown> {
   return policy;
 }
 
-async function reviewPrQualityInputFromCi(context: CommandContext): Promise<ReviewPrQualityInput | undefined> {
+type ReviewPrQualityInputResult =
+  | { ok: true; reviewPr?: ReviewPrQualityInput | undefined }
+  | {
+    ok: false;
+    code: string;
+    message: string;
+    diagnostics: Array<{ level: "error"; code: string; message: string }>;
+  };
+
+async function reviewPrQualityInputFromCi(context: CommandContext): Promise<ReviewPrQualityInputResult> {
   const reviewPrPath = flagString(context.parsed.flags, "review-pr");
   if (!reviewPrPath) {
-    return undefined;
+    return { ok: true };
   }
   const resolved = path.resolve(context.paths.root, reviewPrPath);
-  const parsed = JSON.parse(await readFile(resolved, "utf8")) as {
-    targetVerdict?: ReviewPrQualityInput["targetVerdict"];
+  let raw: string;
+  try {
+    raw = await readFile(resolved, "utf8");
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    const message = `Could not read --review-pr file ${reviewPrPath}: ${detail}`;
+    return {
+      ok: false,
+      code: "ci_review_pr_unreadable",
+      message,
+      diagnostics: [{ level: "error", code: "ci_review_pr_unreadable", message }],
+    };
+  }
+
+  let parsedJson: unknown;
+  try {
+    parsedJson = JSON.parse(raw);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    const message = `Invalid --review-pr file ${reviewPrPath}: expected JSON review-pr context. ${detail}`;
+    return {
+      ok: false,
+      code: "ci_review_pr_invalid",
+      message,
+      diagnostics: [{ level: "error", code: "ci_review_pr_invalid", message }],
+    };
+  }
+
+  const parsed = reviewPrQualityInputSchema.safeParse(parsedJson);
+  if (!parsed.success) {
+    const details = parsed.error.issues
+      .slice(0, 3)
+      .map((issue) => `${issue.path.join(".") || "root"}: ${issue.message}`)
+      .join("; ");
+    const message = `Invalid --review-pr file ${reviewPrPath}: expected DeepClean review-pr JSON context.${details ? ` ${details}` : ""}`;
+    return {
+      ok: false,
+      code: "ci_review_pr_invalid",
+      message,
+      diagnostics: [{ level: "error", code: "ci_review_pr_invalid", message }],
+    };
+  }
+
+  return {
+    ok: true,
+    reviewPr: { targetVerdict: parsed.data.targetVerdict ?? null },
   };
-  return { targetVerdict: parsed.targetVerdict ?? null };
 }
 
 async function buildRetentionManifest(context: CommandContext): Promise<RetentionManifestRecord> {

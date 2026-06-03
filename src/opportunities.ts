@@ -56,16 +56,16 @@ export function buildPrOpportunities(input: BuildPrOpportunitiesInput): PrOpport
     const classification = classifyCandidate(candidate, clusterByCandidateId.get(candidate.id) ?? []);
     const safe = classification === "safe-narrow-pr";
     const baseFixability = deriveCandidateFixability(candidate);
+    const fixability = safe ? baseFixability : deriveFixabilityFromOpportunityClassification(classification);
+    const autoFixable = safe && fixability === "auto-fixable";
     opportunities.push(candidateOpportunity({
       candidate,
       createdAt,
       classification,
-      status: safe ? "recommended" : "blocked",
+      status: autoFixable ? "recommended" : "blocked",
       score: opportunityScore(candidate, classification),
-      fixability: safe && baseFixability === "auto-fixable"
-        ? "auto-fixable"
-        : deriveFixabilityFromOpportunityClassification(classification),
-      refusalReason: safe ? undefined : refusalReasonFor(candidate, classification),
+      fixability,
+      refusalReason: autoFixable ? undefined : refusalReasonFor(candidate, classification, fixability),
       stopLine: stopLineFor(candidate, classification),
       expectedPayoff: expectedPayoffFor(candidate, classification),
       clusterIds: clusterByCandidateId.get(candidate.id) ?? [],
@@ -73,10 +73,10 @@ export function buildPrOpportunities(input: BuildPrOpportunitiesInput): PrOpport
   }
 
   const safeOpportunities = opportunities
-    .filter((opportunity) => opportunity.classification === "safe-narrow-pr")
+    .filter((opportunity) => opportunity.classification === "safe-narrow-pr" && opportunity.fixability === "auto-fixable")
     .sort((a, b) => b.score - a.score || a.id.localeCompare(b.id));
   for (const opportunity of opportunities) {
-    if (opportunity.classification === "safe-narrow-pr") {
+    if (opportunity.classification === "safe-narrow-pr" && opportunity.fixability === "auto-fixable") {
       opportunity.status = opportunity.id === safeOpportunities[0]?.id ? "recommended" : "available";
     }
   }
@@ -274,6 +274,7 @@ function isSensitivePath(filePath: string): boolean {
 function refusalReasonFor(
   candidate: CandidateRecord,
   classification: PrOpportunityRecord["classification"],
+  fixability?: PrOpportunityRecord["fixability"] | undefined,
 ): string {
   switch (classification) {
     case "tests-first":
@@ -291,7 +292,9 @@ function refusalReasonFor(
     case "stop-campaign":
       return "No safe PR opportunity is available.";
     case "safe-narrow-pr":
-      return "";
+      return fixability && fixability !== "auto-fixable"
+        ? `Candidate is ${fixability}; guarded fix execution requires candidate-level auto-fixable proof.`
+        : "";
     default:
       return `Candidate ${candidate.id} is not fix-ready.`;
   }

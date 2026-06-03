@@ -66,6 +66,13 @@ export const reviewPrContextSchema = z.object({
 
 export type ReviewPrContext = z.infer<typeof reviewPrContextSchema>;
 
+export const reviewPrQualityInputSchema = z.union([
+  reviewPrContextSchema,
+  z.object({
+    targetVerdict: reviewPrTargetVerdictSchema.nullable(),
+  }).passthrough(),
+]);
+
 export function buildReviewPrContext(options: {
   id: string;
   runId: string;

@@ -139,6 +139,18 @@ function registerCliSmokeTests(): void {
     });
     expect(profile.recommendedAnalyzerClasses).toEqual(["semgrep"]);
 
+    const legacyProfile = qualityProfileRecordSchema.parse({
+      schemaVersion,
+      recordType: "quality_profile",
+      id: "legacy-balanced",
+      name: "Legacy Balanced",
+      mode: "blocking",
+      gates: [],
+      createdAt,
+      updatedAt: createdAt,
+    });
+    expect(legacyProfile.scope).toBe("pr");
+
     const result = qualityGateResultRecordSchema.parse({
       schemaVersion,
       recordType: "quality_gate_result",
@@ -1559,6 +1571,48 @@ ${Array.from({ length: 120 }, (_, index) => `  const dirtyValue${index} = ${inde
       const reviewSarif = JSON.parse(await readFile(blockedByReviewPayload.data.ciRun.artifactPaths.sarif ?? "", "utf8")) as { runs: Array<{ results: Array<{ ruleId: string }> }> };
       expect(reviewSarif.runs[0]?.results.some((result) => result.ruleId === "deepclean/quality/policy")).toBe(true);
 
+      const blockedByReviewAdHoc = await runCli([
+        "ci",
+        "--evidence-only",
+        "--json",
+        "--review-pr",
+        ".deepclean/ci/review-pr.json",
+      ], repo);
+      expect(blockedByReviewAdHoc.code).toBe(3);
+      const blockedByReviewAdHocPayload = JSON.parse(blockedByReviewAdHoc.stdout) as {
+        data: {
+          ciRun: { status: string };
+          qualityProfile: { id: string };
+          qualityGateResult: { status: string };
+        };
+      };
+      expect(blockedByReviewAdHocPayload.data.qualityProfile.id).toBe("ad-hoc");
+      expect(blockedByReviewAdHocPayload.data.ciRun.status).toBe("policy-failed");
+      expect(blockedByReviewAdHocPayload.data.qualityGateResult.status).toBe("failed");
+
+      await writeFile(path.join(repo, ".deepclean", "ci", "bad-review-pr.json"), `${JSON.stringify({
+        targetVerdict: {
+          targetType: "opportunity",
+          targetId: "opportunity-unsafe",
+          verdict: "not-a-verdict",
+        },
+      }, null, 2)}\n`, "utf8");
+      const invalidReviewPr = await runCli([
+        "ci",
+        "--evidence-only",
+        "--json",
+        "--review-pr",
+        ".deepclean/ci/bad-review-pr.json",
+      ], repo);
+      expect(invalidReviewPr.code).toBe(2);
+      const invalidReviewPrPayload = JSON.parse(invalidReviewPr.stdout) as {
+        error: { code: string; message: string };
+        diagnostics: Array<{ code: string }>;
+      };
+      expect(invalidReviewPrPayload.error.code).toBe("ci_review_pr_invalid");
+      expect(invalidReviewPrPayload.error.message).toContain("expected DeepClean review-pr JSON context");
+      expect(invalidReviewPrPayload.diagnostics.some((diagnostic) => diagnostic.code === "ci_review_pr_invalid")).toBe(true);
+
       const fail = await runCli([
         "ci",
         "--evidence-only",
@@ -1777,7 +1831,7 @@ ${Array.from({ length: 120 }, (_, index) => `  const dirtyValue${index} = ${inde
     });
   });
 
-  test("review-pr refuses output outside the configured state directory", async () => {
+  test("review-pr writes output outside the configured state directory", async () => {
     await withTempRepo(async (repo) => {
       await writeFixtureSource(repo);
       await execFileAsync("git", ["init"], { cwd: repo });
@@ -1792,13 +1846,15 @@ ${Array.from({ length: 120 }, (_, index) => `  const dirtyValue${index} = ${inde
         "--state-dir",
         ".octocheck/deepclean",
         "--output",
-        "../outside.json",
+        "artifact/review-pr.json",
         "--json",
       ], repo);
-      expect(result.code).toBe(2);
-      const payload = JSON.parse(result.stdout) as { error: { code: string; message: string } };
-      expect(payload.error.code).toBe("review_pr_output_outside_state_dir");
-      expect(payload.error.message).toContain("state directory");
+      expect(result.code).toBe(0);
+      const outputPath = path.join(repo, "artifact", "review-pr.json");
+      const payload = JSON.parse(result.stdout) as { data: { outputPath?: string } };
+      expect(payload.data.outputPath).toBe(outputPath);
+      const output = JSON.parse(await readFile(outputPath, "utf8")) as { recordType: string };
+      expect(output.recordType).toBe("review_pr_context");
     });
   });
 
@@ -2667,6 +2723,29 @@ process.exit(0);
       expect(payload.data.attempt.candidateId).toBe(prepared.candidateId);
       expect(payload.data.attempt.status).toBe("previewed");
       expect(payload.data.attempt.dryRun).toBe(true);
+    });
+  });
+
+  test("fix refuses stale safe opportunity targets when the candidate is not auto-fixable", async () => {
+    await withTempRepo(async (repo) => {
+      const prepared = await prepareFixableRepo(repo);
+      await enableFixExecution(repo);
+      const opportunityId = await writeFixOpportunity(repo, prepared.candidateId, "safe-narrow-pr");
+      await markCandidateFixability(repo, prepared.candidateId, {
+        fixability: "agent-fixable",
+        risk: "moderate",
+      });
+      const before = await readFile(path.join(repo, "src", "invoice.ts"), "utf8");
+      const result = await runCli(["fix", opportunityId, "--mode", "guarded", "--patch", prepared.patchPath, "--apply", "--verification", "true", "--json"], repo);
+      expect(result.code).toBe(2);
+      const payload = JSON.parse(result.stdout) as {
+        error: { code: string; message: string };
+        diagnostics: Array<{ code: string; message: string }>;
+      };
+      expect(payload.error.code).toBe("candidate_not_fixable");
+      expect(payload.error.message).toContain("agent-fixable");
+      expect(payload.diagnostics.some((diagnostic) => diagnostic.code === "candidate_fixability" && diagnostic.message.includes(opportunityId))).toBe(true);
+      expect(await readFile(path.join(repo, "src", "invoice.ts"), "utf8")).toBe(before);
     });
   });
 

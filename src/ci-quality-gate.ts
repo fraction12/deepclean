@@ -79,7 +79,7 @@ export async function buildCiQualityGateRun(options: CiQualityGateOptions): Prom
     qualityGateResult,
   });
   qualityGateResult.artifactPaths = artifactPaths;
-  const qualityFailed = qualityProfile.id !== "ad-hoc" && qualityGateResult.status === "failed";
+  const qualityFailed = qualityGateResult.status === "failed";
   const legacyFailed = legacyGate.blockingFindingIds.length > 0;
   const ciRun: CiRunRecord = {
     schemaVersion,
