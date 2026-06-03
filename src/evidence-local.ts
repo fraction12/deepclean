@@ -45,6 +45,9 @@ export async function duplicationAdapter(context: AdapterContext): Promise<Adapt
       if (slice.every((line) => /^["'`<][^=({]*["'`>]?,?$/.test(line.trim()))) {
         continue;
       }
+      if (isSwitchMappingWindow(slice)) {
+        continue;
+      }
       if (slice.filter((line) => /[=({.]|return|if |for |while /.test(line)).length < 3) {
         continue;
       }
@@ -91,6 +94,18 @@ export async function duplicationAdapter(context: AdapterContext): Promise<Adapt
 
   return { evidence, diagnostics: [] };
 }
+
+function isSwitchMappingWindow(lines: string[]): boolean {
+  const mappingLines = lines.filter((line) => /^case\b.*:$/.test(line) || /^return\b[^;]*;$/.test(line));
+  if (mappingLines.length < 4) {
+    return false;
+  }
+  return lines.every((line) => /^switch\b.*\{$/.test(line)
+    || /^case\b.*:$/.test(line)
+    || /^return\b[^;]*;$/.test(line)
+    || line === "}");
+}
+
 export function firstMatchPerFile(
   matches: Array<{ file: SourceFile; startLine: number; text: string }>,
 ): Array<{ file: SourceFile; startLine: number; text: string }> {
