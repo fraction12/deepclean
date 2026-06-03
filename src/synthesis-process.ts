@@ -1,6 +1,8 @@
 import { spawn } from "node:child_process";
 import { collectProcessOutput } from "./process-output.js";
 
+const terminationGraceMs = 1000;
+
 async function runProcess(
   command: string,
   args: string[],
@@ -15,19 +17,31 @@ async function runProcess(
       env: process.env,
     });
     const output = collectProcessOutput(child);
+    let killTimer: NodeJS.Timeout | undefined;
     const timeout = setTimeout(() => {
       timedOut = true;
       child.kill("SIGTERM");
+      killTimer = setTimeout(() => {
+        if (child.exitCode === null && child.signalCode === null) {
+          child.kill("SIGKILL");
+        }
+      }, terminationGraceMs);
     }, timeoutMs);
 
     child.on("error", (error) => {
       clearTimeout(timeout);
+      if (killTimer) {
+        clearTimeout(killTimer);
+      }
       const { stdout, stderr } = output.current();
       providerUnavailable = typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
       resolve({ exitCode: 1, stdout, stderr: error.message, timedOut, providerUnavailable });
     });
     child.on("close", (exitCode) => {
       clearTimeout(timeout);
+      if (killTimer) {
+        clearTimeout(killTimer);
+      }
       const { stdout, stderr } = output.current();
       resolve({ exitCode, stdout, stderr, timedOut, providerUnavailable });
     });
@@ -44,7 +58,7 @@ export async function runProcessWithRetries(
 ): Promise<{ exitCode: number | null; stdout: string; stderr: string; timedOut: boolean; providerUnavailable: boolean; attempts: number }> {
   let last = await runProcess(command, args, stdin, timeoutMs);
   let attempts = 1;
-  while (last.exitCode !== 0 && attempts <= retries && !last.providerUnavailable) {
+  while (last.exitCode !== 0 && !last.timedOut && attempts <= retries && !last.providerUnavailable) {
     attempts += 1;
     last = await runProcess(command, args, stdin, timeoutMs);
   }
@@ -64,4 +78,3 @@ export function codexFailureMessage(result: { exitCode: number | null; stdout: s
   }
   return text;
 }
-

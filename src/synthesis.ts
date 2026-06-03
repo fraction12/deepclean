@@ -79,7 +79,7 @@ export async function synthesizeWithCodex(options: SynthesizeWithCodexOptions): 
       options.runtime.retries,
     );
 
-    if (result.exitCode !== 0) {
+    if (result.timedOut || result.exitCode !== 0) {
       return buildCodexFailureSynthesisResult(result, diagnostics, attemptBase);
     }
 
@@ -629,5 +629,4 @@ async function prepareSynthesisWorkspace(tempDir: string): Promise<{ outputPath:
   await writeFile(schemaPath, JSON.stringify(jsonSchema(), null, 2), "utf8");
   return { outputPath, schemaPath };
 }
-
 
