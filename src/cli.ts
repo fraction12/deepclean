@@ -41,6 +41,11 @@ import { buildCandidatePlan, buildClusterPlan, buildOpportunityPlan } from "./pl
 import { buildPrOpportunities } from "./opportunities.js";
 import { classifyRevalidation, verificationRunIdsForFinding } from "./revalidation.js";
 import {
+  deriveCandidateFixability,
+  deriveOpportunityFixability,
+  type FixabilityLevel,
+} from "./slop-classification.js";
+import {
   buildHandoff,
   buildOpportunityHandoff,
   buildReportRecord,
@@ -106,6 +111,7 @@ import {
 import {
   candidateStatuses,
   featureMapSources,
+  fixabilityLevels,
   schemaVersion,
   type CandidateRecord,
   type CampaignSummaryRecord,
@@ -2679,6 +2685,7 @@ async function nextCommand(context: CommandContext): Promise<number> {
     fixAttempts,
   });
   const opportunitiesPath = await writePrOpportunities(context.paths, runId, opportunities);
+  const fixability = nextFixabilitySummary(opportunities);
   const opportunity = opportunities.find((item) => item.status === "recommended")
     ?? opportunities.find((item) => item.classification === "stop-campaign")
     ?? null;
@@ -2690,6 +2697,7 @@ async function nextCommand(context: CommandContext): Promise<number> {
     opportunity,
     opportunities,
     opportunitiesPath,
+    fixability,
     candidate: candidate ?? null,
     proofStatus: candidate ? proofStatusForCandidate(candidate, revalidations, fixAttempts) : null,
     selectedFeature,
@@ -2705,6 +2713,38 @@ async function nextCommand(context: CommandContext): Promise<number> {
     }
   }
   return 0;
+}
+
+function nextFixabilitySummary(opportunities: PrOpportunityRecord[]): {
+  counts: Record<FixabilityLevel, number>;
+  nextAutoFixableOpportunity: PrOpportunityRecord | null;
+  nextAgentFixableOpportunity: PrOpportunityRecord | null;
+  nextHumanDesignNeededOpportunity: PrOpportunityRecord | null;
+  noSafeFix: boolean;
+} {
+  const counts = Object.fromEntries(fixabilityLevels.map((level) => [level, 0])) as Record<FixabilityLevel, number>;
+  for (const opportunity of opportunities) {
+    counts[deriveOpportunityFixability(opportunity)] += 1;
+  }
+  const nextAutoFixableOpportunity = firstOpportunityByFixability(opportunities, "auto-fixable");
+  return {
+    counts,
+    nextAutoFixableOpportunity,
+    nextAgentFixableOpportunity: firstOpportunityByFixability(opportunities, "agent-fixable"),
+    nextHumanDesignNeededOpportunity: firstOpportunityByFixability(opportunities, "human-design-needed"),
+    noSafeFix: nextAutoFixableOpportunity === null,
+  };
+}
+
+function firstOpportunityByFixability(
+  opportunities: PrOpportunityRecord[],
+  fixability: FixabilityLevel,
+): PrOpportunityRecord | null {
+  return opportunities.find((opportunity) => (
+    opportunity.status !== "rejected"
+    && opportunity.classification !== "stop-campaign"
+    && deriveOpportunityFixability(opportunity) === fixability
+  )) ?? null;
 }
 
 async function campaignCommand(context: CommandContext): Promise<number> {
@@ -3511,6 +3551,9 @@ type FixWorkflowTargetContext = {
     findingId: string;
     candidate: CandidateRecord;
   };
+  fixability: FixabilityLevel;
+  fixabilityTarget: string;
+  fixabilitySource: "candidate" | "opportunity";
 };
 
 async function resolveFixWorkflowTarget(
@@ -3539,17 +3582,25 @@ async function resolveFixWorkflowTarget(
   const state = await latestState(context.paths);
   const opportunity = await resolvePrOpportunityById(context.paths, target);
   if (opportunity) {
-    if (opportunity.classification !== "safe-narrow-pr") {
+    const fixability = deriveOpportunityFixability(opportunity);
+    if (fixability !== "auto-fixable") {
       return {
         ok: false,
         exitCode: 2,
         code: "opportunity_not_fixable",
-        message: `Opportunity ${opportunity.id} is classified as ${opportunity.classification}; guarded fix execution only accepts safe-narrow-pr opportunities.`,
-        diagnostics: opportunity.refusalReason ? [{
-          level: "warning",
-          code: "opportunity_refusal_reason",
-          message: opportunity.refusalReason,
-        }] : [],
+        message: guardedFixabilityRefusalMessage("opportunity", opportunity.id, fixability),
+        diagnostics: [
+          {
+            level: "warning",
+            code: "opportunity_fixability",
+            message: `Opportunity ${opportunity.id} is ${fixability}; classification is ${opportunity.classification}.`,
+          },
+          ...(opportunity.refusalReason ? [{
+            level: "warning" as const,
+            code: "opportunity_refusal_reason",
+            message: opportunity.refusalReason,
+          }] : []),
+        ],
       };
     }
     if (opportunity.targetCandidateIds.length !== 1) {
@@ -3578,7 +3629,15 @@ async function resolveFixWorkflowTarget(
         message: `Opportunity ${opportunity.id} resolves to a candidate that is still too broad. Run \`deepclean split ${resolvedOpportunityCandidate.candidate.id}\` and target one child candidate.`,
       };
     }
-    return { ok: true, config, state, resolved: resolvedOpportunityCandidate };
+    return {
+      ok: true,
+      config,
+      state,
+      resolved: resolvedOpportunityCandidate,
+      fixability,
+      fixabilityTarget: opportunity.id,
+      fixabilitySource: "opportunity",
+    };
   }
 
   if (target.startsWith("opportunity-")) {
@@ -3609,7 +3668,39 @@ async function resolveFixWorkflowTarget(
     };
   }
 
-  return { ok: true, config, state, resolved };
+  return {
+    ok: true,
+    config,
+    state,
+    resolved,
+    fixability: deriveCandidateFixability(resolved.candidate),
+    fixabilityTarget: resolved.candidate.id,
+    fixabilitySource: "candidate",
+  };
+}
+
+function guardedFixabilityRefusalMessage(
+  targetType: "candidate" | "opportunity",
+  targetId: string,
+  fixability: FixabilityLevel,
+): string {
+  const next = fixabilityNextStep(targetId, fixability);
+  return `${targetType === "opportunity" ? "Opportunity" : "Candidate"} ${targetId} is ${fixability}; guarded fix execution only mutates auto-fixable targets. ${next}`;
+}
+
+function fixabilityNextStep(targetId: string, fixability: FixabilityLevel): string {
+  switch (fixability) {
+    case "agent-fixable":
+      return `Use \`deepclean plan ${targetId}\` or \`deepclean handoff ${targetId}\` for a bounded agent repair.`;
+    case "human-design-needed":
+      return "Write the design/spec decision first, then rescan for a bounded fix target.";
+    case "review-only":
+      return "Keep this in report or CI review context; do not run autofix.";
+    case "noise":
+      return "Suppress, ignore, or leave this out of fix queues.";
+    case "auto-fixable":
+      return "This target may enter guarded fix execution.";
+  }
 }
 
 function fixWorkflowVerificationBlocker(
@@ -3723,6 +3814,32 @@ async function prepareCandidateFixWorkflow(
       message: blocked.message,
     });
     return { ok: false, exitCode: 2, ...blocked };
+  }
+  if (targetContext.fixability !== "auto-fixable") {
+    const code = targetContext.fixabilitySource === "opportunity" ? "opportunity_not_fixable" : "candidate_not_fixable";
+    const message = guardedFixabilityRefusalMessage(
+      targetContext.fixabilitySource,
+      targetContext.fixabilityTarget,
+      targetContext.fixability,
+    );
+    await writeFixRefusalLifecycleEvent(context.paths, {
+      findingId: resolved.findingId,
+      candidateId: resolved.candidate.id,
+      command: options.command,
+      code,
+      message,
+    });
+    return {
+      ok: false,
+      exitCode: 2,
+      code,
+      message,
+      diagnostics: [{
+        level: "warning",
+        code: "target_fixability",
+        message: `${targetContext.fixabilityTarget} is ${targetContext.fixability}; guarded fix/work requires auto-fixable.`,
+      }],
+    };
   }
 
   const dryRun = flagBoolean(context.parsed.flags, "dry-run") || !flagBoolean(context.parsed.flags, "apply");

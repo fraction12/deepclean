@@ -9,6 +9,11 @@ import type {
   RevalidationRecord,
 } from "./types.js";
 import { schemaVersion } from "./defaults.js";
+import {
+  deriveCandidateFixability,
+  deriveFixabilityFromOpportunityClassification,
+  deriveSlopType,
+} from "./slop-classification.js";
 
 export interface BuildPrOpportunitiesInput {
   runId: string;
@@ -38,6 +43,7 @@ export function buildPrOpportunities(input: BuildPrOpportunitiesInput): PrOpport
         classification: "duplicate",
         status: "rejected",
         score: 5,
+        fixability: "noise",
         refusalReason: `Duplicates ${duplicateOf}.`,
         stopLine: "Do not open a separate PR for duplicate cleanup evidence.",
         expectedPayoff: "Avoids duplicate cleanup work.",
@@ -49,12 +55,16 @@ export function buildPrOpportunities(input: BuildPrOpportunitiesInput): PrOpport
 
     const classification = classifyCandidate(candidate, clusterByCandidateId.get(candidate.id) ?? []);
     const safe = classification === "safe-narrow-pr";
+    const baseFixability = deriveCandidateFixability(candidate);
     opportunities.push(candidateOpportunity({
       candidate,
       createdAt,
       classification,
       status: safe ? "recommended" : "blocked",
       score: opportunityScore(candidate, classification),
+      fixability: safe && baseFixability === "auto-fixable"
+        ? "auto-fixable"
+        : deriveFixabilityFromOpportunityClassification(classification),
       refusalReason: safe ? undefined : refusalReasonFor(candidate, classification),
       stopLine: stopLineFor(candidate, classification),
       expectedPayoff: expectedPayoffFor(candidate, classification),
@@ -91,6 +101,7 @@ function candidateOpportunity(options: {
   classification: PrOpportunityRecord["classification"];
   status: PrOpportunityRecord["status"];
   score: number;
+  fixability?: PrOpportunityRecord["fixability"] | undefined;
   refusalReason?: string | undefined;
   stopLine: string;
   expectedPayoff: string;
@@ -107,6 +118,8 @@ function candidateOpportunity(options: {
     targetFindingIds: candidate.findingId ? [candidate.findingId] : [],
     targetClusterIds: options.clusterIds,
     classification: options.classification,
+    slopType: deriveSlopType(candidate),
+    fixability: options.fixability ?? deriveCandidateFixability(candidate),
     status: options.status,
     title: candidate.title,
     oneSentenceChange: candidate.suggestedDirection,
@@ -152,6 +165,8 @@ function stopCampaignOpportunity(options: {
     targetFindingIds: [],
     targetClusterIds: [],
     classification: "stop-campaign",
+    slopType: "metric-only",
+    fixability: "noise",
     status: "blocked",
     title: "Stop cleanup campaign",
     oneSentenceChange: "Do not start another cleanup PR until blocked targets are clarified.",

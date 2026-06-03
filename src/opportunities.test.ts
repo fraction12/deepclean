@@ -15,6 +15,8 @@ describe("buildPrOpportunities", () => {
 
     expect(opportunities[0]?.id).toBe("opportunity-001");
     expect(opportunities[0]?.classification).toBe("safe-narrow-pr");
+    expect(opportunities[0]?.slopType).toBe("structure");
+    expect(opportunities[0]?.fixability).toBe("auto-fixable");
     expect(opportunities[0]?.status).toBe("recommended");
     expect(opportunities[1]?.status).toBe("available");
   });
@@ -79,6 +81,7 @@ describe("buildPrOpportunities", () => {
 
     const duplicate = opportunities.find((opportunity) => opportunity.targetCandidateIds.includes("candidate-002"));
     expect(duplicate?.classification).toBe("duplicate");
+    expect(duplicate?.fixability).toBe("noise");
     expect(duplicate?.status).toBe("rejected");
   });
 

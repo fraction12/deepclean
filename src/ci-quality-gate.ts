@@ -2,6 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { schemaVersion } from "./defaults.js";
 import { timestampId } from "./ids.js";
+import { deriveCandidateFixability, deriveSlopType } from "./slop-classification.js";
 import {
   adHocQualityProfile,
   builtInQualityProfile,
@@ -225,7 +226,7 @@ export function renderCiMarkdown(
     "",
     ...(
       qualityGateResult.blockers.length > 0
-        ? qualityGateResult.blockers.map((finding) => `- ${finding.id}: ${finding.title} - ${finding.summary}`)
+        ? qualityGateResult.blockers.map((finding) => `- ${finding.id}: ${finding.title} [${finding.actionability ?? "merge-blocker"}, ${finding.fixability ?? "review-only"}] - ${finding.summary}`)
         : ["None"]
     ),
     "",
@@ -233,7 +234,7 @@ export function renderCiMarkdown(
     "",
     ...(
       qualityGateResult.advisories.length > 0
-        ? qualityGateResult.advisories.map((finding) => `- ${finding.id}: ${finding.title} - ${finding.summary}`)
+        ? qualityGateResult.advisories.map((finding) => `- ${finding.id}: ${finding.title} [${finding.actionability ?? "warning"}, ${finding.fixability ?? "review-only"}] - ${finding.summary}`)
         : ["None"]
     ),
     "",
@@ -261,6 +262,8 @@ export function renderCiSarif(candidates: CandidateRecord[], qualityGateResult?:
             findingId: candidate.findingId,
             priority: candidate.priority,
             confidence: candidate.confidence,
+            slopType: deriveSlopType(candidate),
+            fixability: deriveCandidateFixability(candidate),
             baselineStatus: candidate.baselineStatus,
           },
         })),
@@ -280,6 +283,8 @@ export function renderCiSarif(candidates: CandidateRecord[], qualityGateResult?:
             findingIds: finding.findingIds,
             opportunityIds: finding.opportunityIds,
             analyzerRuleIds: finding.analyzerRuleIds,
+            actionability: finding.actionability,
+            fixability: finding.fixability,
             baselineStatus: finding.baselineStatus,
           },
         })),

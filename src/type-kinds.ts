@@ -20,6 +20,33 @@ export const candidateCategories = [
   "diagnostic",
 ] as const;
 
+export const slopTypes = [
+  "structure",
+  "duplication",
+  "complexity",
+  "testability",
+  "dead-weight",
+  "ai-slop",
+  "domain-drift",
+  "analyzer",
+  "metric-only",
+] as const;
+
+export const fixabilityLevels = [
+  "auto-fixable",
+  "agent-fixable",
+  "human-design-needed",
+  "review-only",
+  "noise",
+] as const;
+
+export const qualityActionabilities = [
+  "merge-blocker",
+  "warning",
+  "cleanup-recommendation",
+  "review-only",
+] as const;
+
 export const priorities = ["P0", "P1", "P2", "P3"] as const;
 export const confidenceLevels = ["low", "medium", "high"] as const;
 export const effortLevels = ["small", "medium", "large"] as const;

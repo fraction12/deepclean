@@ -1,4 +1,8 @@
 import { schemaVersion } from "./defaults.js";
+import {
+  deriveCandidateFixability,
+  deriveQualityFindingActionability,
+} from "./slop-classification.js";
 import type {
   CandidateRecord,
   QualityGateFinding,
@@ -171,11 +175,12 @@ function findingsFromReviewPr(reviewPr: ReviewPrQualityInput | undefined): {
   const advisories: QualityGateFinding[] = [];
   const opportunityIds = verdict.opportunityId ? [verdict.opportunityId] : verdict.targetType === "opportunity" ? [verdict.targetId] : [];
   if (["wrong-target", "too-broad", "needs-human"].includes(verdict.verdict)) {
-    blockers.push({
+    blockers.push(withFindingActionability({
       id: `review-target-${verdict.targetId}`,
       family: "policy",
       title: `PR target verdict: ${verdict.verdict}`,
       severity: "blocker",
+      fixability: "human-design-needed",
       baselineStatus: "new",
       evidenceIds: [],
       candidateIds: verdict.targetType === "candidate" ? [verdict.targetId] : [],
@@ -184,14 +189,15 @@ function findingsFromReviewPr(reviewPr: ReviewPrQualityInput | undefined): {
       analyzerRuleIds: ["deepclean-review-pr-target"],
       files: [],
       summary: verdict.reasons.join(" ") || `Review target verdict is ${verdict.verdict}.`,
-    });
+    }));
   }
   if (verdict.changedDoNotTouchFiles.length > 0) {
-    blockers.push({
+    blockers.push(withFindingActionability({
       id: `review-do-not-touch-${verdict.targetId}`,
       family: "policy",
       title: "PR changed do-not-touch files",
       severity: "blocker",
+      fixability: "review-only",
       baselineStatus: "new",
       evidenceIds: [],
       candidateIds: verdict.targetType === "candidate" ? [verdict.targetId] : [],
@@ -200,14 +206,15 @@ function findingsFromReviewPr(reviewPr: ReviewPrQualityInput | undefined): {
       analyzerRuleIds: ["deepclean-review-pr-target"],
       files: verdict.changedDoNotTouchFiles.map((file) => ({ path: file })),
       summary: `Changed files outside the target stop line: ${verdict.changedDoNotTouchFiles.join(", ")}.`,
-    });
+    }));
   }
   if (verdict.missingVerification.length > 0) {
-    blockers.push({
+    blockers.push(withFindingActionability({
       id: `review-missing-verification-${verdict.targetId}`,
       family: "test-proof",
       title: "PR is missing target verification",
       severity: "blocker",
+      fixability: "agent-fixable",
       baselineStatus: "new",
       evidenceIds: [],
       candidateIds: verdict.targetType === "candidate" ? [verdict.targetId] : [],
@@ -216,14 +223,15 @@ function findingsFromReviewPr(reviewPr: ReviewPrQualityInput | undefined): {
       analyzerRuleIds: ["deepclean-review-pr-target"],
       files: [],
       summary: `Missing required verification: ${verdict.missingVerification.join(", ")}.`,
-    });
+    }));
   }
   if (verdict.verdict === "partially-addresses-target") {
-    advisories.push({
+    advisories.push(withFindingActionability({
       id: `review-partial-${verdict.targetId}`,
       family: "policy",
       title: "PR partially addresses target",
       severity: "advisory",
+      fixability: "agent-fixable",
       baselineStatus: "improved",
       evidenceIds: [],
       candidateIds: verdict.targetType === "candidate" ? [verdict.targetId] : [],
@@ -232,7 +240,7 @@ function findingsFromReviewPr(reviewPr: ReviewPrQualityInput | undefined): {
       analyzerRuleIds: ["deepclean-review-pr-target"],
       files: [],
       summary: verdict.reasons.join(" ") || "PR improves the target but leaves follow-up work.",
-    });
+    }));
   }
   return { blockers, advisories };
 }
@@ -242,11 +250,12 @@ function findingFromLegacyReason(
   reason: { findingId: string; reason: string },
 ): QualityGateFinding {
   const candidate = candidates.find((item) => item.findingId === reason.findingId || item.id === reason.findingId);
-  return {
+  return withFindingActionability({
     id: `quality-${reason.findingId}`,
     family: "maintainability",
     title: candidate?.title ?? reason.findingId,
     severity: "blocker",
+    fixability: candidate ? deriveCandidateFixability(candidate) : "review-only",
     baselineStatus: candidate?.baselineStatus ?? "unknown",
     evidenceIds: candidate?.evidenceIds ?? [],
     candidateIds: candidate ? [candidate.id] : [],
@@ -255,15 +264,16 @@ function findingFromLegacyReason(
     analyzerRuleIds: ["deepclean-ci-policy"],
     files: candidate?.files ?? [],
     summary: `Blocked by ${reason.reason}.`,
-  };
+  });
 }
 
 function missingAssuranceAdvisories(profile: QualityProfileRecord): QualityGateFinding[] {
-  return profile.recommendedAnalyzerClasses.map((analyzerId) => ({
+  return profile.recommendedAnalyzerClasses.map((analyzerId) => withFindingActionability({
     id: `missing-${analyzerId}`,
     family: analyzerFamily(analyzerId),
     title: `${analyzerId} not configured`,
     severity: "advisory",
+    fixability: "review-only",
     baselineStatus: "unknown",
     evidenceIds: [],
     candidateIds: [],
@@ -273,6 +283,13 @@ function missingAssuranceAdvisories(profile: QualityProfileRecord): QualityGateF
     files: [],
     summary: `${analyzerId} is recommended for stronger assurance but is not configured for this gate run.`,
   }));
+}
+
+function withFindingActionability(finding: QualityGateFinding): QualityGateFinding {
+  return {
+    ...finding,
+    actionability: finding.actionability ?? deriveQualityFindingActionability(finding),
+  };
 }
 
 function analyzerFamily(analyzerId: string): QualityGateFinding["family"] {

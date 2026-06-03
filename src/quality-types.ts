@@ -5,6 +5,8 @@ import { diagnosticSchema } from "./json.js";
 import {
   analyzerCoverageStatuses,
   analyzerEvidenceClasses,
+  fixabilityLevels,
+  qualityActionabilities,
   qualityGateFamilies,
   qualityGateStatuses,
   qualityProfileModes,
@@ -57,6 +59,8 @@ export const qualityGateFindingSchema = z.object({
   family: z.enum(qualityGateFamilies),
   title: z.string(),
   severity: z.enum(["blocker", "advisory", "info"]),
+  actionability: z.enum(qualityActionabilities).optional(),
+  fixability: z.enum(fixabilityLevels).optional(),
   baselineStatus: z.enum(["new", "existing", "worsened", "improved", "fixed", "unknown"]).default("unknown"),
   evidenceIds: z.array(z.string()).default([]),
   candidateIds: z.array(z.string()).default([]),
