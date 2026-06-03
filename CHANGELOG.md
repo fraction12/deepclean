@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 1.2.1 - 2026-06-03
+
+- Fixed bounded synthesis provider timeouts so chunked review runs retain clearer failure diagnostics and retry context.
+- Fixed synthesis chunk test-gap detection and expanded reviewer-pack coverage around resolved artifacts.
+- Improved synthesis chunk planning, attempt-ledger field sharing, and design documentation for type-kind ownership and chunk-cycle boundaries.
+- Suppressed low-value switch mapping duplication noise so reports focus on more actionable cleanup targets.
+
 ## 1.2.0 - 2026-06-02
 
 - Added a packaged DeepClean agent skill plus Codex/Claude discovery files so coding agents can find the source-safe cleanup workflow from source checkouts and npm installs.
