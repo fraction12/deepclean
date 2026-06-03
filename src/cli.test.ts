@@ -4203,6 +4203,27 @@ setTimeout(() => {}, 2000);
     });
   });
 
+  test("scan recovers when synthesis provider ignores timeout termination", async () => {
+    await withTempRepo(async (repo) => {
+      await writeFixtureSource(repo);
+      await installFakeCodex(repo, `#!/usr/bin/env node
+process.on("SIGTERM", () => {});
+setInterval(() => {}, 1000);
+`);
+
+      const result = await runCli(["scan", "--synthesize", "--timeout-ms", "50", "--json"], repo);
+      expect(result.code).toBe(0);
+      const payload = JSON.parse(result.stdout) as {
+        data: { runId: string; evidenceCount: number; candidateCount: number; synthesis: { candidateCount: number } };
+        diagnostics: Array<{ code: string }>;
+      };
+      expect(payload.data.evidenceCount).toBeGreaterThan(0);
+      expect(payload.data.candidateCount).toBeGreaterThan(0);
+      expect(payload.data.synthesis.candidateCount).toBe(0);
+      expect(payload.diagnostics.some((item) => item.code === "codex_synthesis_timeout")).toBe(true);
+    });
+  });
+
   test("scan preserves local evidence when synthesis provider fails", async () => {
     await withTempRepo(async (repo) => {
       await writeFixtureSource(repo);
