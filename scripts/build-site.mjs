@@ -15,9 +15,13 @@ for (const entry of ["index.html", "styles.css"]) {
 }
 
 await mkdir(path.join(outDir, "assets"), { recursive: true });
-await cp(
-  path.join(siteDir, "assets", "cleeby-logo.png"),
-  path.join(outDir, "assets", "cleeby-logo.png"),
-);
+
+for (const asset of [
+  "cleeby-logo.png",
+  "deepclean-launch.mp4",
+  "deepclean-launch-poster.jpg",
+]) {
+  await cp(path.join(siteDir, "assets", asset), path.join(outDir, "assets", asset));
+}
 
 console.log(`Built GitHub Pages site at ${path.relative(root, outDir)}`);
