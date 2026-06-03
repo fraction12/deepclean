@@ -11,7 +11,9 @@ const host = process.env.HOST ?? "127.0.0.1";
 const types = new Map([
   [".css", "text/css; charset=utf-8"],
   [".html", "text/html; charset=utf-8"],
+  [".jpg", "image/jpeg"],
   [".js", "text/javascript; charset=utf-8"],
+  [".mp4", "video/mp4"],
   [".png", "image/png"],
   [".svg", "image/svg+xml"],
   [".webm", "video/webm"],
