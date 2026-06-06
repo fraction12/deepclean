@@ -1,0 +1,108 @@
+---
+title: "Install And Requirements"
+description: "Runtime requirements, optional analyzers, provider setup, and repository hygiene."
+---
+
+# Install And Requirements
+
+Deepclean is an npm-distributed CLI for local repository analysis. It writes generated state under the target repo and should usually be installed where your developer or agent workflow runs.
+
+## Runtime
+
+Required:
+
+- Node.js `>=22`
+- npm
+- git
+- a target repository with a working checkout
+
+Install:
+
+```bash
+npm install -g @fraction12/deepclean
+deepclean --version
+deepclean doctor
+```
+
+One-off usage:
+
+```bash
+npx @fraction12/deepclean@latest doctor
+```
+
+## Provider-backed synthesis
+
+Plain `deepclean scan` runs local evidence first, then Codex synthesis by default. For synthesis, the local `codex` command must be installed and configured in the environment running Deepclean.
+
+Use no-provider mode when source or metadata must stay fully local:
+
+```bash
+deepclean scan --evidence-only --json
+deepclean scan --offline --json
+deepclean scan --local-only --json
+```
+
+Use metadata-only synthesis when a provider is allowed but source excerpts should stay out:
+
+```bash
+deepclean scan --privacy-mode metadata --excerpt-budget 0 --json
+```
+
+Use source excerpts only when the repo and provider policy allow it:
+
+```bash
+deepclean scan --allow-source-in-model --privacy-mode source-ok --json
+```
+
+## Optional analyzers
+
+Deepclean can ingest analyzer outputs when available:
+
+- SARIF files from Semgrep or similar tools
+- optional Semgrep orchestration
+- optional `jscpd` duplicate-detection output
+
+Analyzer setup is dry-run first:
+
+```bash
+deepclean setup analyzers
+```
+
+Deepclean should orchestrate and ingest analyzer evidence. It is not meant to replace dedicated scanners.
+
+## Repository hygiene
+
+Initialize state from the repo root:
+
+```bash
+deepclean init
+```
+
+Add generated state to `.gitignore` unless the repo deliberately shares cleanup artifacts:
+
+```gitignore
+.deepclean/
+```
+
+For automation, use explicit state directories when Deepclean should not touch the repo's normal `.deepclean/` state:
+
+```bash
+deepclean review-pr --base origin/main --head HEAD --json --state-dir .octocheck/deepclean
+```
+
+## Updating
+
+Update with npm:
+
+```bash
+npm install -g @fraction12/deepclean
+deepclean --version
+deepclean doctor
+```
+
+`doctor` checks the installed package against the npm `latest` channel unless update checks are disabled:
+
+```bash
+deepclean doctor --no-update-check
+deepclean doctor --offline
+```

@@ -1,0 +1,201 @@
+---
+title: "Example Output"
+description: "What developers and agents should expect from Deepclean reports, campaigns, plans, handoffs, and PR context."
+---
+
+# Example Output
+
+Deepclean outputs are meant to be read by humans and consumed by agents. Human output explains what to inspect. JSON output gives automation stable envelopes, IDs, paths, diagnostics, and next actions.
+
+The examples below are abbreviated, but they show the shape of the artifacts developers should expect.
+
+## Status
+
+```bash
+deepclean status --json
+```
+
+```json
+{
+  "ok": true,
+  "command": "status",
+  "data": {
+    "latestRun": {
+      "id": "run-20260606-abc123",
+      "createdAt": "2026-06-06T03:00:00.000Z"
+    },
+    "queue": {
+      "active": 4,
+      "blocked": 1,
+      "stale": 0
+    },
+    "latestArtifacts": {
+      "report": ".deepclean/reports/report-20260606-abc123.md"
+    },
+    "nextAction": {
+      "command": "deepclean plan candidate-001",
+      "reason": "highest-ranked candidate is ready for a focused plan",
+      "targetId": "candidate-001"
+    }
+  },
+  "diagnostics": []
+}
+```
+
+Use `status` first when returning to a repo. It tells an agent whether to scan, report, revalidate, unlock stale locks, or plan the next target.
+
+## Report
+
+```bash
+deepclean report
+```
+
+```text
+Deepclean report
+
+Start here:
+P1 candidate-001: Duplicated routing decision across command handlers
+Risk: moderate
+Readiness: safe-agent
+Files:
+- src/cli.ts
+- src/args.ts
+
+Suggested direction:
+Extract the shared command routing decision into one owned helper and pin behavior
+with CLI tests before changing the call sites.
+
+Verification:
+- npm run typecheck
+- npm test
+```
+
+The report is a ranked narrative. It is not permission to edit broadly.
+
+## Campaign
+
+```bash
+deepclean campaign --json
+```
+
+```json
+{
+  "ok": true,
+  "command": "campaign",
+  "data": {
+    "opportunities": [
+      {
+        "id": "opportunity-001",
+        "title": "Unify duplicated command routing checks",
+        "priority": "P1",
+        "fixability": "safe-agent",
+        "slopType": "duplicated-decision",
+        "targetCandidateIds": ["candidate-001"],
+        "relatedFiles": ["src/cli.ts", "src/args.ts"],
+        "suggestedDirection": "Generate a bounded plan before implementation.",
+        "verification": ["npm run typecheck", "npm test"]
+      }
+    ]
+  },
+  "diagnostics": []
+}
+```
+
+Campaign output is the best starting point for agents. It groups raw findings into PR-sized opportunities and labels whether each target is auto-fixable, safe-agent, design-needed, blocked, or stop-campaign.
+
+## Plan
+
+```bash
+deepclean plan opportunity-001 --json
+```
+
+```json
+{
+  "ok": true,
+  "command": "plan",
+  "data": {
+    "plan": {
+      "id": "plan-20260606-001",
+      "targetType": "opportunity",
+      "targetId": "opportunity-001",
+      "title": "Unify duplicated command routing checks",
+      "ownedFiles": ["src/cli.ts", "src/args.ts", "src/cli.test.ts"],
+      "steps": [
+        "Pin current CLI routing behavior with tests.",
+        "Extract one routing helper.",
+        "Replace duplicated checks without changing command semantics."
+      ],
+      "nonGoals": [
+        "Do not redesign unrelated command handlers.",
+        "Do not change provider execution behavior."
+      ],
+      "verification": ["npm run typecheck", "npm test"]
+    },
+    "path": ".deepclean/plans/plan-20260606-001.json"
+  }
+}
+```
+
+Plans should make the next PR smaller, not more ambitious.
+
+## Handoff
+
+```bash
+deepclean handoff opportunity-001 --format codex --json
+```
+
+```json
+{
+  "ok": true,
+  "command": "handoff",
+  "data": {
+    "handoff": {
+      "id": "handoff-20260606-001",
+      "targetId": "opportunity-001",
+      "format": "codex",
+      "summary": "Implement one bounded cleanup PR for duplicated command routing.",
+      "mutationAllowed": false,
+      "verification": ["npm run typecheck", "npm test"],
+      "stopLines": [
+        "Stop if additional command families need redesign.",
+        "Stop if verification requires changing unrelated tests."
+      ]
+    },
+    "path": ".deepclean/handoffs/handoff-20260606-001.json"
+  }
+}
+```
+
+Handoffs are for delegating work to another agent. They should include scope, proof, and stop lines.
+
+## PR context
+
+```bash
+deepclean review-pr --base origin/main --head HEAD --json --state-dir .octocheck/deepclean
+```
+
+```json
+{
+  "ok": true,
+  "command": "review-pr",
+  "data": {
+    "changedFiles": ["src/cli.ts", "src/cli.test.ts"],
+    "riskSummary": {
+      "level": "moderate",
+      "reasons": ["Touches command routing", "Related P1 finding"]
+    },
+    "relatedFindings": [
+      {
+        "id": "finding-abc123",
+        "candidateId": "candidate-001",
+        "priority": "P1",
+        "title": "Duplicated routing decision across command handlers"
+      }
+    ],
+    "suggestedVerificationCommands": ["npm run typecheck", "npm test"],
+    "promptContext": "# Deepclean PR Context\nBase: origin/main\nHead: HEAD\n..."
+  }
+}
+```
+
+Use this context in review systems. OctoCheck or GitHub should own publishing comments; Deepclean supplies local evidence.

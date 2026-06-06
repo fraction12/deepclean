@@ -1,0 +1,116 @@
+---
+title: "JSON And API Contracts"
+description: "Machine-readable Deepclean commands for agents, CI, and integrations."
+---
+
+# JSON And API Contracts
+
+Deepclean commands support `--json` for agent and CI workflows. JSON responses use an envelope with command status, data, diagnostics, and command-specific payloads.
+
+## Envelope shape
+
+Typical success:
+
+```json
+{
+  "ok": true,
+  "command": "status",
+  "data": {},
+  "diagnostics": []
+}
+```
+
+Typical failure:
+
+```json
+{
+  "ok": false,
+  "command": "fix",
+  "error": {
+    "code": "verification_required",
+    "message": "--verification is required for applied candidate fixes."
+  },
+  "diagnostics": [
+    {
+      "level": "error",
+      "code": "verification_required",
+      "message": "--verification is required for applied candidate fixes."
+    }
+  ]
+}
+```
+
+## Core commands for automation
+
+Use these commands as stable integration entrypoints:
+
+```bash
+deepclean status --json
+deepclean scan --json
+deepclean campaign --json
+deepclean report --json
+deepclean next --json
+deepclean show <candidate-id> --json
+deepclean explain <candidate-id> --json
+deepclean plan <target-id> --json
+deepclean handoff <target-id> --format codex --json
+deepclean review-pr --base origin/main --head HEAD --json
+deepclean ci --profile balanced --json
+deepclean schemas --json
+```
+
+## Schemas
+
+`deepclean schemas --json` emits stable machine-consumer JSON contracts for review-pr and guarded fix workflows.
+
+```bash
+deepclean schemas --json
+```
+
+Use this when building an integration or validating output shape in CI.
+
+## IDs
+
+Common IDs:
+
+- `run-*` identifies a scan run.
+- `finding-*` identifies a stable finding.
+- `candidate-*` identifies a run-specific cleanup candidate.
+- `theme-*` identifies a cleanup cluster.
+- `opportunity-*` identifies a campaign opportunity.
+- `plan-*` identifies a generated plan.
+- `handoff-*` identifies an agent handoff.
+
+Agents should pass IDs through exactly as returned. Do not infer new IDs from titles.
+
+## Exit codes
+
+Deepclean uses command exit codes for shell automation:
+
+- `0`: command succeeded.
+- `2`: command input, configuration, privacy, or execution error.
+- `3`: CI or quality gate policy failure.
+
+For detailed handling, prefer reading the JSON envelope and diagnostic codes rather than relying only on the numeric exit code.
+
+## Source-safe integration pattern
+
+For PR review systems:
+
+```bash
+deepclean review-pr --base origin/main --head HEAD --json --state-dir .octocheck/deepclean > deepclean-pr.json
+```
+
+For support artifacts:
+
+```bash
+deepclean export --source-safe --json > deepclean-source-safe.json
+```
+
+For returning agents:
+
+```bash
+deepclean status --json
+```
+
+`status.data.nextAction.command` is the safest next command to follow when present.

@@ -1,0 +1,174 @@
+---
+title: "Agent Troubleshooting"
+description: "Common failure modes when agents use Deepclean on AI-generated repos."
+---
+
+# Agent Troubleshooting
+
+Deepclean is strict on purpose. If an agent gets blocked, the fix is usually to narrow scope, refresh stale proof, or switch from mutation to planning.
+
+## Stale plans or handoffs
+
+Symptom:
+
+```text
+status reports stale plans, handoffs, reports, or revalidations
+```
+
+Do this:
+
+```bash
+deepclean status --json
+deepclean report
+deepclean revalidate all
+deepclean plan <target-id> --json
+deepclean handoff <target-id> --format codex --json
+```
+
+Agents should not implement from stale handoffs.
+
+## Dirty worktree
+
+Symptom:
+
+```text
+dirty_worktree
+dirty files outside target scope
+```
+
+Do this:
+
+```bash
+git status --short
+deepclean show <target-id> --json
+```
+
+Inspect the dirty files before continuing. Use `--allow-dirty` only when the dirty files are understood and in scope. Use `--allow-files <glob>` only for explicit additional files.
+
+## Broad candidate
+
+Symptom:
+
+```text
+fix_target_needs_split
+fix_target_too_broad
+```
+
+Do this:
+
+```bash
+deepclean split <candidate-id>
+deepclean campaign --json
+deepclean plan <child-candidate-id> --json
+```
+
+Do not force a broad target into guarded mutation.
+
+## Design-needed target
+
+Symptom:
+
+```text
+candidate_not_fixable
+opportunity_not_fixable
+fixability: design-needed
+```
+
+Do this:
+
+```bash
+deepclean plan <target-id> --json
+```
+
+Write the design or spec decision first, then rescan. Do not improvise architecture inside a fix command.
+
+## Missing verification
+
+Symptom:
+
+```text
+verification_required
+```
+
+Do this:
+
+```bash
+deepclean fix <target-id> --mode guarded --patch ./fix.patch --apply --verification "npm test" --json
+```
+
+Repeat `--verification` for every proof command needed:
+
+```bash
+deepclean fix <target-id> --mode guarded --patch ./fix.patch --apply --verification "npm run typecheck" --verification "npm test" --json
+```
+
+## Provider unavailable
+
+Symptom:
+
+```text
+provider_unavailable
+ci_synthesis_required
+```
+
+Do this when synthesis is optional:
+
+```bash
+deepclean scan --evidence-only --json
+```
+
+Do this when synthesis is required:
+
+```bash
+deepclean doctor --json
+```
+
+Fix the local Codex/provider setup, then rerun without offline flags.
+
+## Privacy refused
+
+Symptom:
+
+```text
+privacy_refused
+```
+
+Use a no-provider or metadata-only path:
+
+```bash
+deepclean scan --evidence-only --json
+deepclean scan --privacy-mode metadata --excerpt-budget 0 --json
+```
+
+Only use `--allow-source-in-model` when the repository and provider policy allow source excerpts.
+
+## Review-pr diff cannot resolve
+
+Symptom:
+
+```text
+review_pr_diff_unresolved
+```
+
+Do this:
+
+```bash
+git fetch origin main
+deepclean review-pr --base origin/main --head HEAD --json
+```
+
+In shallow CI checkouts, ensure the base ref is fetched before running `review-pr`.
+
+## What agents should report
+
+When blocked, report:
+
+- exact command
+- exit code
+- diagnostic code
+- target ID
+- whether the worktree was dirty
+- recommended next command from `status`
+- whether mutation was attempted
+
+Do not report "done" unless verification and revalidation have passed.

@@ -35,6 +35,26 @@ Deepclean pushes AI-generated repos toward small, reviewable improvements:
 
 The output is meant to help a developer or agent say: "This is the next safe PR, this is the proof it needs, and this is where to stop."
 
+## Before and after
+
+Before Deepclean:
+
+- The app works, but command handling, tests, and feature boundaries are tangled.
+- A developer asks an agent to clean things up, and the agent proposes a broad rewrite.
+- Reviewers cannot tell which risk the PR reduces.
+- Verification is improvised after the patch.
+
+After Deepclean:
+
+```bash
+deepclean scan
+deepclean campaign
+deepclean plan opportunity-001
+deepclean handoff opportunity-001 --format codex
+```
+
+The developer gets a specific opportunity, a narrow plan, files in scope, stop lines, and verification commands. If the target is auto-fixable, guarded fix/work can apply one bounded patch and require revalidation before the work is treated as resolved.
+
 ## What Deepclean is not
 
 Deepclean is not a hosted PR reviewer, scanner replacement, or autonomous refactor bot.
