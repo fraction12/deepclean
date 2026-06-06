@@ -37,3 +37,5 @@ npm run release:check
 ```
 
 For operating-loop changes, cite the latest dogfood scorecard in `docs/`. For GA releases, verify `deepclean schemas --json`, `deepclean review-pr --json`, and at least one guarded fix proof run on real repos before tagging.
+
+The release check builds the package, runs tests, validates OpenSpec locally when available, packs the tarball, and rejects private or local artifacts such as `.deepclean/`, `.codex/`, `node_modules/`, source files, and local reports.

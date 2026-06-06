@@ -22,6 +22,11 @@ Use `deepclean status --json` when checking what Deepclean already knows about a
 - `malformed_provider_output`: inspect the synthesis attempt ledger, then rerun with a narrower scope or evidence-only mode.
 - `privacy_refused`: use `--evidence-only`, `--offline`, `--local-only`, or metadata-only synthesis.
 - `verification_failed`: treat the candidate as still open until fixed and revalidated.
+- `review_pr_diff_unresolved`: the PR diff could not be resolved from the requested base/head refs.
+- `review_pr_target_not_found`: `review-pr --target` did not match an opportunity, candidate, or finding.
+- `fix_target_needs_split`: run `deepclean split <candidate-id>` and target one child candidate.
+- `candidate_not_fixable` or `opportunity_not_fixable`: use `plan` or `handoff`, or make the required design decision first.
+- `verification_required`: add at least one `--verification` command before applying a guarded fix or opening a PR.
 
 ## Writer locks
 
@@ -33,3 +38,17 @@ deepclean unlock --stale --json
 ```
 
 Active locks are never removed by `unlock --stale`; only stale records are deleted.
+
+## Stale work
+
+When `status` reports stale reports, plans, handoffs, revalidations, or fix attempts, regenerate the named artifact before assigning implementation work.
+
+```bash
+deepclean status --json
+deepclean report
+deepclean revalidate all
+deepclean plan <candidate-id>
+deepclean handoff <candidate-id> --format codex
+```
+
+Stale proof is not proof.

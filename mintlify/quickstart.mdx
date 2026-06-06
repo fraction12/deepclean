@@ -25,6 +25,7 @@ From the target repository root:
 
 ```bash
 deepclean init
+deepclean doctor
 deepclean scan
 deepclean report
 deepclean status
@@ -42,11 +43,33 @@ deepclean report
 
 ```bash
 deepclean show candidate-001
+deepclean explain candidate-001
 deepclean plan candidate-001
 deepclean handoff candidate-001 --format codex
 ```
 
 Treat `report` and `next` as recommendations to inspect. They are not permission to rewrite the repo.
+
+## Work from the campaign queue
+
+Use `campaign` when you want the current cleanup work grouped into PR-sized opportunities:
+
+```bash
+deepclean campaign
+deepclean campaign --json
+deepclean plan opportunity-001
+deepclean handoff opportunity-001 --format codex
+```
+
+Opportunities can be safe-agent, auto-fixable, design-needed, blocked, or stop-campaign. Only auto-fixable targets can enter guarded fix/work execution.
+
+## Review a pull request
+
+```bash
+deepclean review-pr --base origin/main --head HEAD --json --state-dir .octocheck/deepclean
+```
+
+Deepclean emits source-safe PR context for review agents. OctoCheck should own GitHub publishing; Deepclean supplies the local evidence, related findings, risk summary, verification suggestions, and prompt context.
 
 ## Return to a repo
 

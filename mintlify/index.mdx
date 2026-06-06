@@ -5,7 +5,7 @@ description: "Local structure reports and agent-ready plans for fast-moving code
 
 # Deepclean
 
-Deepclean scans working-but-sloppy repositories, gathers local evidence, and writes source-safe cleanup reports under `.deepclean/`.
+Deepclean scans working-but-sloppy repositories, gathers local evidence, and writes source-safe cleanup reports, PR-sized opportunities, plans, and handoffs under `.deepclean/`.
 
 It is built for codebases that already run, but need clearer boundaries, less duplication, safer refactors, stronger tests, and better sequencing.
 
@@ -26,10 +26,11 @@ It is built for codebases that already run, but need clearer boundaries, less du
 
 ## What Deepclean does
 
-- Builds local evidence from file structure, imports, tests, duplication, churn, and language-specific shape.
-- Produces durable candidates, clusters, reports, plans, and handoffs under `.deepclean/`.
-- Keeps recommendations separate from source edits unless an explicit guarded fix lane is used.
-- Gives agents a narrow, evidence-backed next step instead of a broad rewrite brief.
+- Builds local evidence from file structure, imports, tests, duplication, churn, SARIF, duplicate-detection output, and language-specific shape.
+- Produces durable findings, candidates, cleanup themes, PR-sized opportunities, reports, plans, handoffs, and lifecycle records under `.deepclean/`.
+- Runs local evidence first, then Codex synthesis by default unless `--evidence-only`, `--offline`, or `--local-only` is used.
+- Keeps recommendations separate from source edits unless an explicit guarded fix or work lane is used.
+- Gives agents a narrow, proof-backed next step instead of a broad rewrite brief.
 
 ## First command
 
