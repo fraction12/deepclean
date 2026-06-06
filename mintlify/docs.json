@@ -36,8 +36,17 @@
         "pages": [
           "index",
           "quickstart",
+          "ai-generated-repos",
+          "how-it-works",
           "concepts",
           "commands"
+        ]
+      },
+      {
+        "group": "For Agents",
+        "pages": [
+          "agent-skill",
+          "workflows"
         ]
       },
       {

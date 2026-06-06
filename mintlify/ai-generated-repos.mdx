@@ -1,0 +1,56 @@
+---
+title: "AI-Generated Repos"
+description: "Why Deepclean exists for codebases built quickly with AI help."
+---
+
+# AI-Generated Repos
+
+AI-generated repos tend to work before they are well-shaped. They accumulate duplicated decisions, unclear module ownership, oversized command files, test gaps, and convenience abstractions that made sense to the generating agent but are hard for the next maintainer to trust.
+
+Deepclean is built for that moment: the app runs, the demo works, and now the repo needs to become easier for humans and agents to change safely.
+
+## The problem Deepclean targets
+
+AI-assisted codebases often have a different failure mode from traditionally grown systems:
+
+- Features are present, but the boundaries between them are muddy.
+- Tests exist, but they cover happy paths or broad smoke flows more than the actual risky behavior.
+- Similar logic appears in multiple files because different prompts solved the same problem twice.
+- Generated code can be too broad for a reviewer to reason about in one pass.
+- Agents inherit old context poorly and may keep expanding a messy area instead of reducing it.
+- The repo may look busy and sophisticated while still lacking proof that changes are safe.
+
+Deepclean does not try to shame a repo for being AI-generated. It gives the next developer a ranked, evidence-backed cleanup queue.
+
+## What good looks like
+
+Deepclean pushes AI-generated repos toward small, reviewable improvements:
+
+- One cleanup target at a time.
+- Clear files in scope.
+- Evidence for why the target matters.
+- A plan or handoff that names non-goals.
+- Verification commands before source mutation counts as done.
+- Revalidation after a fix so old findings are not treated as fresh truth.
+
+The output is meant to help a developer or agent say: "This is the next safe PR, this is the proof it needs, and this is where to stop."
+
+## What Deepclean is not
+
+Deepclean is not a hosted PR reviewer, scanner replacement, or autonomous refactor bot.
+
+It can ingest scanner evidence and provide PR context, but it does not replace Semgrep, test coverage tools, or code review. It can prepare guarded fix/work flows, but only for bounded auto-fixable targets with explicit verification.
+
+For broad architecture work, Deepclean should produce a design-needed or stop-campaign signal rather than pretending the repo needs one more giant agent patch.
+
+## When to run it
+
+Run Deepclean when:
+
+- An AI-generated repo works but feels hard to continue safely.
+- An AI agent produced a large feature and you need a cleanup map.
+- You are preparing a repo for handoff, release, or another round of agent work.
+- You want a source-safe support artifact for a private repo.
+- You need PR review context without pasting source into a hosted system.
+
+Start with the [quickstart](/quickstart), then use [workflows](/workflows) for common operating loops.
