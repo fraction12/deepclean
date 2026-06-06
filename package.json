@@ -5,7 +5,7 @@
   "description": "Local structure reports and agent-ready plans for fast-moving codebases.",
   "type": "module",
   "license": "MIT",
-  "homepage": "https://fraction12.github.io/deepclean/",
+  "homepage": "https://deepclean.mintlify.app",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/fraction12/deepclean.git"
