@@ -5,17 +5,19 @@ description: "What Deepclean reads, writes, stores, and sends during local analy
 
 # Privacy And Trust
 
-Deepclean public alpha is report-first. It does not edit application source code during read-only commands such as `doctor`, `scan`, `status`, `report`, `next`, `show`, `plan`, `handoff`, `revalidate`, `prune --dry-run`, `scrub`, or `export --source-safe`.
+Deepclean is report-first. It does not edit application source code during read-only commands such as `doctor`, `scan`, `status`, `report`, `next`, `campaign`, `list`, `show`, `explain`, `history`, `plan`, `handoff`, `revalidate`, `prune --dry-run`, `scrub`, `export --source-safe`, `schemas`, or `setup analyzers`.
+
+Source mutation is limited to explicit guarded fix/work flows.
 
 ## Writes
 
-Deepclean writes state and artifacts under `.deepclean/` in the target repository, including config, run metadata, local evidence, synthesis ledgers, candidates, clusters, reports, plans, handoffs, triage notes, lifecycle events, revalidations, locks, retention manifests, and guarded fix proof records.
+Deepclean writes state and artifacts under `.deepclean/` in the target repository, including config, run metadata, feature maps, local evidence, synthesis ledgers, findings, observations, candidates, clusters, opportunities, reports, plans, handoffs, triage notes, lifecycle events, revalidations, CI policy results, locks, retention manifests, and guarded fix proof records.
 
 Add `.deepclean/` to `.gitignore` unless a repo deliberately wants to share reports.
 
 ## Local evidence
 
-`deepclean scan` reads source files and repository metadata locally. It records structured evidence such as file metrics, duplicate windows, import graph summaries, TypeScript and Python structure, git churn, and test-discovery signals.
+`deepclean scan` reads source files and repository metadata locally. It records structured evidence such as file metrics, duplicate windows, import graph summaries, TypeScript and JavaScript function structure, Python imports, git churn, nearby tests, SARIF findings, Semgrep output, and optional `jscpd` duplicate output.
 
 ## Codex synthesis
 
@@ -23,6 +25,8 @@ Add `.deepclean/` to `.gitignore` unless a repo deliberately wants to share repo
 
 Use `--allow-source-in-model` only when the target repo and configured provider are allowed to receive source excerpts. Provider execution is disabled by `--evidence-only`, `--offline`, or `--local-only`.
 
+`reviewSynthesis.privacyMode` may be `local-only`, `metadata`, or `source-ok`. `metadata` keeps source excerpts out unless source is explicitly allowed and a positive excerpt budget is set.
+
 ## Source-safe exports
 
-Treat `.deepclean/` as private by default. Use `deepclean scrub --json` or `deepclean export --source-safe --json` before producing a support artifact.
+Treat `.deepclean/` as private by default. Use `deepclean scrub --json` or `deepclean export --source-safe --json` before producing a support artifact. Source-safe exports omit source excerpts, model prompts, provider payloads, absolute state paths, and generated handoff/plan prose.

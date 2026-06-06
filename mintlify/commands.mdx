@@ -11,54 +11,106 @@ description: "Common Deepclean commands for local analysis, planning, handoff, r
 deepclean doctor
 deepclean doctor --json
 deepclean doctor --offline
+deepclean doctor --no-update-check
 ```
 
-## Scan and report
+## Scan, map, and report
 
 ```bash
 deepclean init
+deepclean map
 deepclean scan
 deepclean scan --evidence-only --json
+deepclean scan --offline
+deepclean scan --since origin/main --include-dirty
 deepclean report
 deepclean status
 deepclean status --json
 ```
 
-## Choose work
+`map` writes semantic feature records without producing candidates. `scan` collects local evidence and generates candidates. By default, `scan` runs Codex synthesis after local evidence unless synthesis is disabled by flags or config.
+
+## Queue and campaign
 
 ```bash
 deepclean next
 deepclean next --json
+deepclean campaign
+deepclean campaign --json
+deepclean list
+deepclean findings
 deepclean show <candidate-id>
 deepclean explain <candidate-or-finding-id>
+deepclean history <finding-or-candidate-id>
 deepclean cluster
 ```
+
+`campaign` groups current cleanup work into PR-sized opportunities. `findings` is an alias for `list`.
 
 ## Plan and handoff
 
 ```bash
 deepclean plan <candidate-or-theme-id>
+deepclean plan <opportunity-id>
 deepclean plan <candidate-or-theme-id> --json
 deepclean handoff <candidate-id> --format codex
+deepclean handoff <opportunity-id> --format codex
 deepclean handoff <candidate-id> --json
+deepclean export <candidate-id>
 ```
+
+`export <candidate-id>` is an alias for `handoff`.
 
 ## Review a pull request
 
 ```bash
 deepclean review-pr --base origin/main --head HEAD --json
+deepclean review-pr --base origin/main --head HEAD --target candidate-001 --json
+deepclean review-pr --base origin/main --head HEAD --output .deepclean/review-pr/context.json --json
 ```
 
 `review-pr` runs source-safe local evidence for a PR diff and emits changed files, related findings, architecture neighborhoods, risk summary, suggested verification commands, and prompt context.
 
+## CI and quality gates
+
+```bash
+deepclean ci --json
+deepclean ci --profile balanced --json
+deepclean ci --profile strict --require-synthesis --json
+deepclean ci --review-pr .deepclean/review-pr/context.json --json
+```
+
+Profiles include `advisory`, `balanced`, `strict`, and `maintainability-only`. Named profiles use bounded provider-backed synthesis unless `--offline`, `--local-only`, or `--evidence-only` is set.
+
 ## Guarded fix lane
 
 ```bash
-deepclean fix <candidate-id> --mode guarded --apply --verification "npm test"
-deepclean fix <candidate-id> --mode guarded --apply --branch chore/deepclean-fix --pr --verification "npm test"
+deepclean fix <candidate-id> --mode guarded --patch ./fix.patch --dry-run --json
+deepclean fix <candidate-id> --mode guarded --patch ./fix.patch --apply --verification "npm test"
+deepclean fix <candidate-id> --mode guarded --patch ./fix.patch --apply --branch chore/deepclean-fix --pr --verification "npm test"
+deepclean work <candidate-id> --mode guarded --branch chore/deepclean-fix --apply --verification "npm test" --pr
+deepclean work <candidate-id> --mode guarded --branch chore/deepclean-fix --apply --verification "npm test" --no-pr
 ```
 
-Only guarded mode is supported. Broad architecture redesign and ambiguous ownership changes remain outside the autofix contract.
+Only guarded mode is supported. Guarded `fix` and `work` require an auto-fixable target. Applied changes require verification, and PR preparation requires a branch plus passing proof.
+
+## Lifecycle and maintenance
+
+```bash
+deepclean triage <candidate-id> --status ignored --note "intentional boundary"
+deepclean revalidate <candidate-id>
+deepclean revalidate all
+deepclean split <candidate-id>
+deepclean unlock --stale
+deepclean prune --dry-run
+deepclean prune --dry-run --keep-runs 5 --keep-days 30
+deepclean scrub --json
+deepclean export --source-safe --json
+deepclean schemas --json
+deepclean setup analyzers
+```
+
+`prune --dry-run` persists a retention manifest without deleting files. `export --source-safe` is an alias for `scrub`. `setup analyzers` writes dry-run analyzer setup recommendations.
 
 ## Global flags
 
@@ -76,3 +128,5 @@ Useful flags:
 - `--no-input`
 - `--quiet`
 - `--debug`
+- `--wait-lock`
+- `--lock-timeout-ms <ms>`
