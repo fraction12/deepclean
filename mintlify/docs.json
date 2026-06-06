@@ -36,17 +36,28 @@
         "pages": [
           "index",
           "quickstart",
+          "requirements",
           "ai-generated-repos",
+          "example-output",
           "how-it-works",
           "concepts",
           "commands"
         ]
       },
       {
+        "group": "Evaluate",
+        "pages": [
+          "deepclean-vs",
+          "safety-model",
+          "json-contracts"
+        ]
+      },
+      {
         "group": "For Agents",
         "pages": [
           "agent-skill",
-          "workflows"
+          "workflows",
+          "agent-troubleshooting"
         ]
       },
       {

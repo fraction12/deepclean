@@ -1,0 +1,125 @@
+---
+title: "Safety Model"
+description: "When Deepclean reads, writes, calls providers, mutates source, opens PRs, and refuses work."
+---
+
+# Safety Model
+
+Deepclean is designed to make cleanup safer for fast-moving and AI-generated repos. The safety model is simple: read broadly, write generated state locally, mutate source only through explicit guarded flows, and require proof before PR handoff.
+
+## Reads
+
+Deepclean may read:
+
+- repository files and metadata
+- git history and changed-file scope
+- package scripts and config files
+- `.deepclean/` state
+- optional SARIF, Semgrep, or `jscpd` outputs
+
+Read-only commands include:
+
+```bash
+deepclean doctor
+deepclean status
+deepclean scan
+deepclean report
+deepclean campaign
+deepclean next
+deepclean show <id>
+deepclean explain <id>
+deepclean plan <id>
+deepclean handoff <id>
+deepclean review-pr --base origin/main --head HEAD
+deepclean scrub --json
+deepclean export --source-safe --json
+```
+
+These commands may write generated Deepclean state, but they do not edit application source.
+
+## Writes
+
+Deepclean writes generated artifacts under `.deepclean/` unless `--state-dir` points elsewhere.
+
+Generated state can include:
+
+- config
+- run records
+- feature maps
+- evidence records
+- synthesis ledgers
+- findings and observations
+- candidates and clusters
+- opportunities
+- reports
+- plans and handoffs
+- lifecycle and revalidation records
+- CI policy results
+- lock records
+- retention manifests
+- guarded fix proof records
+
+Add `.deepclean/` to `.gitignore` unless generated cleanup state is intentionally shared.
+
+## Provider calls
+
+`deepclean scan` runs local evidence first. By default, it then invokes local Codex synthesis in read-only mode.
+
+Provider execution is disabled by:
+
+```bash
+deepclean scan --evidence-only
+deepclean scan --offline
+deepclean scan --local-only
+```
+
+Source excerpts are redacted by default. Use source excerpts only when allowed:
+
+```bash
+deepclean scan --allow-source-in-model --privacy-mode source-ok
+```
+
+## Source mutation
+
+Deepclean mutates source only through guarded fix/work flows with explicit flags:
+
+```bash
+deepclean fix <target-id> --mode guarded --patch ./fix.patch --apply --verification "npm test"
+deepclean work <target-id> --mode guarded --branch chore/fix --apply --verification "npm test"
+```
+
+Applied mutation requires:
+
+- one bounded target
+- guarded mode
+- auto-fixable fixability
+- explicit apply intent
+- verification commands
+- clean or explicitly accepted dirty scope
+
+## PR preparation
+
+Deepclean does not push branches or open PRs unless the PR workflow is explicitly requested.
+
+PR preparation requires:
+
+- `--branch`
+- `--pr`
+- in-scope source changes
+- passing verification
+- resolved revalidation or measurable campaign progress
+
+## Refusals
+
+Deepclean should refuse or stop when:
+
+- the target is too broad
+- the target needs a design decision
+- the target is not auto-fixable
+- verification is missing for applied mutation
+- dirty files are outside the allowed target scope
+- PR proof is missing
+- a stale writer lock is active
+- privacy policy would be violated
+
+The right response to refusal is usually `plan`, `handoff`, `split`, `revalidate`, or a design/spec step.
