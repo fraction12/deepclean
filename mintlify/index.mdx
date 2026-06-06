@@ -51,3 +51,29 @@ deepclean doctor
 ```
 
 Then follow the [quickstart](/quickstart).
+
+## Copy-paste agent prompt
+
+Give this to Codex, Claude Code, Cursor, or any repo-aware coding agent when you want it to install Deepclean and get a repo started:
+
+```text
+Install and set up Deepclean for this repository.
+
+Work from the repo root. First check that Node.js is version 22 or newer and that npm and git are available. Install or update the Deepclean CLI with:
+
+npm install -g @fraction12/deepclean
+
+Then run:
+
+deepclean --version
+deepclean doctor
+deepclean init
+
+Make sure `.deepclean/` is in `.gitignore` unless this repo intentionally commits Deepclean state. Run the first report-first pass:
+
+deepclean scan --json
+deepclean report --latest
+deepclean campaign --json
+
+Summarize what Deepclean found, where it wrote state, and the safest next PR-sized cleanup opportunity. Do not edit source files or run `deepclean fix` unless I explicitly ask you to continue.
+```

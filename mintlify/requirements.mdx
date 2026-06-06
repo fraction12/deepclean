@@ -30,6 +30,49 @@ One-off usage:
 npx @fraction12/deepclean@latest doctor
 ```
 
+## Copy-paste agent setup prompt
+
+If an agent is working inside your repository, paste this prompt and let it handle the install, first scan, and setup checks:
+
+```text
+Install and set up Deepclean for this repository.
+
+Constraints:
+- Work from the repository root.
+- Keep this report-first. Do not edit source files yet.
+- Do not run `deepclean fix`, create commits, or open PRs unless I explicitly ask.
+- Preserve any existing user changes in the working tree.
+
+Steps:
+1. Check the environment:
+   - Confirm Node.js is version 22 or newer.
+   - Confirm npm and git are available.
+   - Confirm the current directory is a git repository.
+2. Install or update Deepclean:
+   npm install -g @fraction12/deepclean
+3. Verify the install:
+   deepclean --version
+   deepclean doctor
+4. Initialize repository state:
+   deepclean init
+5. Ensure `.deepclean/` is listed in `.gitignore` unless this repo intentionally commits Deepclean output.
+6. Run the first cleanup discovery pass:
+   deepclean scan --json
+   deepclean report --latest
+   deepclean campaign --json
+7. If provider-backed synthesis is unavailable or not allowed, retry discovery locally with:
+   deepclean scan --evidence-only --json
+8. Report back with:
+   - installed Deepclean version
+   - doctor result
+   - where Deepclean wrote state
+   - the top findings or cleanup themes
+   - the safest first PR-sized opportunity
+   - any blockers or missing optional analyzers
+
+Stop after the report. Wait for approval before making source changes.
+```
+
 ## Provider-backed synthesis
 
 Plain `deepclean scan` runs local evidence first, then Codex synthesis by default. For synthesis, the local `codex` command must be installed and configured in the environment running Deepclean.
