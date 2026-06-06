@@ -1,0 +1,41 @@
+---
+title: "Deepclean"
+description: "Local structure reports and agent-ready plans for fast-moving codebases."
+---
+
+# Deepclean
+
+Deepclean scans working-but-sloppy repositories, gathers local evidence, and writes source-safe cleanup reports under `.deepclean/`.
+
+It is built for codebases that already run, but need clearer boundaries, less duplication, safer refactors, stronger tests, and better sequencing.
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="play" href="/quickstart">
+    Install the CLI and run the first report-first cleanup loop.
+  </Card>
+  <Card title="Privacy and trust" icon="shield-check" href="/privacy-and-trust">
+    See what Deepclean reads, writes, and sends to provider-backed synthesis.
+  </Card>
+  <Card title="Troubleshooting" icon="wrench" href="/troubleshooting">
+    Decode health, status, locks, stale state, and verification failures.
+  </Card>
+  <Card title="Release" icon="rocket" href="/release">
+    Understand the package workflow and release gates.
+  </Card>
+</CardGroup>
+
+## What Deepclean does
+
+- Builds local evidence from file structure, imports, tests, duplication, churn, and language-specific shape.
+- Produces durable candidates, clusters, reports, plans, and handoffs under `.deepclean/`.
+- Keeps recommendations separate from source edits unless an explicit guarded fix lane is used.
+- Gives agents a narrow, evidence-backed next step instead of a broad rewrite brief.
+
+## First command
+
+```bash
+npm install -g @fraction12/deepclean
+deepclean doctor
+```
+
+Then follow the [quickstart](/quickstart).

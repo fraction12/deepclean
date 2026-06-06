@@ -1,0 +1,78 @@
+---
+title: "Commands"
+description: "Common Deepclean commands for local analysis, planning, handoff, review, and guarded fixes."
+---
+
+# Commands
+
+## Health
+
+```bash
+deepclean doctor
+deepclean doctor --json
+deepclean doctor --offline
+```
+
+## Scan and report
+
+```bash
+deepclean init
+deepclean scan
+deepclean scan --evidence-only --json
+deepclean report
+deepclean status
+deepclean status --json
+```
+
+## Choose work
+
+```bash
+deepclean next
+deepclean next --json
+deepclean show <candidate-id>
+deepclean explain <candidate-or-finding-id>
+deepclean cluster
+```
+
+## Plan and handoff
+
+```bash
+deepclean plan <candidate-or-theme-id>
+deepclean plan <candidate-or-theme-id> --json
+deepclean handoff <candidate-id> --format codex
+deepclean handoff <candidate-id> --json
+```
+
+## Review a pull request
+
+```bash
+deepclean review-pr --base origin/main --head HEAD --json
+```
+
+`review-pr` runs source-safe local evidence for a PR diff and emits changed files, related findings, architecture neighborhoods, risk summary, suggested verification commands, and prompt context.
+
+## Guarded fix lane
+
+```bash
+deepclean fix <candidate-id> --mode guarded --apply --verification "npm test"
+deepclean fix <candidate-id> --mode guarded --apply --branch chore/deepclean-fix --pr --verification "npm test"
+```
+
+Only guarded mode is supported. Broad architecture redesign and ambiguous ownership changes remain outside the autofix contract.
+
+## Global flags
+
+```bash
+deepclean --root ./some-repo scan
+deepclean scan --root ./some-repo --evidence-only
+deepclean status --state-dir .octocheck/deepclean --json
+```
+
+Useful flags:
+
+- `--root <path>`
+- `--state-dir <path>`
+- `--config <path>`
+- `--no-input`
+- `--quiet`
+- `--debug`
