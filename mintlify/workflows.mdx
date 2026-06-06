@@ -67,13 +67,13 @@ deepclean review-pr --base origin/main --head HEAD --target <opportunity-id> --j
 
 Deepclean supplies local context. Let OctoCheck or GitHub own comment publishing.
 
-## Release quality gate
+## CI readiness check
 
 ```bash
 deepclean ci --profile balanced --timeout 90 --json
 ```
 
-Use this before release calls, serious PR handoff, or "is this good enough?" decisions. Read the gate result, not just the exit code.
+Use this before serious PR handoff or "is this good enough?" decisions. Read the result, not just the exit code.
 
 ## Guarded local fix
 
