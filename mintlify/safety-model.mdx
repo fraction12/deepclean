@@ -3,8 +3,6 @@ title: "Safety Model"
 description: "When Deepclean reads, writes, calls providers, mutates source, opens PRs, and refuses work."
 ---
 
-# Safety Model
-
 Deepclean is designed to make cleanup safer for fast-moving and AI-generated repos. The safety model is simple: read broadly, write generated state locally, mutate source only through explicit guarded flows, and require proof before PR handoff.
 
 ## Reads
