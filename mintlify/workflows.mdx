@@ -1,0 +1,97 @@
+---
+title: "Workflows"
+description: "Common Deepclean workflows for developers and agents."
+---
+
+# Workflows
+
+Deepclean works best as a repeatable operating loop. Start read-only, choose one target, generate proof-backed context, then mutate only when the target and verification are clear.
+
+## First pass on an AI-generated repo
+
+```bash
+deepclean init
+deepclean doctor
+deepclean scan
+deepclean report
+deepclean campaign
+deepclean next
+```
+
+Use this when a repo works but the structure is uncertain. The first pass gives you the ranked cleanup queue and a campaign view of PR-sized opportunities.
+
+## Private or no-provider scan
+
+```bash
+deepclean scan --evidence-only --json
+deepclean report
+deepclean campaign --json
+```
+
+Use this when no model provider should run. Deepclean still produces deterministic local evidence and local candidates.
+
+## Pick the next cleanup PR
+
+```bash
+deepclean status --json
+deepclean campaign --json
+deepclean show <opportunity-id> --json
+deepclean plan <opportunity-id> --json
+```
+
+Prefer opportunities marked recommended, safe-agent, or safe narrow PR. Stop when the opportunity says design-needed, blocked, or stop-campaign.
+
+## Hand work to Codex
+
+```bash
+deepclean handoff <opportunity-id> --format codex --json
+```
+
+The handoff should give the agent exact files in scope, the risk being reduced, verification commands, and stop lines. After implementation, require:
+
+```bash
+deepclean revalidate <target-id> --json
+```
+
+## Review a pull request
+
+```bash
+deepclean review-pr --base origin/main --head HEAD --json --state-dir .octocheck/deepclean
+```
+
+For a PR that claims to fix a known cleanup target:
+
+```bash
+deepclean review-pr --base origin/main --head HEAD --target <opportunity-id> --json
+```
+
+Deepclean supplies local context. Let OctoCheck or GitHub own comment publishing.
+
+## Release quality gate
+
+```bash
+deepclean ci --profile balanced --timeout 90 --json
+```
+
+Use this before release calls, serious PR handoff, or "is this good enough?" decisions. Read the gate result, not just the exit code.
+
+## Guarded local fix
+
+```bash
+deepclean show <target-id> --json
+deepclean plan <target-id> --json
+deepclean fix <target-id> --mode guarded --patch ./fix.patch --dry-run --json
+deepclean fix <target-id> --mode guarded --patch ./fix.patch --apply --verification "npm test" --json
+deepclean revalidate <target-id> --json
+```
+
+Only use this for auto-fixable targets. Repeat `--verification` when one proof command is not enough.
+
+## Keep generated state tidy
+
+```bash
+deepclean status --json
+deepclean prune --keep-runs 5 --dry-run --json
+```
+
+Apply pruning only when the dry-run manifest is unsurprising.

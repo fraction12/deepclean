@@ -1,0 +1,124 @@
+---
+title: "Agent Skill"
+description: "How Codex-style agents should use Deepclean as a local cleanup control plane."
+---
+
+# Agent Skill
+
+Deepclean ships an agent skill in the package:
+
+```text
+skills/deepclean/SKILL.md
+```
+
+The skill tells Codex-style agents when to run Deepclean, how to pick cleanup work, when to stop, and what proof is required before reporting success.
+
+## When agents should use it
+
+Use the Deepclean skill when a user asks an agent to:
+
+- clean up a repo
+- dogfood Deepclean
+- produce architecture cleanup reports
+- pick the next cleanup PR
+- run a release-quality gate
+- review a PR with local Deepclean context
+- hand cleanup work to another agent
+- apply a guarded cleanup fix
+
+The skill frames Deepclean as a local cleanup control plane. It is not a scanner replacement, hosted PR reviewer, or magic refactor bot.
+
+## Default agent loop
+
+Agents should start read-only:
+
+```bash
+git status --short
+deepclean status --json
+```
+
+If `status` returns `data.nextAction.command`, follow it. If state is missing, stale, or too thin:
+
+```bash
+deepclean scan --json
+deepclean campaign --json
+deepclean report --json
+deepclean next --json
+```
+
+For private or offline work:
+
+```bash
+deepclean scan --evidence-only --json
+```
+
+## Picking work
+
+Agents should prefer opportunities first:
+
+```bash
+deepclean campaign --json
+deepclean show <opportunity-id> --json
+deepclean plan <opportunity-id> --json
+deepclean handoff <opportunity-id> --format codex --json
+```
+
+Selection rules:
+
+- Pick the first recommended or safe narrow PR opportunity unless the user named a target.
+- Treat `stop-campaign` as a hard stop.
+- Prefer small PR-shaped work over broad architecture surgery.
+- If a target is `design-needed`, write a design or spec first.
+- Ignore metric-only noise unless Deepclean connects it to a concrete opportunity or plan.
+- Fall back to `candidate-*`, `theme-*`, or `finding-*` only when no usable opportunity exists.
+
+## Handoff requirements
+
+When handing work to another agent, include:
+
+- target ID and title
+- `show --json` summary
+- plan path or key `plan --json` fields
+- exact files in scope
+- stop lines and non-goals
+- verification commands
+- whether mutation is allowed
+
+For implementation handoffs, require verification and `deepclean revalidate <target-id>` before "done."
+
+## Guarded mutation rules
+
+Agents should not mutate source unless the user explicitly asked for a fix.
+
+Before mutation:
+
+```bash
+git status --short
+deepclean show <target-id> --json
+deepclean plan <target-id> --json
+```
+
+Apply one bounded target with explicit proof:
+
+```bash
+deepclean fix <target-id> --mode guarded --patch ./fix.patch --apply --verification "npm test" --json
+deepclean revalidate <target-id> --json
+git diff
+```
+
+Never use guarded fixes for broad rewrites, dependency upgrades, release publishing, speculative design, ambiguous ownership changes, or dirty worktrees the agent has not inspected.
+
+## Reporting back
+
+Good agent reports include facts:
+
+- Deepclean version
+- commands passed or failed
+- candidate or opportunity counts
+- selected target
+- report, plan, and handoff paths
+- quality gate status
+- verification evidence
+- whether the repo stayed clean
+
+No "looks good" without proof.

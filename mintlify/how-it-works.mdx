@@ -1,0 +1,83 @@
+---
+title: "How It Works"
+description: "The Deepclean pipeline from local evidence to reports, opportunities, plans, and guarded fixes."
+---
+
+# How It Works
+
+Deepclean turns local repository evidence into ranked cleanup work. The core loop is local-first: collect evidence, synthesize candidates, group them into opportunities, then generate plans or handoffs for bounded PRs.
+
+## 1. Initialize state
+
+```bash
+deepclean init
+deepclean doctor
+```
+
+`init` creates the `.deepclean/` state directory. `doctor` checks package version, config validity, git availability, provider readiness, privacy settings, and detected project surfaces.
+
+## 2. Collect local evidence
+
+```bash
+deepclean scan
+```
+
+The evidence layer looks at repository structure before any model synthesis. It can record:
+
+- file metrics and large unit signals
+- TypeScript and JavaScript function structure
+- Python import graph support
+- source and import graph summaries
+- semantic feature mapping
+- nearby test discovery
+- git churn signals
+- normalized duplicate windows
+- SARIF and Semgrep findings
+- optional `jscpd` duplicate output
+
+Use `deepclean scan --evidence-only --json` when provider execution is not allowed.
+
+## 3. Synthesize and validate findings
+
+By default, `scan` runs local Codex synthesis over the evidence bundle. The synthesis step asks for strict JSON and validates the result before it becomes durable state.
+
+Candidates are rejected if they cite missing evidence IDs, reference files outside cited evidence, use invalid line ranges, or include quotes that do not match local source.
+
+## 4. Build the cleanup queue
+
+```bash
+deepclean report
+deepclean campaign
+deepclean next
+```
+
+Reports are human-readable ranked summaries. Campaigns group current work into PR-sized opportunities with fixability labels. `next` returns the highest-priority current item.
+
+## 5. Generate plans and handoffs
+
+```bash
+deepclean show candidate-001
+deepclean plan candidate-001
+deepclean handoff candidate-001 --format codex
+```
+
+Plans and handoffs are shaped as proof-backed PR slices. They should name the symptom, risk, evidence, minimal fix, tests to pin first, verification commands, expected no-op behavior, and non-goals.
+
+## 6. Apply guarded fixes only when appropriate
+
+```bash
+deepclean fix candidate-001 --mode guarded --patch ./fix.patch --dry-run --json
+deepclean fix candidate-001 --mode guarded --patch ./fix.patch --apply --verification "npm test"
+deepclean revalidate candidate-001
+```
+
+Guarded fix/work execution is only for auto-fixable targets. Broad architecture redesign, ambiguous ownership changes, and design-needed work should go through planning or specification first.
+
+## 7. Revalidate and prune state
+
+```bash
+deepclean revalidate all
+deepclean prune --dry-run --keep-runs 5
+```
+
+Revalidation refreshes whether old findings still hold. Pruning should start with `--dry-run` so generated state is not removed blindly.
