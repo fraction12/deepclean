@@ -41,6 +41,11 @@ import { buildCandidatePlan, buildClusterPlan, buildOpportunityPlan } from "./pl
 import { buildPrOpportunities } from "./opportunities.js";
 import { classifyRevalidation, verificationRunIdsForFinding } from "./revalidation.js";
 import {
+  deriveCandidateFixability,
+  deriveOpportunityFixability,
+  type FixabilityLevel,
+} from "./slop-classification.js";
+import {
   buildHandoff,
   buildOpportunityHandoff,
   buildReportRecord,
@@ -49,7 +54,7 @@ import {
 } from "./reporting.js";
 import { buildProgressSummary, renderProgressSummary } from "./progress.js";
 import type { ReviewPrQualityInput } from "./quality-gates.js";
-import { buildReviewPrContext, type ReviewPrTarget } from "./review-pr.js";
+import { buildReviewPrContext, reviewPrQualityInputSchema, type ReviewPrTarget } from "./review-pr.js";
 import type { SynthesisPlanningMode } from "./synthesis-chunks.js";
 import {
   ensureState,
@@ -106,6 +111,7 @@ import {
 import {
   candidateStatuses,
   featureMapSources,
+  fixabilityLevels,
   schemaVersion,
   type CandidateRecord,
   type CampaignSummaryRecord,
@@ -2183,7 +2189,12 @@ async function ciCommand(context: CommandContext): Promise<number> {
   }
 
   const policy = ciPolicyFromFlags(context);
-  const reviewPr = await reviewPrQualityInputFromCi(context);
+  const reviewPrResult = await reviewPrQualityInputFromCi(context);
+  if (!reviewPrResult.ok) {
+    emit(context.json, fail("ci", reviewPrResult.code, reviewPrResult.message, reviewPrResult.diagnostics));
+    return 2;
+  }
+  const reviewPr = reviewPrResult.reviewPr;
   const gateRun = await buildCiQualityGateRun({
     root: context.paths.root,
     profileId,
@@ -2292,14 +2303,6 @@ function resolveReviewPrOutputPath(
     return { ok: true };
   }
   const resolved = path.resolve(context.paths.root, outputFlag);
-  const stateDir = path.resolve(context.paths.stateDir);
-  if (!pathIsWithin(resolved, stateDir)) {
-    return {
-      ok: false,
-      code: "review_pr_output_outside_state_dir",
-      message: "`review-pr --output` must write under the configured state directory.",
-    };
-  }
   return { ok: true, path: resolved };
 }
 
@@ -2378,11 +2381,6 @@ async function setupCommand(context: CommandContext): Promise<number> {
     console.log(`Plan written to ${path}`);
   }
   return 0;
-}
-
-function pathIsWithin(candidate: string, root: string): boolean {
-  const relative = path.relative(root, candidate);
-  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
 async function schemasCommand(context: CommandContext): Promise<number> {
@@ -2679,6 +2677,7 @@ async function nextCommand(context: CommandContext): Promise<number> {
     fixAttempts,
   });
   const opportunitiesPath = await writePrOpportunities(context.paths, runId, opportunities);
+  const fixability = nextFixabilitySummary(opportunities);
   const opportunity = opportunities.find((item) => item.status === "recommended")
     ?? opportunities.find((item) => item.classification === "stop-campaign")
     ?? null;
@@ -2690,6 +2689,7 @@ async function nextCommand(context: CommandContext): Promise<number> {
     opportunity,
     opportunities,
     opportunitiesPath,
+    fixability,
     candidate: candidate ?? null,
     proofStatus: candidate ? proofStatusForCandidate(candidate, revalidations, fixAttempts) : null,
     selectedFeature,
@@ -2705,6 +2705,38 @@ async function nextCommand(context: CommandContext): Promise<number> {
     }
   }
   return 0;
+}
+
+function nextFixabilitySummary(opportunities: PrOpportunityRecord[]): {
+  counts: Record<FixabilityLevel, number>;
+  nextAutoFixableOpportunity: PrOpportunityRecord | null;
+  nextAgentFixableOpportunity: PrOpportunityRecord | null;
+  nextHumanDesignNeededOpportunity: PrOpportunityRecord | null;
+  noSafeFix: boolean;
+} {
+  const counts = Object.fromEntries(fixabilityLevels.map((level) => [level, 0])) as Record<FixabilityLevel, number>;
+  for (const opportunity of opportunities) {
+    counts[deriveOpportunityFixability(opportunity)] += 1;
+  }
+  const nextAutoFixableOpportunity = firstOpportunityByFixability(opportunities, "auto-fixable");
+  return {
+    counts,
+    nextAutoFixableOpportunity,
+    nextAgentFixableOpportunity: firstOpportunityByFixability(opportunities, "agent-fixable"),
+    nextHumanDesignNeededOpportunity: firstOpportunityByFixability(opportunities, "human-design-needed"),
+    noSafeFix: nextAutoFixableOpportunity === null,
+  };
+}
+
+function firstOpportunityByFixability(
+  opportunities: PrOpportunityRecord[],
+  fixability: FixabilityLevel,
+): PrOpportunityRecord | null {
+  return opportunities.find((opportunity) => (
+    opportunity.status !== "rejected"
+    && opportunity.classification !== "stop-campaign"
+    && deriveOpportunityFixability(opportunity) === fixability
+  )) ?? null;
 }
 
 async function campaignCommand(context: CommandContext): Promise<number> {
@@ -3511,6 +3543,9 @@ type FixWorkflowTargetContext = {
     findingId: string;
     candidate: CandidateRecord;
   };
+  fixability: FixabilityLevel;
+  fixabilityTarget: string;
+  fixabilitySource: "candidate" | "opportunity";
 };
 
 async function resolveFixWorkflowTarget(
@@ -3539,17 +3574,25 @@ async function resolveFixWorkflowTarget(
   const state = await latestState(context.paths);
   const opportunity = await resolvePrOpportunityById(context.paths, target);
   if (opportunity) {
-    if (opportunity.classification !== "safe-narrow-pr") {
+    const fixability = deriveOpportunityFixability(opportunity);
+    if (fixability !== "auto-fixable") {
       return {
         ok: false,
         exitCode: 2,
         code: "opportunity_not_fixable",
-        message: `Opportunity ${opportunity.id} is classified as ${opportunity.classification}; guarded fix execution only accepts safe-narrow-pr opportunities.`,
-        diagnostics: opportunity.refusalReason ? [{
-          level: "warning",
-          code: "opportunity_refusal_reason",
-          message: opportunity.refusalReason,
-        }] : [],
+        message: guardedFixabilityRefusalMessage("opportunity", opportunity.id, fixability),
+        diagnostics: [
+          {
+            level: "warning",
+            code: "opportunity_fixability",
+            message: `Opportunity ${opportunity.id} is ${fixability}; classification is ${opportunity.classification}.`,
+          },
+          ...(opportunity.refusalReason ? [{
+            level: "warning" as const,
+            code: "opportunity_refusal_reason",
+            message: opportunity.refusalReason,
+          }] : []),
+        ],
       };
     }
     if (opportunity.targetCandidateIds.length !== 1) {
@@ -3578,7 +3621,31 @@ async function resolveFixWorkflowTarget(
         message: `Opportunity ${opportunity.id} resolves to a candidate that is still too broad. Run \`deepclean split ${resolvedOpportunityCandidate.candidate.id}\` and target one child candidate.`,
       };
     }
-    return { ok: true, config, state, resolved: resolvedOpportunityCandidate };
+    const candidateFixability = deriveCandidateFixability(resolvedOpportunityCandidate.candidate);
+    if (candidateFixability !== "auto-fixable") {
+      return {
+        ok: false,
+        exitCode: 2,
+        code: "candidate_not_fixable",
+        message: guardedFixabilityRefusalMessage("candidate", resolvedOpportunityCandidate.candidate.id, candidateFixability),
+        diagnostics: [
+          {
+            level: "warning",
+            code: "candidate_fixability",
+            message: `Opportunity ${opportunity.id} resolved to candidate ${resolvedOpportunityCandidate.candidate.id}, which is ${candidateFixability}; guarded fix execution requires candidate-level auto-fixable proof.`,
+          },
+        ],
+      };
+    }
+    return {
+      ok: true,
+      config,
+      state,
+      resolved: resolvedOpportunityCandidate,
+      fixability: candidateFixability,
+      fixabilityTarget: resolvedOpportunityCandidate.candidate.id,
+      fixabilitySource: "candidate",
+    };
   }
 
   if (target.startsWith("opportunity-")) {
@@ -3609,7 +3676,39 @@ async function resolveFixWorkflowTarget(
     };
   }
 
-  return { ok: true, config, state, resolved };
+  return {
+    ok: true,
+    config,
+    state,
+    resolved,
+    fixability: deriveCandidateFixability(resolved.candidate),
+    fixabilityTarget: resolved.candidate.id,
+    fixabilitySource: "candidate",
+  };
+}
+
+function guardedFixabilityRefusalMessage(
+  targetType: "candidate" | "opportunity",
+  targetId: string,
+  fixability: FixabilityLevel,
+): string {
+  const next = fixabilityNextStep(targetId, fixability);
+  return `${targetType === "opportunity" ? "Opportunity" : "Candidate"} ${targetId} is ${fixability}; guarded fix execution only mutates auto-fixable targets. ${next}`;
+}
+
+function fixabilityNextStep(targetId: string, fixability: FixabilityLevel): string {
+  switch (fixability) {
+    case "agent-fixable":
+      return `Use \`deepclean plan ${targetId}\` or \`deepclean handoff ${targetId}\` for a bounded agent repair.`;
+    case "human-design-needed":
+      return "Write the design/spec decision first, then rescan for a bounded fix target.";
+    case "review-only":
+      return "Keep this in report or CI review context; do not run autofix.";
+    case "noise":
+      return "Suppress, ignore, or leave this out of fix queues.";
+    case "auto-fixable":
+      return "This target may enter guarded fix execution.";
+  }
 }
 
 function fixWorkflowVerificationBlocker(
@@ -3723,6 +3822,32 @@ async function prepareCandidateFixWorkflow(
       message: blocked.message,
     });
     return { ok: false, exitCode: 2, ...blocked };
+  }
+  if (targetContext.fixability !== "auto-fixable") {
+    const code = targetContext.fixabilitySource === "opportunity" ? "opportunity_not_fixable" : "candidate_not_fixable";
+    const message = guardedFixabilityRefusalMessage(
+      targetContext.fixabilitySource,
+      targetContext.fixabilityTarget,
+      targetContext.fixability,
+    );
+    await writeFixRefusalLifecycleEvent(context.paths, {
+      findingId: resolved.findingId,
+      candidateId: resolved.candidate.id,
+      command: options.command,
+      code,
+      message,
+    });
+    return {
+      ok: false,
+      exitCode: 2,
+      code,
+      message,
+      diagnostics: [{
+        level: "warning",
+        code: "target_fixability",
+        message: `${targetContext.fixabilityTarget} is ${targetContext.fixability}; guarded fix/work requires auto-fixable.`,
+      }],
+    };
   }
 
   const dryRun = flagBoolean(context.parsed.flags, "dry-run") || !flagBoolean(context.parsed.flags, "apply");
@@ -6424,16 +6549,68 @@ function ciPolicyFromFlags(context: CommandContext): Record<string, unknown> {
   return policy;
 }
 
-async function reviewPrQualityInputFromCi(context: CommandContext): Promise<ReviewPrQualityInput | undefined> {
+type ReviewPrQualityInputResult =
+  | { ok: true; reviewPr?: ReviewPrQualityInput | undefined }
+  | {
+    ok: false;
+    code: string;
+    message: string;
+    diagnostics: Array<{ level: "error"; code: string; message: string }>;
+  };
+
+async function reviewPrQualityInputFromCi(context: CommandContext): Promise<ReviewPrQualityInputResult> {
   const reviewPrPath = flagString(context.parsed.flags, "review-pr");
   if (!reviewPrPath) {
-    return undefined;
+    return { ok: true };
   }
   const resolved = path.resolve(context.paths.root, reviewPrPath);
-  const parsed = JSON.parse(await readFile(resolved, "utf8")) as {
-    targetVerdict?: ReviewPrQualityInput["targetVerdict"];
+  let raw: string;
+  try {
+    raw = await readFile(resolved, "utf8");
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    const message = `Could not read --review-pr file ${reviewPrPath}: ${detail}`;
+    return {
+      ok: false,
+      code: "ci_review_pr_unreadable",
+      message,
+      diagnostics: [{ level: "error", code: "ci_review_pr_unreadable", message }],
+    };
+  }
+
+  let parsedJson: unknown;
+  try {
+    parsedJson = JSON.parse(raw);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    const message = `Invalid --review-pr file ${reviewPrPath}: expected JSON review-pr context. ${detail}`;
+    return {
+      ok: false,
+      code: "ci_review_pr_invalid",
+      message,
+      diagnostics: [{ level: "error", code: "ci_review_pr_invalid", message }],
+    };
+  }
+
+  const parsed = reviewPrQualityInputSchema.safeParse(parsedJson);
+  if (!parsed.success) {
+    const details = parsed.error.issues
+      .slice(0, 3)
+      .map((issue) => `${issue.path.join(".") || "root"}: ${issue.message}`)
+      .join("; ");
+    const message = `Invalid --review-pr file ${reviewPrPath}: expected DeepClean review-pr JSON context.${details ? ` ${details}` : ""}`;
+    return {
+      ok: false,
+      code: "ci_review_pr_invalid",
+      message,
+      diagnostics: [{ level: "error", code: "ci_review_pr_invalid", message }],
+    };
+  }
+
+  return {
+    ok: true,
+    reviewPr: { targetVerdict: parsed.data.targetVerdict ?? null },
   };
-  return { targetVerdict: parsed.targetVerdict ?? null };
 }
 
 async function buildRetentionManifest(context: CommandContext): Promise<RetentionManifestRecord> {

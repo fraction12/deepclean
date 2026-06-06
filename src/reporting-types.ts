@@ -104,6 +104,8 @@ export const reportRecordSchema = z.object({
     open: z.number().int().nonnegative(),
     total: z.number().int().nonnegative(),
     byPriority: z.record(z.string(), z.number().int().nonnegative()),
+    bySlopType: z.record(z.string(), z.number().int().nonnegative()).optional(),
+    byFixability: z.record(z.string(), z.number().int().nonnegative()).optional(),
   }),
   recommendations: z.object({
     startHere: z.object({

@@ -1,0 +1,59 @@
+---
+title: "Quickstart"
+description: "Install Deepclean and produce your first local cleanup report."
+---
+
+# Quickstart
+
+## Install
+
+```bash
+npm install -g @fraction12/deepclean
+deepclean --version
+deepclean doctor
+```
+
+For a one-off run:
+
+```bash
+npx @fraction12/deepclean@latest doctor
+```
+
+## Run the read-only loop
+
+From the target repository root:
+
+```bash
+deepclean init
+deepclean scan
+deepclean report
+deepclean status
+deepclean next
+```
+
+`scan` collects local evidence first and runs Codex synthesis by default. Use evidence-only mode when no provider execution should happen:
+
+```bash
+deepclean scan --evidence-only --json
+deepclean report
+```
+
+## Inspect one item
+
+```bash
+deepclean show candidate-001
+deepclean plan candidate-001
+deepclean handoff candidate-001 --format codex
+```
+
+Treat `report` and `next` as recommendations to inspect. They are not permission to rewrite the repo.
+
+## Return to a repo
+
+Use `status` first:
+
+```bash
+deepclean status --json
+```
+
+It reports current runs, reports, queue state, stale artifacts, locks, pending revalidation, and the recommended next command.

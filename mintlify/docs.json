@@ -1,0 +1,58 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "name": "Deepclean",
+  "theme": "mint",
+  "colors": {
+    "primary": "#2563eb",
+    "light": "#2563eb",
+    "dark": "#60a5fa"
+  },
+  "favicon": "/images/cleeby-logo.png",
+  "logo": {
+    "light": "/images/cleeby-logo.png",
+    "dark": "/images/cleeby-logo.png"
+  },
+  "navbar": {
+    "links": [
+      {
+        "label": "GitHub",
+        "href": "https://github.com/fraction12/deepclean"
+      },
+      {
+        "label": "npm",
+        "href": "https://www.npmjs.com/package/@fraction12/deepclean"
+      }
+    ],
+    "primary": {
+      "type": "button",
+      "label": "Install",
+      "href": "/quickstart"
+    }
+  },
+  "navigation": {
+    "groups": [
+      {
+        "group": "Start",
+        "pages": [
+          "index",
+          "quickstart",
+          "concepts",
+          "commands"
+        ]
+      },
+      {
+        "group": "Operations",
+        "pages": [
+          "privacy-and-trust",
+          "troubleshooting",
+          "release"
+        ]
+      }
+    ]
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/fraction12/deepclean"
+    }
+  }
+}

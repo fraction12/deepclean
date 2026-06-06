@@ -1,5 +1,10 @@
 import { schemaVersion } from "./defaults.js";
 import { timestampId } from "./ids.js";
+import {
+  deriveCandidateFixability,
+  deriveOpportunityFixability,
+  deriveSlopType,
+} from "./slop-classification.js";
 
 type CandidateRecord = import("./types.js").CandidateRecord;
 type ClusterRecord = import("./types.js").ClusterRecord;
@@ -9,6 +14,29 @@ type HandoffRecord = import("./types.js").HandoffRecord;
 type PrOpportunityRecord = import("./types.js").PrOpportunityRecord;
 type ReportRecord = import("./types.js").ReportRecord;
 
+type FixabilityBucket = "auto-fixable" | "agent-fixable" | "human-design-needed" | "review-only" | "noise";
+
+type BriefTarget = {
+  id: string;
+  targetType: "opportunity" | "candidate";
+  title: string;
+  priority?: CandidateRecord["priority"] | undefined;
+  slopType: string;
+  fixability: FixabilityBucket;
+  whyItMatters: string;
+  recommendedNext: string;
+  verification: string[];
+  files: FileLike[];
+};
+
+const fixabilityBriefOrder = [
+  "auto-fixable",
+  "agent-fixable",
+  "human-design-needed",
+  "review-only",
+  "noise",
+] as const satisfies readonly FixabilityBucket[];
+
 export function buildReportRecord(
   runId: string,
   candidates: CandidateRecord[],
@@ -16,8 +44,14 @@ export function buildReportRecord(
   features: FeatureRecord[] = [],
 ): ReportRecord {
   const byPriority: Record<string, number> = {};
+  const bySlopType: Record<string, number> = {};
+  const byFixability: Record<string, number> = {};
   for (const candidate of candidates) {
     byPriority[candidate.priority] = (byPriority[candidate.priority] ?? 0) + 1;
+    const slopType = deriveSlopType(candidate);
+    const fixability = deriveCandidateFixability(candidate);
+    bySlopType[slopType] = (bySlopType[slopType] ?? 0) + 1;
+    byFixability[fixability] = (byFixability[fixability] ?? 0) + 1;
   }
 
   return {
@@ -31,6 +65,8 @@ export function buildReportRecord(
       open: candidates.filter((candidate) => candidate.status === "open").length,
       total: candidates.length,
       byPriority,
+      bySlopType,
+      byFixability,
     },
     recommendations: buildReportRecommendations(candidates, clusters, features),
   };
@@ -41,28 +77,7 @@ export function renderMarkdownReport(
   features: FeatureRecord[] = [],
   opportunities: PrOpportunityRecord[] = [],
 ): string {
-  const recommendations = buildReportRecommendations(candidates, [], features);
-  const queuedCandidates = agentQueueCandidates(candidates.filter((candidate) => candidate.status === "open"));
-  const lines = [
-    "# Deepclean Report",
-    "",
-    `Found ${candidates.length} cleanup candidate${candidates.length === 1 ? "" : "s"}.`,
-    "",
-    ...opportunityMarkdown(opportunities),
-    ...recommendationMarkdown(recommendations),
-    ...featureMapMarkdown(candidates, features),
-    ...agentQueueMarkdown(queuedCandidates),
-  ];
-
-  lines.push("## Candidate Appendix", "");
-  for (const candidate of candidates.slice(0, 40)) {
-    lines.push(...candidateMarkdown(candidate));
-  }
-  if (candidates.length > 40) {
-    lines.push(`_Appendix truncated to 40 candidates. Full candidate records are in the JSON artifact._`, "");
-  }
-
-  return `${lines.join("\n")}\n`;
+  return renderSlopCleanupBrief(candidates, [], features, opportunities);
 }
 
 export function renderMarkdownReportWithClusters(
@@ -71,54 +86,303 @@ export function renderMarkdownReportWithClusters(
   features: FeatureRecord[] = [],
   opportunities: PrOpportunityRecord[] = [],
 ): string {
+  return renderSlopCleanupBrief(candidates, clusters, features, opportunities);
+}
+
+function renderSlopCleanupBrief(
+  candidates: CandidateRecord[],
+  clusters: ClusterRecord[],
+  features: FeatureRecord[],
+  opportunities: PrOpportunityRecord[],
+): string {
   const recommendations = buildReportRecommendations(candidates, clusters, features);
-  const queuedCandidates = agentQueueCandidates(candidates.filter((candidate) => candidate.status === "open"));
+  const targets = buildBriefTargets(candidates, opportunities);
   const lines = [
-    "# Deepclean Report",
+    "# Deepclean Slop Cleanup Brief",
     "",
-    `Found ${candidates.length} cleanup candidate${candidates.length === 1 ? "" : "s"} across ${clusters.length} theme${clusters.length === 1 ? "" : "s"}.`,
+    reportScopeLine(candidates, clusters, opportunities),
     "",
-    ...opportunityMarkdown(opportunities),
-    ...recommendationMarkdown(recommendations),
-    ...featureMapMarkdown(candidates, features),
-    ...agentQueueMarkdown(queuedCandidates),
+    ...cleanupBriefMarkdown(targets),
+    ...briefWarningsMarkdown(recommendations),
+    ...reportAppendixMarkdown(candidates, clusters, features, opportunities),
   ];
 
-  if (clusters.length > 0) {
-    lines.push("## Cleanup Themes", "");
-    const bounded = clusters.filter((cluster) => (cluster.actionability ?? "bounded") === "bounded");
-    const broad = clusters.filter((cluster) => (cluster.actionability ?? "bounded") === "too-broad");
-    for (const cluster of [...bounded, ...broad]) {
-      lines.push(
-        `### ${cluster.priority} ${cluster.id}: ${cluster.title}`,
-        "",
-        `- Candidates: ${cluster.candidateIds.join(", ")}`,
-        `- Category: ${cluster.category}`,
-        `- Confidence: ${cluster.confidence}`,
-        `- Impact: ${cluster.impact}`,
-        `- Effort: ${cluster.effort}`,
-        `- Risk: ${cluster.risk}`,
-        `- Actionability: ${cluster.actionability ?? "bounded"}`,
-        `- Files: ${cluster.files.map((file) => formatFile(file)).join(", ") || "n/a"}`,
-        "",
-        ...clusterWarningMarkdown(cluster),
-        cluster.rationale,
-        "",
-        `Suggested direction: ${cluster.suggestedDirection}`,
-        "",
-      );
-    }
-  }
+  return `${lines.join("\n")}\n`;
+}
 
-  lines.push("## Candidate Appendix", "");
+function reportScopeLine(
+  candidates: CandidateRecord[],
+  clusters: ClusterRecord[],
+  opportunities: PrOpportunityRecord[],
+): string {
+  const parts = [`${candidates.length} candidate${candidates.length === 1 ? "" : "s"}`];
+  if (clusters.length > 0) {
+    parts.push(`${clusters.length} theme${clusters.length === 1 ? "" : "s"}`);
+  }
+  if (opportunities.length > 0) {
+    parts.push(`${opportunities.length} opportunit${opportunities.length === 1 ? "y" : "ies"}`);
+  }
+  return `Found ${parts.join(", ")}. Markdown is routed for cleanup; JSON keeps the full machine record.`;
+}
+
+function buildBriefTargets(
+  candidates: CandidateRecord[],
+  opportunities: PrOpportunityRecord[],
+): BriefTarget[] {
+  const coveredCandidateIds = new Set(opportunities.flatMap((opportunity) => opportunity.targetCandidateIds));
+  const opportunityTargets = opportunities
+    .filter((opportunity) => opportunity.classification !== "stop-campaign")
+    .map((opportunity): BriefTarget => {
+      const fixability = deriveOpportunityFixability(opportunity) as FixabilityBucket;
+      return {
+        id: opportunity.id,
+        targetType: "opportunity",
+        title: opportunity.title,
+        slopType: opportunity.slopType ?? "structure",
+        fixability,
+        whyItMatters: opportunity.rationale,
+        recommendedNext: recommendedNextForOpportunity(opportunity, fixability),
+        verification: opportunity.validationPlan.length > 0 ? opportunity.validationPlan : ["deepclean scan"],
+        files: opportunity.ownedFiles.length > 0 ? opportunity.ownedFiles : opportunity.contextFiles,
+      };
+    });
+  const candidateTargets = agentQueueCandidates(candidates.filter((candidate) => candidate.status === "open"))
+    .filter((candidate) => !coveredCandidateIds.has(candidate.id))
+    .map((candidate): BriefTarget => {
+      const fixability = deriveCandidateFixability(candidate) as FixabilityBucket;
+      return {
+        id: candidate.id,
+        targetType: "candidate",
+        title: candidate.title,
+        priority: candidate.priority,
+        slopType: deriveSlopType(candidate),
+        fixability,
+        whyItMatters: candidate.whyItMatters,
+        recommendedNext: recommendedNextForCandidate(candidate, fixability),
+        verification: candidate.verification.length > 0 ? candidate.verification : ["deepclean scan"],
+        files: candidate.ownedFiles && candidate.ownedFiles.length > 0 ? candidate.ownedFiles : candidate.files,
+      };
+    });
+  return [...opportunityTargets, ...candidateTargets];
+}
+
+function cleanupBriefMarkdown(targets: BriefTarget[]): string[] {
+  const lines = ["## What To Do Next", ""];
+  const buckets = bucketBriefTargets(targets);
+  const firstAutoFixable = buckets["auto-fixable"]?.[0];
+  const firstAgentFixable = buckets["agent-fixable"]?.[0];
+  const firstDesignNeeded = buckets["human-design-needed"]?.[0];
+  if (firstAutoFixable) {
+    lines.push(`- Auto-fix first: ${firstAutoFixable.id} - ${firstAutoFixable.title}`);
+  }
+  if (firstAgentFixable) {
+    lines.push(`- Agent handoff first: ${firstAgentFixable.id} - ${firstAgentFixable.title}`);
+  }
+  if (firstDesignNeeded) {
+    lines.push(`- Design first: ${firstDesignNeeded.id} - ${firstDesignNeeded.title}`);
+  }
+  if (!firstAutoFixable && !firstAgentFixable && !firstDesignNeeded) {
+    lines.push("- No safe cleanup target is ready. Treat this run as review context.");
+  }
+  lines.push("");
+
+  for (const fixability of fixabilityBriefOrder) {
+    const bucket = buckets[fixability] ?? [];
+    lines.push(...fixabilitySectionMarkdown(fixability, bucket));
+  }
+  return lines;
+}
+
+function bucketBriefTargets(targets: BriefTarget[]): Record<FixabilityBucket, BriefTarget[]> {
+  const buckets: Record<FixabilityBucket, BriefTarget[]> = {
+    "auto-fixable": [],
+    "agent-fixable": [],
+    "human-design-needed": [],
+    "review-only": [],
+    noise: [],
+  };
+  for (const target of targets) {
+    buckets[target.fixability].push(target);
+  }
+  return buckets;
+}
+
+function fixabilitySectionMarkdown(fixability: FixabilityBucket, targets: BriefTarget[]): string[] {
+  const lines = [`## ${fixabilityTitle(fixability)}`, ""];
+  if (targets.length === 0) {
+    lines.push(emptyFixabilityMessage(fixability), "");
+    return lines;
+  }
+  for (const target of targets.slice(0, 6)) {
+    lines.push(...briefTargetMarkdown(target));
+  }
+  if (targets.length > 6) {
+    lines.push(`_${targets.length - 6} more ${fixability} target${targets.length - 6 === 1 ? "" : "s"} in the JSON artifact._`, "");
+  }
+  return lines;
+}
+
+function briefTargetMarkdown(target: BriefTarget): string[] {
+  const prefix = target.priority ? `${target.priority} ` : "";
+  return [
+    `### ${prefix}${target.id}: ${target.title}`,
+    "",
+    `- Slop: ${target.slopType}`,
+    `- Why it matters: ${target.whyItMatters}`,
+    `- Next: ${target.recommendedNext}`,
+    `- Verification: ${target.verification.join(", ")}`,
+    `- Scope: ${target.files.slice(0, 5).map((file) => formatFile(file)).join(", ") || "n/a"}`,
+    "",
+  ];
+}
+
+function recommendedNextForOpportunity(opportunity: PrOpportunityRecord, fixability: FixabilityBucket): string {
+  switch (fixability) {
+    case "auto-fixable":
+      return `Run guarded fix on ${opportunity.id}, then re-run ${opportunity.validationPlan.join(", ") || "deepclean scan"}.`;
+    case "agent-fixable":
+      return `Run deepclean plan ${opportunity.id} or deepclean handoff ${opportunity.id}; keep the stop line: ${opportunity.stopLine}`;
+    case "human-design-needed":
+      return opportunity.refusalReason ?? `Confirm the design/spec boundary before assigning this cleanup. Stop line: ${opportunity.stopLine}`;
+    case "review-only":
+      return "Keep this as CI/review context; do not mutate source from it unattended.";
+    case "noise":
+      return opportunity.refusalReason ?? "Suppress or ignore unless new evidence appears.";
+  }
+}
+
+function recommendedNextForCandidate(candidate: CandidateRecord, fixability: FixabilityBucket): string {
+  switch (fixability) {
+    case "auto-fixable":
+      return `Run deepclean fix ${candidate.id} --mode guarded --apply with verification: ${candidate.verification.join(", ") || "deepclean scan"}.`;
+    case "agent-fixable":
+      return `Run deepclean plan ${candidate.id} or deepclean handoff ${candidate.id}; keep the cleanup bounded to listed scope.`;
+    case "human-design-needed":
+      return candidate.readiness === "split-needed"
+        ? "Split this into smaller cleanup slices before fix/work."
+        : "Decide the design boundary before asking an agent to mutate source.";
+    case "review-only":
+      return "Use this in CI/review context only; do not treat it as a cleanup target.";
+    case "noise":
+      return "Treat as low-signal noise unless it gains stronger evidence.";
+  }
+}
+
+function fixabilityTitle(fixability: FixabilityBucket): string {
+  switch (fixability) {
+    case "auto-fixable":
+      return "Auto-Fixable Slop";
+    case "agent-fixable":
+      return "Agent-Fixable Slop";
+    case "human-design-needed":
+      return "Human Design Needed";
+    case "review-only":
+      return "Review-Only Findings";
+    case "noise":
+      return "Likely Noise";
+  }
+}
+
+function emptyFixabilityMessage(fixability: FixabilityBucket): string {
+  switch (fixability) {
+    case "auto-fixable":
+      return "No safe unattended cleanup target found.";
+    case "agent-fixable":
+      return "No bounded agent handoff target found.";
+    case "human-design-needed":
+      return "No design-first slop found.";
+    case "review-only":
+      return "No review-only findings found.";
+    case "noise":
+      return "No likely noise found.";
+  }
+}
+
+function briefWarningsMarkdown(recommendations: NonNullable<ReportRecord["recommendations"]>): string[] {
+  if (recommendations.warnings.length === 0) {
+    return [];
+  }
+  return ["## Warnings", "", ...recommendations.warnings.map((warning) => `- ${warning}`), ""];
+}
+
+function reportAppendixMarkdown(
+  candidates: CandidateRecord[],
+  clusters: ClusterRecord[],
+  features: FeatureRecord[],
+  opportunities: PrOpportunityRecord[],
+): string[] {
+  return [
+    ...opportunityAppendixMarkdown(opportunities),
+    ...themeAppendixMarkdown(clusters),
+    ...featureAppendixMarkdown(candidates, features),
+    ...candidateAppendixMarkdown(candidates),
+  ];
+}
+
+function opportunityAppendixMarkdown(opportunities: PrOpportunityRecord[]): string[] {
+  if (opportunities.length === 0) {
+    return [];
+  }
+  const lines = ["## Appendix: Opportunity Details", ""];
+  for (const opportunity of opportunities.slice(0, 12)) {
+    lines.push(
+      `- ${opportunity.id} ${opportunity.classification} ${deriveOpportunityFixability(opportunity)} ${opportunity.title}`,
+      `  Change: ${opportunity.oneSentenceChange}`,
+      `  Verification: ${opportunity.validationPlan.join(", ") || "deepclean scan"}`,
+    );
+  }
+  lines.push("");
+  return lines;
+}
+
+function themeAppendixMarkdown(clusters: ClusterRecord[]): string[] {
+  if (clusters.length === 0) {
+    return [];
+  }
+  const lines = ["## Appendix: Cleanup Themes", ""];
+  const bounded = clusters.filter((cluster) => (cluster.actionability ?? "bounded") === "bounded");
+  const broad = clusters.filter((cluster) => (cluster.actionability ?? "bounded") === "too-broad");
+  for (const cluster of [...bounded, ...broad]) {
+    lines.push(
+      `### ${cluster.priority} ${cluster.id}: ${cluster.title}`,
+      "",
+      `- Candidates: ${cluster.candidateIds.join(", ")}`,
+      `- Category: ${cluster.category}`,
+      `- Confidence: ${cluster.confidence}`,
+      `- Impact: ${cluster.impact}`,
+      `- Effort: ${cluster.effort}`,
+      `- Risk: ${cluster.risk}`,
+      `- Actionability: ${cluster.actionability ?? "bounded"}`,
+      `- Files: ${cluster.files.map((file) => formatFile(file)).join(", ") || "n/a"}`,
+      "",
+      ...clusterWarningMarkdown(cluster),
+      cluster.rationale,
+      "",
+      `Suggested direction: ${cluster.suggestedDirection}`,
+      "",
+    );
+  }
+  return lines;
+}
+
+function featureAppendixMarkdown(candidates: CandidateRecord[], features: FeatureRecord[]): string[] {
+  const featureLines = featureMapMarkdown(candidates, features);
+  if (featureLines.length === 0) {
+    return [];
+  }
+  const [, , ...rest] = featureLines;
+  return ["## Appendix: Feature Map", "", ...rest];
+}
+
+function candidateAppendixMarkdown(candidates: CandidateRecord[]): string[] {
+  const lines = ["## Appendix: Candidate Details", ""];
   for (const candidate of candidates.slice(0, 40)) {
     lines.push(...candidateMarkdown(candidate));
   }
   if (candidates.length > 40) {
-    lines.push(`_Appendix truncated to 40 candidates. Full candidate records are in the JSON artifact._`, "");
+    lines.push("_Appendix truncated to 40 candidates. Full candidate records are in the JSON artifact._", "");
   }
-
-  return `${lines.join("\n")}\n`;
+  return lines;
 }
 
 function opportunityMarkdown(opportunities: PrOpportunityRecord[]): string[] {
@@ -135,6 +399,7 @@ function opportunityMarkdown(opportunities: PrOpportunityRecord[]): string[] {
       recommended.oneSentenceChange,
       "",
       `Classification: ${recommended.classification}`,
+      `Fixability: ${deriveOpportunityFixability(recommended)}`,
       `Stop line: ${recommended.stopLine}`,
       `Plan: deepclean plan ${recommended.id}`,
       `Handoff: deepclean handoff ${recommended.id}`,
@@ -156,7 +421,7 @@ function opportunityMarkdown(opportunities: PrOpportunityRecord[]): string[] {
     lines.push("Top opportunity queue:");
     for (const opportunity of top) {
       lines.push(
-        `- ${opportunity.id} ${opportunity.classification} ${opportunity.title}`,
+        `- ${opportunity.id} ${opportunity.classification} ${deriveOpportunityFixability(opportunity)} ${opportunity.title}`,
         `  ${opportunity.oneSentenceChange}`,
         `  Verification: ${opportunity.validationPlan.join(", ") || "deepclean scan"}`,
       );
@@ -164,6 +429,52 @@ function opportunityMarkdown(opportunities: PrOpportunityRecord[]): string[] {
     lines.push("");
   }
   return lines;
+}
+
+function slopActionabilityMarkdown(candidates: CandidateRecord[], opportunities: PrOpportunityRecord[]): string[] {
+  if (candidates.length === 0 && opportunities.length === 0) {
+    return [];
+  }
+  const candidateBuckets = bucketCandidatesByFixability(candidates);
+  const opportunityBuckets = bucketOpportunitiesByFixability(opportunities);
+  const lines = ["## Slop Actionability", ""];
+  for (const fixability of ["auto-fixable", "agent-fixable", "human-design-needed", "review-only", "noise"] as const) {
+    const candidateIds = candidateBuckets[fixability] ?? [];
+    const opportunityIds = opportunityBuckets[fixability] ?? [];
+    if (candidateIds.length === 0 && opportunityIds.length === 0) {
+      continue;
+    }
+    const parts = [
+      `${candidateIds.length} candidate${candidateIds.length === 1 ? "" : "s"}`,
+      opportunityIds.length > 0 ? `${opportunityIds.length} opportunit${opportunityIds.length === 1 ? "y" : "ies"}` : "",
+    ].filter(Boolean);
+    const ids = [...opportunityIds.slice(0, 3), ...candidateIds.slice(0, 3)].slice(0, 5);
+    lines.push(`- ${fixability}: ${parts.join(", ")}${ids.length > 0 ? ` (${ids.join(", ")})` : ""}`);
+  }
+  lines.push("");
+  return lines;
+}
+
+function bucketCandidatesByFixability(candidates: CandidateRecord[]): Record<string, string[]> {
+  const buckets: Record<string, string[]> = {};
+  for (const candidate of candidates) {
+    const fixability = deriveCandidateFixability(candidate);
+    const ids = buckets[fixability] ?? [];
+    ids.push(candidate.id);
+    buckets[fixability] = ids;
+  }
+  return buckets;
+}
+
+function bucketOpportunitiesByFixability(opportunities: PrOpportunityRecord[]): Record<string, string[]> {
+  const buckets: Record<string, string[]> = {};
+  for (const opportunity of opportunities) {
+    const fixability = deriveOpportunityFixability(opportunity);
+    const ids = buckets[fixability] ?? [];
+    ids.push(opportunity.id);
+    buckets[fixability] = ids;
+  }
+  return buckets;
 }
 
 function countBy<T>(items: T[], key: (item: T) => string): Record<string, number> {
@@ -355,9 +666,11 @@ function candidateMarkdown(candidate: CandidateRecord): string[] {
     "",
     `- Status: ${candidate.status}`,
     `- Finding: ${candidate.findingId ?? "unlinked"}`,
-    `- Revalidation: ${candidate.lifecycleState ?? "ready"}`,
-    `- Category: ${candidate.category}`,
-    `- Confidence: ${candidate.confidence}`,
+      `- Revalidation: ${candidate.lifecycleState ?? "ready"}`,
+      `- Category: ${candidate.category}`,
+      `- Slop type: ${deriveSlopType(candidate)}`,
+      `- Fixability: ${deriveCandidateFixability(candidate)}`,
+      `- Confidence: ${candidate.confidence}`,
     `- Readiness: ${candidate.readiness ?? "fix-ready"}`,
     `- Impact: ${candidate.impact}`,
     `- Effort: ${candidate.effort}`,

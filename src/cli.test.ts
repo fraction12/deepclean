@@ -10,7 +10,7 @@ import { main } from "./cli.js";
 import type { SourceFile } from "./discovery.js";
 import { lockRecordSchema, readLockStatuses, withStateWriteLock, type LockRecord } from "./locks.js";
 import { buildCandidatePlan } from "./plans.js";
-import { buildReportRecord } from "./reporting.js";
+import { buildReportRecord, renderMarkdownReport } from "./reporting.js";
 import { classifyRevalidation } from "./revalidation.js";
 import { resolveStatePaths } from "./state.js";
 import {
@@ -68,6 +68,8 @@ function registerCliSmokeTests(): void {
       targetFindingIds: ["finding-001"],
       targetClusterIds: [],
       classification: "safe-narrow-pr",
+      slopType: "structure",
+      fixability: "auto-fixable",
       status: "recommended",
       title: "Extract focused quality gate records",
       oneSentenceChange: "Add durable quality gate contracts without changing CI behavior.",
@@ -90,6 +92,7 @@ function registerCliSmokeTests(): void {
       updatedAt: createdAt,
     });
     expect(opportunity.classification).toBe("safe-narrow-pr");
+    expect(opportunity.fixability).toBe("auto-fixable");
 
     const campaign = campaignSummaryRecordSchema.parse({
       schemaVersion,
@@ -136,6 +139,18 @@ function registerCliSmokeTests(): void {
     });
     expect(profile.recommendedAnalyzerClasses).toEqual(["semgrep"]);
 
+    const legacyProfile = qualityProfileRecordSchema.parse({
+      schemaVersion,
+      recordType: "quality_profile",
+      id: "legacy-balanced",
+      name: "Legacy Balanced",
+      mode: "blocking",
+      gates: [],
+      createdAt,
+      updatedAt: createdAt,
+    });
+    expect(legacyProfile.scope).toBe("pr");
+
     const result = qualityGateResultRecordSchema.parse({
       schemaVersion,
       recordType: "quality_gate_result",
@@ -150,6 +165,8 @@ function registerCliSmokeTests(): void {
         family: "security",
         title: "Security scanner not configured",
         severity: "advisory",
+        actionability: "review-only",
+        fixability: "review-only",
         baselineStatus: "unknown",
         evidenceIds: [],
         candidateIds: [],
@@ -181,6 +198,7 @@ function registerCliSmokeTests(): void {
       createdAt,
     });
     expect(result.coverageStatus[0]?.status).toBe("not-configured");
+    expect(result.advisories[0]?.actionability).toBe("review-only");
 
     const setup = analyzerSetupPlanRecordSchema.parse({
       schemaVersion,
@@ -568,6 +586,8 @@ describe("deepclean cli", () => {
     const parsed = candidateRecordSchema.parse(alphaCandidate);
     expect(parsed.findingId).toBeUndefined();
     expect(parsed.signature).toBeUndefined();
+    expect(parsed.slopType).toBeUndefined();
+    expect(parsed.fixability).toBeUndefined();
   });
 
   test("validates operating-loop foundation record schemas", () => {
@@ -1012,15 +1032,23 @@ test("checkout", () => calculateCheckout([], false));
       const next = await runCli(["next", "--json"], repo);
       const nextPayload = JSON.parse(next.stdout) as {
         data: {
-          opportunity: { id: string; classification: string } | null;
-          opportunities: Array<{ id: string; classification: string }>;
+          opportunity: { id: string; classification: string; fixability?: string } | null;
+          opportunities: Array<{ id: string; classification: string; fixability?: string }>;
           opportunitiesPath: string;
+          fixability: {
+            counts: Record<string, number>;
+            nextAutoFixableOpportunity: { id: string; fixability?: string } | null;
+            nextAgentFixableOpportunity: { id: string; fixability?: string } | null;
+            noSafeFix: boolean;
+          };
           candidate: { id: string } | null;
         };
       };
       expect(nextPayload.data.candidate?.id).toMatch(/^candidate-/);
       expect(nextPayload.data.opportunity?.id).toMatch(/^opportunity-/);
       expect(nextPayload.data.opportunities.length).toBeGreaterThan(0);
+      expect(nextPayload.data.fixability.counts["auto-fixable"]).toBeGreaterThanOrEqual(0);
+      expect(nextPayload.data.fixability.noSafeFix).toBe(nextPayload.data.fixability.nextAutoFixableOpportunity === null);
       await expect(stat(nextPayload.data.opportunitiesPath)).resolves.toBeTruthy();
 
       const opportunityId = nextPayload.data.opportunity?.id ?? nextPayload.data.opportunities[0]?.id ?? "";
@@ -1543,6 +1571,48 @@ ${Array.from({ length: 120 }, (_, index) => `  const dirtyValue${index} = ${inde
       const reviewSarif = JSON.parse(await readFile(blockedByReviewPayload.data.ciRun.artifactPaths.sarif ?? "", "utf8")) as { runs: Array<{ results: Array<{ ruleId: string }> }> };
       expect(reviewSarif.runs[0]?.results.some((result) => result.ruleId === "deepclean/quality/policy")).toBe(true);
 
+      const blockedByReviewAdHoc = await runCli([
+        "ci",
+        "--evidence-only",
+        "--json",
+        "--review-pr",
+        ".deepclean/ci/review-pr.json",
+      ], repo);
+      expect(blockedByReviewAdHoc.code).toBe(3);
+      const blockedByReviewAdHocPayload = JSON.parse(blockedByReviewAdHoc.stdout) as {
+        data: {
+          ciRun: { status: string };
+          qualityProfile: { id: string };
+          qualityGateResult: { status: string };
+        };
+      };
+      expect(blockedByReviewAdHocPayload.data.qualityProfile.id).toBe("ad-hoc");
+      expect(blockedByReviewAdHocPayload.data.ciRun.status).toBe("policy-failed");
+      expect(blockedByReviewAdHocPayload.data.qualityGateResult.status).toBe("failed");
+
+      await writeFile(path.join(repo, ".deepclean", "ci", "bad-review-pr.json"), `${JSON.stringify({
+        targetVerdict: {
+          targetType: "opportunity",
+          targetId: "opportunity-unsafe",
+          verdict: "not-a-verdict",
+        },
+      }, null, 2)}\n`, "utf8");
+      const invalidReviewPr = await runCli([
+        "ci",
+        "--evidence-only",
+        "--json",
+        "--review-pr",
+        ".deepclean/ci/bad-review-pr.json",
+      ], repo);
+      expect(invalidReviewPr.code).toBe(2);
+      const invalidReviewPrPayload = JSON.parse(invalidReviewPr.stdout) as {
+        error: { code: string; message: string };
+        diagnostics: Array<{ code: string }>;
+      };
+      expect(invalidReviewPrPayload.error.code).toBe("ci_review_pr_invalid");
+      expect(invalidReviewPrPayload.error.message).toContain("expected DeepClean review-pr JSON context");
+      expect(invalidReviewPrPayload.diagnostics.some((diagnostic) => diagnostic.code === "ci_review_pr_invalid")).toBe(true);
+
       const fail = await runCli([
         "ci",
         "--evidence-only",
@@ -1761,7 +1831,7 @@ ${Array.from({ length: 120 }, (_, index) => `  const dirtyValue${index} = ${inde
     });
   });
 
-  test("review-pr refuses output outside the configured state directory", async () => {
+  test("review-pr writes output outside the configured state directory", async () => {
     await withTempRepo(async (repo) => {
       await writeFixtureSource(repo);
       await execFileAsync("git", ["init"], { cwd: repo });
@@ -1776,13 +1846,15 @@ ${Array.from({ length: 120 }, (_, index) => `  const dirtyValue${index} = ${inde
         "--state-dir",
         ".octocheck/deepclean",
         "--output",
-        "../outside.json",
+        "artifact/review-pr.json",
         "--json",
       ], repo);
-      expect(result.code).toBe(2);
-      const payload = JSON.parse(result.stdout) as { error: { code: string; message: string } };
-      expect(payload.error.code).toBe("review_pr_output_outside_state_dir");
-      expect(payload.error.message).toContain("state directory");
+      expect(result.code).toBe(0);
+      const outputPath = path.join(repo, "artifact", "review-pr.json");
+      const payload = JSON.parse(result.stdout) as { data: { outputPath?: string } };
+      expect(payload.data.outputPath).toBe(outputPath);
+      const output = JSON.parse(await readFile(outputPath, "utf8")) as { recordType: string };
+      expect(output.recordType).toBe("review_pr_context");
     });
   });
 
@@ -2219,13 +2291,14 @@ fs.writeFileSync(outputPath, JSON.stringify({
       expect(payload.data.markdownPath).toBe(payload.data.paths.markdownPath);
       expect(payload.data.jsonPath).toMatch(/\.json$/);
       const markdown = await readFile(payload.data.paths.markdownPath, "utf8");
-      expect(markdown).toContain("## PR Opportunities");
-      expect(markdown).toContain("Classification counts:");
-      expect(markdown).toContain("## Start Here");
-      expect(markdown).toContain("## Feature Map");
+      expect(markdown).toContain("# Deepclean Slop Cleanup Brief");
+      expect(markdown).toContain("## What To Do Next");
+      expect(markdown).toContain("## Auto-Fixable Slop");
+      expect(markdown).toContain("## Agent-Fixable Slop");
+      expect(markdown).toContain("## Appendix: Opportunity Details");
+      expect(markdown).toContain("## Appendix: Feature Map");
       expect(markdown).toContain("Feature scope:");
-      expect(markdown).toContain("## Agent Queue");
-      expect(markdown).toContain("Suggested plan targets:");
+      expect(markdown).toContain("## Appendix: Candidate Details");
     });
   });
 
@@ -2614,6 +2687,29 @@ process.exit(0);
     });
   });
 
+  test("next json exposes the next auto-fixable target", async () => {
+    await withTempRepo(async (repo) => {
+      await prepareFixableRepo(repo);
+      const result = await runCli(["next", "--json"], repo);
+      expect(result.code).toBe(0);
+      const payload = JSON.parse(result.stdout) as {
+        data: {
+          fixability: {
+            counts: Record<string, number>;
+            nextAutoFixableOpportunity: { id: string; fixability?: string; classification: string } | null;
+            nextAgentFixableOpportunity: { id: string; fixability?: string } | null;
+            noSafeFix: boolean;
+          };
+        };
+      };
+      expect(payload.data.fixability.counts["auto-fixable"]).toBeGreaterThan(0);
+      expect(payload.data.fixability.nextAutoFixableOpportunity?.id).toMatch(/^opportunity-/);
+      expect(payload.data.fixability.nextAutoFixableOpportunity?.fixability).toBe("auto-fixable");
+      expect(payload.data.fixability.nextAutoFixableOpportunity?.classification).toBe("safe-narrow-pr");
+      expect(payload.data.fixability.noSafeFix).toBe(false);
+    });
+  });
+
   test("fix resolves safe narrow opportunity targets into candidate fix workflow", async () => {
     await withTempRepo(async (repo) => {
       const prepared = await prepareFixableRepo(repo);
@@ -2630,6 +2726,29 @@ process.exit(0);
     });
   });
 
+  test("fix refuses stale safe opportunity targets when the candidate is not auto-fixable", async () => {
+    await withTempRepo(async (repo) => {
+      const prepared = await prepareFixableRepo(repo);
+      await enableFixExecution(repo);
+      const opportunityId = await writeFixOpportunity(repo, prepared.candidateId, "safe-narrow-pr");
+      await markCandidateFixability(repo, prepared.candidateId, {
+        fixability: "agent-fixable",
+        risk: "moderate",
+      });
+      const before = await readFile(path.join(repo, "src", "invoice.ts"), "utf8");
+      const result = await runCli(["fix", opportunityId, "--mode", "guarded", "--patch", prepared.patchPath, "--apply", "--verification", "true", "--json"], repo);
+      expect(result.code).toBe(2);
+      const payload = JSON.parse(result.stdout) as {
+        error: { code: string; message: string };
+        diagnostics: Array<{ code: string; message: string }>;
+      };
+      expect(payload.error.code).toBe("candidate_not_fixable");
+      expect(payload.error.message).toContain("agent-fixable");
+      expect(payload.diagnostics.some((diagnostic) => diagnostic.code === "candidate_fixability" && diagnostic.message.includes(opportunityId))).toBe(true);
+      expect(await readFile(path.join(repo, "src", "invoice.ts"), "utf8")).toBe(before);
+    });
+  });
+
   test("fix refuses unsafe opportunity targets before mutation", async () => {
     await withTempRepo(async (repo) => {
       const prepared = await prepareFixableRepo(repo);
@@ -2642,8 +2761,33 @@ process.exit(0);
         diagnostics: Array<{ code: string }>;
       };
       expect(payload.error.code).toBe("opportunity_not_fixable");
-      expect(payload.error.message).toContain("tests-first");
+      expect(payload.error.message).toContain("agent-fixable");
+      expect(payload.error.message).toContain("deepclean plan");
+      expect(payload.diagnostics.some((diagnostic) => diagnostic.code === "opportunity_fixability")).toBe(true);
       expect(payload.diagnostics.some((diagnostic) => diagnostic.code === "opportunity_refusal_reason")).toBe(true);
+    });
+  });
+
+  test("fix refuses agent-fixable candidate targets before mutation", async () => {
+    await withTempRepo(async (repo) => {
+      const prepared = await prepareFixableRepo(repo);
+      await markCandidateFixability(repo, prepared.candidateId, {
+        fixability: "agent-fixable",
+        risk: "moderate",
+      });
+      await enableFixExecution(repo);
+      const before = await readFile(path.join(repo, "src", "invoice.ts"), "utf8");
+      const result = await runCli(["fix", prepared.candidateId, "--mode", "guarded", "--patch", prepared.patchPath, "--apply", "--verification", "true", "--json"], repo);
+      expect(result.code).toBe(2);
+      const payload = JSON.parse(result.stdout) as {
+        error: { code: string; message: string };
+        diagnostics: Array<{ code: string }>;
+      };
+      expect(payload.error.code).toBe("candidate_not_fixable");
+      expect(payload.error.message).toContain("agent-fixable");
+      expect(payload.error.message).toContain("deepclean plan");
+      expect(payload.diagnostics.some((diagnostic) => diagnostic.code === "target_fixability")).toBe(true);
+      expect(await readFile(path.join(repo, "src", "invoice.ts"), "utf8")).toBe(before);
     });
   });
 
@@ -3794,6 +3938,35 @@ export const value = buildThing();
     const report = buildReportRecord("run-test", [metric, synthesized], []);
     expect(report.recommendations?.topCandidateIds[0]).toBe("candidate-002");
     expect(report.recommendations?.startHere?.id).toBe("candidate-002");
+    expect(report.summary.byFixability?.["agent-fixable"]).toBeGreaterThanOrEqual(1);
+    expect(report.summary.bySlopType?.["structure"]).toBeGreaterThanOrEqual(1);
+  });
+
+  test("markdown reports render a slop cleanup brief before raw candidates", () => {
+    const auto = candidateFixture({
+      id: "candidate-001",
+      title: "Extract checkout helper",
+      category: "architecture",
+      risk: "safe",
+      readiness: "fix-ready",
+      verification: ["npm test"],
+    });
+    const design = candidateFixture({
+      id: "candidate-002",
+      title: "Redesign auth boundary",
+      category: "architecture",
+      risk: "design-needed",
+      readiness: "design-needed",
+    });
+
+    const markdown = renderMarkdownReport([auto, design]);
+    expect(markdown).toContain("# Deepclean Slop Cleanup Brief");
+    expect(markdown).toContain("## What To Do Next");
+    expect(markdown).toContain("## Auto-Fixable Slop");
+    expect(markdown).toContain("## Human Design Needed");
+    expect(markdown.indexOf("## Auto-Fixable Slop")).toBeLessThan(markdown.indexOf("## Appendix: Candidate Details"));
+    expect(markdown).toContain("auto-fixable");
+    expect(markdown).toContain("human-design-needed");
   });
 
   test("candidate plans dedupe repeated file references", () => {
@@ -4863,8 +5036,18 @@ async function prepareFixableRepo(repo: string): Promise<{ candidateId: string; 
   if (!candidate?.findingId) {
     throw new Error("No fixable candidate in fixture");
   }
+  await markCandidateFixability(repo, candidate.id, {
+    fixability: "auto-fixable",
+    risk: "safe",
+    readiness: "fix-ready",
+  });
   await runCli(["plan", candidate.id, "--json"], repo);
   await runCli(["revalidate", candidate.findingId, "--json"], repo);
+  await markCandidateFixability(repo, candidate.id, {
+    fixability: "auto-fixable",
+    risk: "safe",
+    readiness: "fix-ready",
+  });
   const invoicePath = path.join(repo, "src", "invoice.ts");
   const original = await readFile(invoicePath, "utf8");
   await writeFile(invoicePath, original.replace("export function", "// deepclean fix applied\nexport function"), "utf8");
@@ -4873,6 +5056,26 @@ async function prepareFixableRepo(repo: string): Promise<{ candidateId: string; 
   const patchPath = path.join(repo, "fix.patch");
   await writeFile(patchPath, diff.stdout, "utf8");
   return { candidateId: candidate.id, findingId: candidate.findingId, patchPath };
+}
+
+async function markCandidateFixability(
+  repo: string,
+  candidateId: string,
+  values: Pick<CandidateRecord, "fixability"> & Partial<Pick<CandidateRecord, "risk" | "readiness">>,
+): Promise<void> {
+  const runFile = await latestRunFile(repo);
+  const candidatesPath = path.join(repo, ".deepclean", "candidates", runFile);
+  const candidates = JSON.parse(await readFile(candidatesPath, "utf8")) as CandidateRecord[];
+  const index = candidates.findIndex((candidate) => candidate.id === candidateId);
+  if (index === -1 || !candidates[index]) {
+    throw new Error(`Candidate not found in fixture: ${candidateId}`);
+  }
+  candidates[index] = {
+    ...candidates[index],
+    ...values,
+    updatedAt: "2026-06-01T00:00:00.000Z",
+  };
+  await writeFile(candidatesPath, `${JSON.stringify(candidates, null, 2)}\n`, "utf8");
 }
 
 async function writeFixOpportunity(

@@ -63,23 +63,25 @@ export function buildJsonContractCatalog(packageVersion: string): {
         command: "next",
         status: "stable",
         since: "1.1.0",
-        description: "Returns the best PR-sized cleanup opportunity while preserving legacy candidate fields.",
+        description: "Returns the best PR-sized cleanup opportunity and fixability routing while preserving legacy candidate fields.",
         envelope: {
           ok: true,
           command: "next",
-          dataSchema: "{ opportunity, opportunities, opportunitiesPath, candidate, proofStatus }",
+          dataSchema: "{ opportunity, opportunities, opportunitiesPath, fixability, candidate, proofStatus }",
           diagnostics: "Diagnostic[]",
         },
         requiredFields: [
           "opportunity",
           "opportunities",
           "opportunitiesPath",
+          "fixability",
           "candidate",
           "proofStatus",
         ],
         notes: [
           "candidate remains for backwards compatibility; opportunity is the campaign controller's preferred target.",
           "Opportunity records use recordType pr_opportunity.",
+          "fixability.nextAutoFixableOpportunity is the only unattended guarded fix target; agent-fixable targets should become plan or handoff work.",
         ],
       },
       {
@@ -172,6 +174,7 @@ export function buildJsonContractCatalog(packageVersion: string): {
         ],
         notes: [
           "Only guarded mode is supported for GA autofix.",
+          "Guarded fix/work refuses targets whose derived fixability is not auto-fixable.",
           "PR mode requires in-scope changes, passing verification, and resolved or measurable revalidation progress.",
           "Broad architecture redesign remains outside the GA autofix contract.",
         ],

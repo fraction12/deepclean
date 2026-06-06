@@ -9,6 +9,11 @@ import type {
   RevalidationRecord,
 } from "./types.js";
 import { schemaVersion } from "./defaults.js";
+import {
+  deriveCandidateFixability,
+  deriveFixabilityFromOpportunityClassification,
+  deriveSlopType,
+} from "./slop-classification.js";
 
 export interface BuildPrOpportunitiesInput {
   runId: string;
@@ -38,6 +43,7 @@ export function buildPrOpportunities(input: BuildPrOpportunitiesInput): PrOpport
         classification: "duplicate",
         status: "rejected",
         score: 5,
+        fixability: "noise",
         refusalReason: `Duplicates ${duplicateOf}.`,
         stopLine: "Do not open a separate PR for duplicate cleanup evidence.",
         expectedPayoff: "Avoids duplicate cleanup work.",
@@ -49,13 +55,17 @@ export function buildPrOpportunities(input: BuildPrOpportunitiesInput): PrOpport
 
     const classification = classifyCandidate(candidate, clusterByCandidateId.get(candidate.id) ?? []);
     const safe = classification === "safe-narrow-pr";
+    const baseFixability = deriveCandidateFixability(candidate);
+    const fixability = safe ? baseFixability : deriveFixabilityFromOpportunityClassification(classification);
+    const autoFixable = safe && fixability === "auto-fixable";
     opportunities.push(candidateOpportunity({
       candidate,
       createdAt,
       classification,
-      status: safe ? "recommended" : "blocked",
+      status: autoFixable ? "recommended" : "blocked",
       score: opportunityScore(candidate, classification),
-      refusalReason: safe ? undefined : refusalReasonFor(candidate, classification),
+      fixability,
+      refusalReason: autoFixable ? undefined : refusalReasonFor(candidate, classification, fixability),
       stopLine: stopLineFor(candidate, classification),
       expectedPayoff: expectedPayoffFor(candidate, classification),
       clusterIds: clusterByCandidateId.get(candidate.id) ?? [],
@@ -63,10 +73,10 @@ export function buildPrOpportunities(input: BuildPrOpportunitiesInput): PrOpport
   }
 
   const safeOpportunities = opportunities
-    .filter((opportunity) => opportunity.classification === "safe-narrow-pr")
+    .filter((opportunity) => opportunity.classification === "safe-narrow-pr" && opportunity.fixability === "auto-fixable")
     .sort((a, b) => b.score - a.score || a.id.localeCompare(b.id));
   for (const opportunity of opportunities) {
-    if (opportunity.classification === "safe-narrow-pr") {
+    if (opportunity.classification === "safe-narrow-pr" && opportunity.fixability === "auto-fixable") {
       opportunity.status = opportunity.id === safeOpportunities[0]?.id ? "recommended" : "available";
     }
   }
@@ -91,6 +101,7 @@ function candidateOpportunity(options: {
   classification: PrOpportunityRecord["classification"];
   status: PrOpportunityRecord["status"];
   score: number;
+  fixability?: PrOpportunityRecord["fixability"] | undefined;
   refusalReason?: string | undefined;
   stopLine: string;
   expectedPayoff: string;
@@ -107,6 +118,8 @@ function candidateOpportunity(options: {
     targetFindingIds: candidate.findingId ? [candidate.findingId] : [],
     targetClusterIds: options.clusterIds,
     classification: options.classification,
+    slopType: deriveSlopType(candidate),
+    fixability: options.fixability ?? deriveCandidateFixability(candidate),
     status: options.status,
     title: candidate.title,
     oneSentenceChange: candidate.suggestedDirection,
@@ -152,6 +165,8 @@ function stopCampaignOpportunity(options: {
     targetFindingIds: [],
     targetClusterIds: [],
     classification: "stop-campaign",
+    slopType: "metric-only",
+    fixability: "noise",
     status: "blocked",
     title: "Stop cleanup campaign",
     oneSentenceChange: "Do not start another cleanup PR until blocked targets are clarified.",
@@ -259,6 +274,7 @@ function isSensitivePath(filePath: string): boolean {
 function refusalReasonFor(
   candidate: CandidateRecord,
   classification: PrOpportunityRecord["classification"],
+  fixability?: PrOpportunityRecord["fixability"] | undefined,
 ): string {
   switch (classification) {
     case "tests-first":
@@ -276,7 +292,9 @@ function refusalReasonFor(
     case "stop-campaign":
       return "No safe PR opportunity is available.";
     case "safe-narrow-pr":
-      return "";
+      return fixability && fixability !== "auto-fixable"
+        ? `Candidate is ${fixability}; guarded fix execution requires candidate-level auto-fixable proof.`
+        : "";
     default:
       return `Candidate ${candidate.id} is not fix-ready.`;
   }

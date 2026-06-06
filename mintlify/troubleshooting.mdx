@@ -1,0 +1,35 @@
+---
+title: "Troubleshooting"
+description: "Common Deepclean diagnostics and recovery commands."
+---
+
+# Troubleshooting
+
+## Health and status
+
+Use `deepclean doctor --json` when checking whether Deepclean is ready to run in a repository. It reports package version, state initialization, config validity, missing state directories, git availability, dirty worktree state, provider availability, privacy settings, and detected project surfaces.
+
+Use `deepclean status --json` when checking what Deepclean already knows about a repository. It is read-only and reports the latest run/report, open queue, blocked items, stale artifacts, recent progress, latest artifact paths, locks, pending revalidation, recommended next command, and git dirty state.
+
+## Common diagnostic codes
+
+- `config_missing`: run `deepclean init` when the repository should use Deepclean state.
+- `config_invalid`: inspect `.deepclean/config.json` before running scans.
+- `state_dirs_missing`: run `deepclean init` to recreate the directory skeleton.
+- `provider_unavailable`: provider-backed synthesis is configured but the provider command could not run.
+- `lock_contention`: another write command owns `.deepclean/locks/state-writer.json`.
+- `stale_lock`: run `deepclean unlock --stale` before the next write command.
+- `malformed_provider_output`: inspect the synthesis attempt ledger, then rerun with a narrower scope or evidence-only mode.
+- `privacy_refused`: use `--evidence-only`, `--offline`, `--local-only`, or metadata-only synthesis.
+- `verification_failed`: treat the candidate as still open until fixed and revalidated.
+
+## Writer locks
+
+Deepclean serializes state-writing commands so concurrent runs cannot interleave writes under `.deepclean/`.
+
+```bash
+deepclean scan --wait-lock --lock-timeout-ms 30000 --json
+deepclean unlock --stale --json
+```
+
+Active locks are never removed by `unlock --stale`; only stale records are deleted.

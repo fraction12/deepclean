@@ -4,9 +4,11 @@ import { fileReferenceSchema } from "./file-references.js";
 import { diagnosticSchema } from "./json.js";
 import {
   confidenceLevels,
+  fixabilityLevels,
   prOpportunityClassifications,
   prOpportunityStatuses,
   riskLevels,
+  slopTypes,
 } from "./type-kinds.js";
 
 export const prOpportunitySourceSignalSchema = z.object({
@@ -27,6 +29,8 @@ export const prOpportunityRecordSchema = z.object({
   targetFindingIds: z.array(z.string()).default([]),
   targetClusterIds: z.array(z.string()).default([]),
   classification: z.enum(prOpportunityClassifications),
+  slopType: z.enum(slopTypes).optional(),
+  fixability: z.enum(fixabilityLevels).optional(),
   status: z.enum(prOpportunityStatuses),
   title: z.string(),
   oneSentenceChange: z.string(),

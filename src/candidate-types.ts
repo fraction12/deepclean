@@ -9,11 +9,13 @@ import {
   confidenceLevels,
   decompositionStrategies,
   effortLevels,
+  fixabilityLevels,
   identityConfidenceLevels,
   impactLevels,
   lifecycleStates,
   priorities,
   riskLevels,
+  slopTypes,
 } from "./type-kinds.js";
 
 export const findingSignatureSchema = z.object({
@@ -69,6 +71,8 @@ export const candidateRecordSchema = z.object({
   baselineStatus: z.enum(baselineStatuses).optional(),
   title: z.string(),
   category: z.enum(candidateCategories),
+  slopType: z.enum(slopTypes).optional(),
+  fixability: z.enum(fixabilityLevels).optional(),
   status: z.enum(candidateStatuses),
   priority: z.enum(priorities),
   confidence: z.enum(confidenceLevels),
