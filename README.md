@@ -12,7 +12,7 @@ Local repo structure reports for fast-moving codebases.
 
 Deepclean is report-first. Source edits are only available through the explicit guarded fix lane.
 
-Website: https://fraction12.github.io/deepclean/
+Docs: https://deepclean.mintlify.app
 
 ## Status
 
